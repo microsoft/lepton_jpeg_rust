@@ -1,0 +1,34 @@
+Lepton JPEG compression Rust Port Copyright (c) Microsoft Corporation
+
+NOTICES AND INFORMATION
+Do Not Translate or Localize
+
+This software incorporates material from third parties.
+Microsoft makes certain open source code available at https://3rdpartysource.microsoft.com,
+or you may send a check or money order for US $5.00, including the product name,
+the open source component name, platform, and version number, to:
+
+Source Code Compliance Team
+Microsoft Corporation
+One Microsoft Way
+Redmond, WA 98052
+USA
+
+Notwithstanding any other terms, you may reverse engineer this software to the extent
+required to debug changes to any libraries licensed under the GNU Lesser General Public License.
+
+-------------------
+
+This software includes parts of the Dropbox Lepton project (https://github.com/dropbox/lepton). 
+Lepton is a tool and file format for losslessly compressing JPEGs by an average of 22%. Lepton is
+licensed under Apache License 2.0, you can find a copy of this license at https://github.com/dropbox/lepton/blob/master/LICENSE
+
+-------------------
+
+This software includes parts of the Libwebp project https://github.com/webmproject/libwebp
+licensed under BSD 3-Clause License, you can find a copy of this license at https://github.com/webmproject/libwebp/blob/main/COPYING
+
+----------------
+
+This software includes parts of the uncmpJPG project, which is a library to for lossless JPEG decompression
+licensed under BSD 2-Clause License, you can find a copy of this license at  http://packjpg.encode.su/?page_id=178
