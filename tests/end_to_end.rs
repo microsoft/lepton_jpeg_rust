@@ -10,7 +10,7 @@ use std::io::Cursor;
 use std::fs::File;
 use std::io::Read;
 
-use lepton_rust_dll::{
+use lepton_jpeg::{
     decode_lepton, encode_lepton,
     lepton_error::{ExitCode, LeptonError},
 };

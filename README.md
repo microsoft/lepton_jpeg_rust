@@ -7,13 +7,27 @@ Due to the work involved in doing a complete security audit on the C++ code, and
 ## Lepton Compression Library
 The source of the library itself is under the src directory, with integration tests in the test directory. There are various test images under the images folder.
 
-# Building
+#### Building
 
 Building the project is fairly straightforward if you have **Rust 1.65 or later** installed (older version will warn about unstable features such as scoped threads). `cargo build` and `cargo test` do what you would expect, and `cargo build --release` creates the optimized release version.
 
 Some operations are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
 
-There is an Lepton_Rust.exe wrapper that is built as part of the project. It can be used to compress;/decompress and also to verify the test end-to-end on a given JPEG.
+#### Running
+
+There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress;/decompress and also to verify the test end-to-end on a given JPEG. If the input file is has a .jpg extension, it will encode. If the input file has a .lep extension, it will decode back to a .jpg. It supports the following options:
+
+`lepton_jpeg_util.exe [options] <inputfile> [<outputfile>]`
+
+| `Option`         |                                                              |
+| ---------------- | ------------------------------------------------------------ |
+| `-threads:n`     | Runs with a maximum of n threads. For encoding, this limits the amount of parallelism that can be gotten out of the decoder. |
+| `-dump`          | Dumps the contents of a JPG or LEP file, with the -all option, it will also dump the cooefficient image blocks |
+| `-noprogressive` | Will cause an error if we encounter a progressive file rather than trying to encode it |
+| `-verify`        | Reads, encodes and unencodes verifying that there is an exact match. No output file is specified. |
+| `-iter:n`        | Runs N iterations of the operation. Useful when we are running inside a profiler. |
+
+
 
 ## Contributing
 
