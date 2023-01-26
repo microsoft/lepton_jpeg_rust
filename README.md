@@ -9,9 +9,9 @@ The source of the library itself is under the src directory, with integration te
 
 # Building
 
-Building the project is fairly straightforward if you have *Rust 1.65 or later* installed (older version will warn about unstable features such as scoped threads). `cargo build` and `cargo test` do what you would expect, and `cargo build --release` creates the optimized release version.
+Building the project is fairly straightforward if you have **Rust 1.65 or later** installed (older version will warn about unstable features such as scoped threads). `cargo build` and `cargo test` do what you would expect, and `cargo build --release` creates the optimized release version.
 
-Some operations are vectorized such as the IDCT using the Wide library, so you can get a significant boost if you enable +AVX2.
+Some operations are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
 
 There is an Lepton_Rust.exe wrapper that is built as part of the project. It can be used to compress;/decompress and also to verify the test end-to-end on a given JPEG.
 
@@ -21,6 +21,7 @@ There are many ways in which you can participate in this project, for example:
 
 * [Submit bugs and feature requests](https://github.com/microsoft/lepton_jpeg_rust/issues), and help us verify as they are checked in
 * Review [source code changes](https://github.com/microsoft/lepton_jpeg_rust/pulls) or submit your own features as pull requests.
+* The library uses only **stable features**, so if you want to take advantage of SIMD features such as AVX2, use the Wide crate (see the idct.rs as an example) rather than intrinsics. 
 
 ## Code of Conduct
 
@@ -31,3 +32,4 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 Copyright (c) Microsoft Corporation. All rights reserved.
 
 Licensed under the [Apache 2.0](LICENSE.txt) license.
+
