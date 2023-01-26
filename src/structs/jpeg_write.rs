@@ -37,8 +37,8 @@ use byteorder::WriteBytesExt;
 
 use crate::{
     consts::{JPegDecodeStatus, JPegType},
-    helpers::{err_exit_code, u16_bit_length},
-    here, jpeg_code,
+    helpers::{err_exit_code, here, u16_bit_length},
+    jpeg_code,
     lepton_error::ExitCode,
 };
 

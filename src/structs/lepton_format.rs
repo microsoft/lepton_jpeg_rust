@@ -21,7 +21,6 @@ use flate2::Compression;
 
 use crate::consts::*;
 use crate::helpers::*;
-use crate::here;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
 use crate::structs::bit_writer::BitWriter;

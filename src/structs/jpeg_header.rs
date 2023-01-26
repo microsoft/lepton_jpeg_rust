@@ -37,7 +37,6 @@ use anyhow::{Context, Result};
 use std::io::Read;
 
 use crate::helpers::*;
-use crate::here;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
 
@@ -164,7 +163,10 @@ impl JPegHeader {
     pub fn parse<R: Read>(&mut self, reader: &mut R) -> Result<bool> {
         // header parser loop
         loop {
-            match self.parse_next_segment(reader).context(here!())? {
+            match self
+                .parse_next_segment(reader)
+                .context(crate::helpers::here!())?
+            {
                 ParseSegmentResult::EOI => {
                     return Ok(false);
                 }

@@ -8,10 +8,10 @@ use anyhow::{Context, Result};
 use std::cmp;
 use std::io::{Read, Write};
 
-use crate::helpers::{calc_sign_index, err_exit_code, u16_bit_length};
+use crate::consts::*;
+use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 use crate::structs::branch::Branch;
-use crate::{consts::*, here};
 use default_boxed::DefaultBoxed;
 
 use super::probability_tables::ProbabilityTables;

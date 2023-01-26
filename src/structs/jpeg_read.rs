@@ -36,7 +36,7 @@ use anyhow::{Context, Result};
 use std::cmp::{self, max};
 use std::io::Read;
 
-use crate::here;
+use crate::helpers::here;
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{BlockBasedImage, ExpandedBlockData};

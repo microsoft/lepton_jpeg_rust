@@ -14,8 +14,7 @@ use std::io::Read;
 use crate::consts::{
     ALIGNED_BLOCK_INDEX_AC_7X7_INDEX, LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49,
 };
-use crate::helpers::err_exit_code;
-use crate::here;
+use crate::helpers::{err_exit_code, here};
 use crate::lepton_error::ExitCode;
 
 use crate::structs::{

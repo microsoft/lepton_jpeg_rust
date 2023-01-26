@@ -8,6 +8,8 @@ use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
+
+/// Well-defined errors for bad things that are expected to happen as part of compression/decompression
 pub enum ExitCode {
     //AssertionFailure = 1,
     //CodingError = 2,
@@ -45,9 +47,13 @@ impl Display for ExitCode {
     }
 }
 
+/// Standard error returned by Lepton library
 #[derive(Debug)]
 pub struct LeptonError {
+    /// standard error code
     pub exit_code: ExitCode,
+
+    /// diagnostic message including location. Content should not be relied on.
     pub message: String,
 }
 

@@ -7,7 +7,7 @@
 use crate::{
     consts::{JPegDecodeStatus, JPegType},
     helpers::err_exit_code,
-    here,
+    helpers::here,
     lepton_error::ExitCode,
 };
 

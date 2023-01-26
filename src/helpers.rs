@@ -6,12 +6,13 @@
 
 use crate::lepton_error::{ExitCode, LeptonError};
 
-#[macro_export]
 macro_rules! here {
     () => {
         concat!("at ", file!(), " line ", line!())
     };
 }
+
+pub(crate) use here;
 
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {

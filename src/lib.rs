@@ -39,6 +39,7 @@ fn translate_error(e: anyhow::Error) -> LeptonError {
     }
 }
 
+/// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -47,6 +48,7 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
     decode_lepton_wrapper(reader, writer, num_threads).map_err(translate_error)
 }
 
+/// Encodes JPEG as compressed Lepton format.
 pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
@@ -56,6 +58,7 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     encode_lepton_wrapper(reader, writer, max_threads, no_progressive).map_err(translate_error)
 }
 
+/// C ABI interface for compressing image, exposed from DLL
 #[no_mangle]
 pub unsafe extern "C" fn WrapperCompressImage(
     input_buffer: *const u8,
@@ -99,6 +102,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
     }
 }
 
+/// C ABI interface for decompressing image, exposed from DLL
 #[no_mangle]
 pub unsafe extern "C" fn WrapperDecompressImage(
     input_buffer: *const u8,
