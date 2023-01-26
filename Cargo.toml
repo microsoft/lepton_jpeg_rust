@@ -1,0 +1,23 @@
+[package]
+name = "lepton_rust"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+debug=true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byteorder = ">=1.4.3"
+flate2 = ">=1.0"
+default-boxed = "0.2.0"
+anyhow = { version=">=1.0.0", features = ["backtrace"]}
+wide = "0.7.5"
+
+[dev-dependencies]
+rstest = "0.16.0"
+
+[lib]
+crate-type = ["cdylib","lib"]
+name = "lepton_rust_dll"
