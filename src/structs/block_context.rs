@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
- *  This software incorporates material from third parties. See Notices.txt for details.
- *----------------------------------------/----------------------------------------------------*/
+ *  Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project root for license information.
+ *  This software incorporates material from third parties. See NOTICE.txt for details.
+ *--------------------------------------------------------------------------------------------*/
 
 use super::block_based_image::{BlockBasedImage, ExpandedBlockData};
 use super::neighbor_summary::NeighborSummary;

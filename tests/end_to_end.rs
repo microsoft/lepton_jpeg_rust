@@ -1,8 +1,8 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
- *  This software incorporates material from third parties. See Notices.txt for details.
- *----------------------------------------/----------------------------------------------------*/
+ *  Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project root for license information.
+ *  This software incorporates material from third parties. See NOTICE.txt for details.
+ *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
 use std::{io::Cursor, path::Path};
@@ -30,8 +30,8 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     content
 }
 
-// verifies that the decode will accept existing Lepton files and generate
-// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
+/// verifies that the decode will accept existing Lepton files and generate
+/// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
 #[rstest]
 fn verify_decode(
     #[values(
@@ -76,8 +76,8 @@ fn verify_decode(
     assert!(output[..] == expected[..]);
 }
 
-// encodes as LEP and codes back to JPG to mostly test the encoder. Can't check against
-// the original LEP file since there's no guarantee they are binary identical (especially the zlib encoded part)
+/// encodes as LEP and codes back to JPG to mostly test the encoder. Can't check against
+/// the original LEP file since there's no guarantee they are binary identical (especially the zlib encoded part)
 #[rstest]
 fn verify_encode(
     #[values(
@@ -136,6 +136,7 @@ fn assert_exception(expected_error: ExitCode, result: Result<(), LeptonError>) {
     }
 }
 
+/// ensures we error out if we have the progressive flag disabled
 #[rstest]
 fn verify_encode_progressive_false(
     #[values("androidprogressive", "iphoneprogressive", "iphoneprogressive2")] file: &str,

@@ -1,15 +1,14 @@
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
- *  This software incorporates material from third parties. See Notices.txt for details.
- *----------------------------------------/----------------------------------------------------*/
-
-// used for debugging when there are divergences between encoder and decoder
+ *  Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project root for license information.
+ *  This software incorporates material from third parties. See NOTICE.txt for details.
+ *--------------------------------------------------------------------------------------------*/
 
 #![allow(dead_code)]
 
 use std::num::Wrapping;
 
+/// used for debugging when there are divergences between encoder and decoder
 pub struct SimpleHash {
     hash: u64,
 }
