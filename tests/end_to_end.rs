@@ -18,7 +18,7 @@ use lepton_rust_dll::{
 use rstest::rstest;
 
 fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = env!("CARGO_MANIFEST_DIR").to_owned() + "\\..\\images\\" + filename + ext;
+    let filename = env!("CARGO_MANIFEST_DIR").to_owned() + "\\images\\" + filename + ext;
     println!("reading {0}", filename);
     let mut f = File::open(filename).unwrap();
 
