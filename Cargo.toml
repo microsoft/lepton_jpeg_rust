@@ -2,6 +2,8 @@
 name = "lepton_jpeg"
 version = "0.1.0"
 edition = "2021"
+
+# requires scoped threads
 rust-version = "1.65"
 description = "Rust port of the Lepton JPEG compression library"
 readme = "README.md"
@@ -11,6 +13,7 @@ exclude = [
     "images/*",
     "tests/*",
 ]
+categories = ["multimedia::images", "multimedia::encoding"]
 
 [profile.release]
 debug=true
