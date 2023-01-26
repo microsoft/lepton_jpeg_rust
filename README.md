@@ -7,7 +7,11 @@ Due to the work involved in doing a complete security audit on the C++ code, and
 ## Lepton Compression Library
 The source of the library itself is under the src directory, with integration tests in the test directory. There are various test images under the images folder.
 
-Building the project is fairly straightforward if you have rust installed. cargo build and cargo test do what you would expect, and cargo build --release creates the optimized release version.
+# Building
+
+Building the project is fairly straightforward if you have *Rust 1.65 or later* installed (older version will warn about unstable features such as scoped threads). `cargo build` and `cargo test` do what you would expect, and `cargo build --release` creates the optimized release version.
+
+Some operations are vectorized such as the IDCT using the Wide library, so you can get a significant boost if you enable +AVX2.
 
 There is an Lepton_Rust.exe wrapper that is built as part of the project. It can be used to compress;/decompress and also to verify the test end-to-end on a given JPEG.
 
