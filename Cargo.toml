@@ -2,6 +2,7 @@
 name = "lepton_jpeg"
 version = "0.1.0"
 edition = "2021"
+authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 # requires scoped threads
 rust-version = "1.65"
