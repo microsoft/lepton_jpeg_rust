@@ -19,7 +19,7 @@ There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project.
 
 `lepton_jpeg_util.exe [options] <inputfile> [<outputfile>]`
 
-| `Option`         |                                                              |
+| Option           | Description                                                  |
 | ---------------- | ------------------------------------------------------------ |
 | `-threads:n`     | Runs with a maximum of n threads. For encoding, this limits the amount of parallelism that can be gotten out of the decoder. |
 | `-dump`          | Dumps the contents of a JPG or LEP file, with the -all option, it will also dump the cooefficient image blocks |
