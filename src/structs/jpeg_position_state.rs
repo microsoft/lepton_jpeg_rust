@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See Notices.txt for details.
  *----------------------------------------/----------------------------------------------------*/
 
- use crate::{
+use crate::{
     consts::{JPegDecodeStatus, JPegType},
     helpers::err_exit_code,
     here,

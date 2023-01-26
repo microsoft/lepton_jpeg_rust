@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See Notices.txt for details.
  *----------------------------------------/----------------------------------------------------*/
 
- use std::fmt::Display;
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]

@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See Notices.txt for details.
  *----------------------------------------/----------------------------------------------------*/
 
- use core::result::Result;
+use core::result::Result;
 use std::{io::Cursor, path::Path};
 
 use std::fs::File;
@@ -18,7 +18,9 @@ use lepton_jpeg::{
 use rstest::rstest;
 
 fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = Path::new(env!("CARGO_MANIFEST_DIR")).join("images").join(filename.to_owned() + ext);
+    let filename = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("images")
+        .join(filename.to_owned() + ext);
     println!("reading {0}", filename.to_str().unwrap());
     let mut f = File::open(filename).unwrap();
 
