@@ -11,11 +11,14 @@ use crate::helpers::*;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
+use std::cmp::{max, min};
 
 use super::block_based_image::BlockBasedImage;
 use super::block_context::BlockContext;
 use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
+
+use wide::i16x8;
 
 pub struct ProbabilityTables {
     left_present: bool,
@@ -43,6 +46,13 @@ impl ProbabilityTables {
 
     pub fn is_all_present(&self) -> bool {
         self.all_present
+    }
+
+    pub fn is_left_present(&self) -> bool {
+        self.left_present
+    }
+    pub fn is_above_present(&self) -> bool {
+        self.above_present
     }
 
     pub fn adv_predict_or_unpredict_dc(
@@ -104,112 +114,100 @@ impl ProbabilityTables {
         return num_non_zeros_context;
     }
 
-    pub fn calc_coefficient_context_7x7_aavg<const ALL_PRESENT: bool>(
+    // calculates the average of the prior values from their corresponding value in the left, above and above/left block
+    // the C++ version does one coefficient at a time, but if we do it all at the same time, the compiler vectorizes everything
+    #[inline(never)]
+    pub fn calc_coefficient_context_7x7_aavg_block<const ALL_PRESENT: bool>(
         &self,
         image_data: &BlockBasedImage,
-        coord: usize,
         block_context: &BlockContext,
-        num_nonzeros_left: u8,
-    ) -> ProbabilityTablesCoefficientContext {
-        // from compute_aavg
-        let mut best_prior: u32 = 0;
+    ) -> [i16; 49] {
+        let mut best_prior = [0; 49];
 
-        let aligned = RASTER_TO_ALIGNED[coord] as usize;
-        assert!(aligned < 64); // assert here to avoid range checks later
+        if ALL_PRESENT {
+            let left = block_context.left(image_data).get_block();
+            let above = block_context.above(image_data).get_block();
+            let above_left = block_context.above_left(image_data).get_block();
 
-        let log_weight = 5;
+            // compiler does a pretty amazing job with SSE/AVX2 here
+            for i in 0..49 {
+                // approximate average of 3 without a divide
+                // (not sure why they didn't use 22 and 10 as the coefficients since it's divided by 32, but can't change without breaking the format)
+                best_prior[i] = (((left[i].abs() as u32 + above[i].abs() as u32) * 13
+                    + 6 * above_left[i].abs() as u32)
+                    >> 5) as i16;
+            }
+        } else {
+            // handle edge case :) where we are on the top or left edge
 
-        if ALL_PRESENT || self.left_present {
-            best_prior += (block_context.left(image_data).get_coefficient(aligned)).abs() as u32;
+            if self.left_present {
+                let left = block_context.left(image_data).get_block();
+                for i in 0..49 {
+                    best_prior[i] = left[i].abs();
+                }
+            } else if self.above_present {
+                let above = block_context.above(image_data).get_block();
+                for i in 0..49 {
+                    best_prior[i] = above[i].abs();
+                }
+            }
         }
 
-        if ALL_PRESENT || self.above_present {
-            best_prior += (block_context.above(image_data).get_coefficient(aligned)).abs() as u32;
-        }
-
-        if ALL_PRESENT || (self.left_present && self.above_present) {
-            best_prior *= 13;
-            best_prior += 6
-                * (block_context
-                    .above_left(image_data)
-                    .get_coefficient(aligned))
-                .abs() as u32;
-            best_prior >>= log_weight;
-        }
-
-        return ProbabilityTablesCoefficientContext {
-            best_prior: best_prior as i32,
-            num_non_zeros_bin: ProbabilityTables::num_non_zeros_to_bin(num_nonzeros_left),
-            best_prior_bit_len: u32_bit_length(cmp::min(
-                best_prior, /* no need for abs here as in original source */
-                1023,
-            ))
-            .into(),
-        };
+        return best_prior;
     }
 
+    #[inline(always)]
     pub fn calc_coefficient_context8_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         &self,
-        image_data: &BlockBasedImage,
         qt: &QuantizationTables,
         coefficient: usize,
-        block_context: &BlockContext,
+        here: &[i16; 64],
+        above: &[i16; 64],
+        left: &[i16; 64],
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
-        let coef_idct;
-
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
         let mut compute_lak_coeffs_a: [i32; 8] = [0; 8];
 
         debug_assert_eq!(HORIZONTAL, (coefficient & 7) != 0);
 
-        let coef_idct_offset;
+        let coef_idct;
         if HORIZONTAL && (ALL_PRESENT || self.above_present) {
             assert!(coefficient < 8); // avoid bounds check later
 
             // y == 0: we're the x
-            let here = block_context.here(image_data);
-            let above = block_context.above(image_data);
-
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
             for i in 0..8 {
-                let cur_coef = RASTER_TO_ALIGNED[(coefficient + (i * 8)) as usize] as usize;
+                let cur_coef = usize::from(RASTER_TO_ALIGNED[usize::from(coefficient + (i * 8))]);
 
-                compute_lak_coeffs_x[i] = if i != 0 {
-                    here.get_coefficient(cur_coef).into()
-                } else {
-                    0
-                };
-                compute_lak_coeffs_a[i] = above.get_coefficient(cur_coef).into();
+                let sign = if (i & 1) != 0 { -1 } else { 1 };
+
+                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
+                compute_lak_coeffs_a[i] = (sign * above[cur_coef]).into();
             }
 
-            coef_idct = qt.get_icos_idct_edge8192_dequantized_x();
-            coef_idct_offset = coefficient * 8;
+            coef_idct =
+                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
         } else if !HORIZONTAL && (ALL_PRESENT || self.left_present) {
             assert!(coefficient <= 56); // avoid bounds check later
 
             // x == 0: we're the y
-            let here = block_context.here(image_data);
-            let left = block_context.left(image_data);
 
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
             for i in 0..8 {
-                let cur_coef = RASTER_TO_ALIGNED[(coefficient + i) as usize] as usize;
+                let cur_coef = usize::from(RASTER_TO_ALIGNED[usize::from(coefficient + i)]);
 
-                compute_lak_coeffs_x[i] = if i != 0 {
-                    here.get_coefficient(cur_coef).into()
-                } else {
-                    0
-                };
-                compute_lak_coeffs_a[i] = left.get_coefficient(cur_coef).into();
+                let sign = if (i & 1) != 0 { -1 } else { 1 };
+
+                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
+                compute_lak_coeffs_a[i] = (sign * left[cur_coef]).into();
             }
 
-            coef_idct = qt.get_icos_idct_edge8192_dequantized_y();
-            coef_idct_offset = coefficient;
+            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
@@ -218,20 +216,32 @@ impl ProbabilityTables {
             };
         }
 
-        let mut best_prior = compute_lak_coeffs_a[0] * coef_idct[coef_idct_offset]; // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        for i in 1..8 {
-            let sign = if (i & 1) != 0 { 1 } else { -1 };
-            best_prior -= coef_idct[coef_idct_offset + i]
-                * (compute_lak_coeffs_x[i] + (sign * compute_lak_coeffs_a[i]));
+        let mut best_prior = 0;
+        for i in 0..8 {
+            best_prior += coef_idct[i] * (compute_lak_coeffs_a[i] - compute_lak_coeffs_x[i]);
+            // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
         }
 
-        best_prior /= coef_idct[coef_idct_offset];
+        best_prior /= coef_idct[0];
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
             num_non_zeros_bin: num_non_zeros_x,
-            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.abs() as u32, 1023)),
+            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
         };
+    }
+
+    fn from_stride(block: &[i16; 64], offset: usize, stride: usize) -> i16x8 {
+        return i16x8::new([
+            block[offset],
+            block[offset + (1 * stride)],
+            block[offset + (2 * stride)],
+            block[offset + (3 * stride)],
+            block[offset + (4 * stride)],
+            block[offset + (5 * stride)],
+            block[offset + (6 * stride)],
+            block[offset + (7 * stride)],
+        ]);
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
@@ -247,55 +257,58 @@ impl ProbabilityTables {
         let mut pixels_sans_dc = [0i16; 64];
         let q = qt.get_quantization_table();
 
-        run_idct::<true /*IGNORE_DC*/>(block_context.here(image_data), q, &mut pixels_sans_dc);
-
         let mut avgmed = 0;
-        let mut dc_estimates = [0i16; 16];
+
+        run_idct::<true>(block_context.here(image_data), q, &mut pixels_sans_dc);
 
         if ALL_PRESENT || self.left_present || self.above_present {
+            let mut min_dc = i16::MAX;
+            let mut max_dc = i16::MIN;
+
+            let avg_horizontal_option;
             if ALL_PRESENT || self.left_present {
                 let left_context = block_context.neighbor_context_left(num_non_zeros);
-                for i in 0..8 {
-                    let i_mult8 = i << 3;
-                    let a = i32::from(pixels_sans_dc[i_mult8]) + 1024;
-                    let pixel_delta =
-                        i32::from(pixels_sans_dc[i_mult8]) - i32::from(pixels_sans_dc[i_mult8 + 1]);
-                    let b = i32::from(left_context.get_vertical(i)) - (pixel_delta / 2); // round to zero
-                    dc_estimates[i] = (b - a) as i16;
-                }
-            }
 
-            if ALL_PRESENT || self.above_present {
-                let above_context = block_context.neighbor_context_above(num_non_zeros);
-                for i in 0..8 {
-                    let a = i32::from(pixels_sans_dc[i]) + 1024;
-                    let pixel_delta =
-                        i32::from(pixels_sans_dc[i]) - i32::from(pixels_sans_dc[i + 8]);
-                    let b = i32::from(above_context.get_horizontal(i)) - (pixel_delta / 2); // round to zero
-                    dc_estimates[i
-                        + (if ALL_PRESENT || self.left_present {
-                            8
-                        } else {
-                            0
-                        })] = (b - a) as i16;
-                }
-            }
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 8);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 1, 8);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
 
-            let mut avg_vertical;
-            let mut min_dc = dc_estimates[0];
-            let mut max_dc = dc_estimates[0];
-            let mut avg_horizontal =
-                ProbabilityTables::estimate_dir_average(&dc_estimates, 0, &mut min_dc, &mut max_dc);
-            if (!ALL_PRESENT) && (self.above_present == false || self.left_present == false) {
-                avg_vertical = avg_horizontal;
-            } else {
-                avg_vertical = ProbabilityTables::estimate_dir_average(
+                let dc_estimates = (b - a).to_array();
+
+                avg_horizontal_option = Some(ProbabilityTables::estimate_dir_average(
                     &dc_estimates,
-                    8,
                     &mut min_dc,
                     &mut max_dc,
-                );
+                ));
+            } else {
+                avg_horizontal_option = None;
             }
+
+            let avg_vertical_option;
+            if ALL_PRESENT || self.above_present {
+                let above_context = block_context.neighbor_context_above(num_non_zeros);
+
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 1);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 8, 1);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+
+                let dc_estimates = (b - a).to_array();
+
+                avg_vertical_option = Some(ProbabilityTables::estimate_dir_average(
+                    &dc_estimates,
+                    &mut min_dc,
+                    &mut max_dc,
+                ));
+            } else {
+                avg_vertical_option = None;
+            }
+
+            let mut avg_vertical = avg_vertical_option.or(avg_horizontal_option).unwrap();
+            let mut avg_horizontal = avg_horizontal_option.or(avg_vertical_option).unwrap();
 
             let overall_avg: i32 = (avg_vertical + avg_horizontal) >> 1;
             avgmed = overall_avg;
@@ -319,25 +332,39 @@ impl ProbabilityTables {
         };
     }
 
-    fn estimate_dir_average(
-        dc_estimates: &[i16; 16],
-        dc_start_index: usize,
-        min_dc: &mut i16,
-        max_dc: &mut i16,
-    ) -> i32 {
+    fn estimate_dir_average(dc_estimates: &[i16; 8], min_dc: &mut i16, max_dc: &mut i16) -> i32 {
         let mut dir_average: i32 = 0;
         for i in 0..8 {
-            let cur_est = dc_estimates[dc_start_index + i];
-            dir_average += i32::from(cur_est);
-
-            if *min_dc > cur_est {
-                *min_dc = cur_est;
-            }
-
-            if *max_dc < cur_est {
-                *max_dc = cur_est;
-            }
+            let cur_est = dc_estimates[i];
+            dir_average += cur_est as i32;
         }
+
+        *min_dc = min(
+            *min_dc,
+            min(
+                min(
+                    min(dc_estimates[0], dc_estimates[1]),
+                    min(dc_estimates[2], dc_estimates[3]),
+                ),
+                min(
+                    min(dc_estimates[4], dc_estimates[5]),
+                    min(dc_estimates[6], dc_estimates[7]),
+                ),
+            ),
+        );
+        *max_dc = max(
+            *max_dc,
+            max(
+                max(
+                    max(dc_estimates[0], dc_estimates[1]),
+                    max(dc_estimates[2], dc_estimates[3]),
+                ),
+                max(
+                    max(dc_estimates[4], dc_estimates[5]),
+                    max(dc_estimates[6], dc_estimates[7]),
+                ),
+            ),
+        );
 
         return dir_average;
     }

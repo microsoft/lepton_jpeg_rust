@@ -85,6 +85,7 @@ pub struct Model {
 }
 
 impl Model {
+    #[inline(never)]
     pub fn read_coef<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
@@ -105,6 +106,7 @@ impl Model {
         return Model::read_length_sign_coef(bool_reader, exp, sign, bits, "coef").context(here!());
     }
 
+    #[inline(never)]
     pub fn write_coef<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,

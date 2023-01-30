@@ -14,7 +14,7 @@ use std::io::Read;
 use crate::consts::{
     ALIGNED_BLOCK_INDEX_AC_7X7_INDEX, LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49,
 };
-use crate::helpers::{err_exit_code, here};
+use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 
 use crate::structs::{
@@ -25,6 +25,8 @@ use crate::structs::{
 };
 
 // reads stream from reader and populates image_data with the decoded data
+
+#[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_decode_row_range<R: Read>(
     pts: &ProbabilityTablesSet,
     qt: &[QuantizationTables],
@@ -101,6 +103,7 @@ pub fn lepton_decode_row_range<R: Read>(
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn decode_row_wrapper<R: Read>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
@@ -230,21 +233,36 @@ fn decode_row<R: Read>(
     }
 
     if block_width > 1 {
-        parse_token::<R, false>(
-            model,
-            bool_reader,
-            image_data,
-            block_context,
-            num_non_zeros,
-            qt,
-            right_model,
-        )
-        .context(here!())?;
+        if right_model.is_all_present() {
+            parse_token::<R, true>(
+                model,
+                bool_reader,
+                image_data,
+                block_context,
+                num_non_zeros,
+                qt,
+                right_model,
+            )
+            .context(here!())?;
+        } else {
+            parse_token::<R, false>(
+                model,
+                bool_reader,
+                image_data,
+                block_context,
+                num_non_zeros,
+                qt,
+                right_model,
+            )
+            .context(here!())?;
+        }
+
         block_context.next(false);
     }
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn parse_token<R: Read, const ALL_PRESENT: bool>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
@@ -254,6 +272,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
 ) -> Result<()> {
+    debug_assert!(pt.is_all_present() == ALL_PRESENT);
+
     let num_non_zeros_7x7 = model
         .read_non_zero_7x7_count(
             bool_reader,
@@ -270,25 +290,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let mut eob_y: u8 = 0;
     let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
 
+    let best_priors =
+        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
+
+    let block = context.here_mut(image_data).get_block_mut();
     for zz in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
 
-        let coord = UNZIGZAG_49[zz];
-        let b_x = coord & 7;
-        let b_y = coord >> 3;
+        let best_prior_bit_length = u16_bit_length(best_priors[zz] as u16);
 
+        let coord = UNZIGZAG_49[zz];
         assert!(
             (coord & 7) > 0 && (coord >> 3) > 0,
             "this does the DC and the lower 7x7 AC"
-        );
-
-        let ptcc7x7 = pt.calc_coefficient_context_7x7_aavg::<ALL_PRESENT>(
-            image_data,
-            coord as usize,
-            context,
-            num_non_zeros_left_7x7,
         );
 
         let coef = model
@@ -297,20 +313,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
                 pt.get_color_index(),
                 coord.into(),
                 zz.into(),
-                ptcc7x7.num_non_zeros_bin as usize,
-                ptcc7x7.best_prior_bit_len as usize,
+                ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
+                best_prior_bit_length as usize,
             )
             .context(here!())?;
 
         if coef != 0 {
+            let b_x = coord & 7;
+            let b_y = coord >> 3;
+
             eob_x = cmp::max(eob_x, b_x);
             eob_y = cmp::max(eob_y, b_y);
             num_non_zeros_left_7x7 -= 1;
         }
 
-        context
-            .here_mut(image_data)
-            .set_coefficient(zz + ALIGNED_BLOCK_INDEX_AC_7X7_INDEX, coef);
+        block[zz as usize + ALIGNED_BLOCK_INDEX_AC_7X7_INDEX] = coef;
     }
 
     decode_edge::<R, ALL_PRESENT>(
@@ -361,6 +378,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
@@ -399,7 +417,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
-    context: &BlockContext,
+    block_context: &BlockContext,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -437,16 +455,29 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord = delta;
 
+    let above = if pt.is_above_present() {
+        block_context.above(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let left = if pt.is_left_present() {
+        block_context.left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let here = block_context.here(image_data).get_block().clone();
+
     for lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            image_data,
             qt,
             coord,
-            context,
+            &here,
+            &above,
+            &left,
             num_non_zeros_edge,
         );
 
@@ -456,7 +487,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge -= 1;
         }
 
-        context.here_mut(image_data).set_coefficient(
+        block_context.here_mut(image_data).set_coefficient(
             aligned_block_offset as usize + (lane << log_edge_step),
             coef,
         );
@@ -464,5 +495,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         coord += delta;
         zig15offset += 1;
     }
+
     Ok(())
 }
