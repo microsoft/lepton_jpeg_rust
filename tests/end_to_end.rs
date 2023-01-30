@@ -52,6 +52,7 @@ fn verify_decode(
         "iphonecrop2",
         "iphoneprogressive",
         "iphoneprogressive2",
+        "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
         "narrowrst",
         "nofsync",
         "slrcity",
@@ -98,6 +99,7 @@ fn verify_encode(
             "iphonecrop2",
             "iphoneprogressive",
             "iphoneprogressive2",
+            "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
             //"narrowrst",
             //"nofsync",
             "slrcity",
