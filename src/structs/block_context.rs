@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::block_based_image::{BlockBasedImage, AlignedBlock};
+use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::neighbor_summary::NeighborSummary;
 
 pub struct BlockContext {

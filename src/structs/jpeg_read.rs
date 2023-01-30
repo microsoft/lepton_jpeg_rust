@@ -39,7 +39,7 @@ use std::io::Read;
 use crate::helpers::here;
 
 use super::bit_reader::BitReader;
-use super::block_based_image::{BlockBasedImage, AlignedBlock};
+use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_position_state::JpegPositionState;
 use super::lepton_format::LeptonHeader;
 use super::thread_handoff::ThreadHandoff;

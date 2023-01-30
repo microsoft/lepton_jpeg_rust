@@ -29,11 +29,7 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-fn get_raster<const IGNORE_DC: bool>(
-    offset: usize,
-    stride: usize,
-    block: &AlignedBlock,
-) -> i32x8 {
+fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
     return i32x8::new([
         block.get_coefficient_raster(7 * stride + offset) as i32,
         block.get_coefficient_raster(6 * stride + offset) as i32,
@@ -99,11 +95,7 @@ fn transpose(
 }
 
 #[inline(never)]
-pub fn run_idct<const IGNORE_DC: bool>(
-    block: &AlignedBlock,
-    q: &[u16; 64],
-    outp: &mut [i16; 64],
-) {
+pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64]) {
     // horizontal
     let mut xv0 = get_raster::<IGNORE_DC>(0, 8, block);
     let mut xv1 = get_raster::<IGNORE_DC>(4, 8, block);
@@ -232,12 +224,7 @@ fn mul(a: i16, b: u16) -> Wrapping<i32> {
 }
 
 #[cfg(feature = "verify_old_dct")]
-pub fn run_idct_old(
-    block: &AlignedBlock,
-    q: &[u16; 64],
-    outp: &mut [i16; 64],
-    ignore_dc: bool,
-) {
+pub fn run_idct_old(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64], ignore_dc: bool) {
     let mut intermed = [Wrapping(0i32); 64];
 
     // Horizontal 1-D IDCT.
