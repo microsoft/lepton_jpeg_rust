@@ -204,6 +204,9 @@ pub fn read_progressive_scan<R: Read>(
                 .context(here!());
             }
 
+            // only need DC
+            jf.verify_huffman_table(true, false).context(here!())?;
+
             while sta == JPegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
@@ -223,6 +226,10 @@ pub fn read_progressive_scan<R: Read>(
             }
         } else {
             // ---> progressive AC encoding <---
+
+            // only need AC
+            jf.verify_huffman_table(false, true).context(here!())?;
+
             if jf.cs_sah == 0 {
                 // ---> succesive approximation first stage <---
                 let mut block = [0; 64];
@@ -341,7 +348,7 @@ pub fn read_progressive_scan<R: Read>(
     Ok(())
 }
 
-// reads an entire interval until the RST code
+/// reads an entire interval until the RST code
 fn decode_baseline_rst<R: Read>(
     state: &mut JpegPositionState,
     lp: &mut LeptonHeader,
@@ -350,6 +357,11 @@ fn decode_baseline_rst<R: Read>(
     image_data: &mut [BlockBasedImage],
     do_handoff: &mut bool,
 ) -> Result<JPegDecodeStatus> {
+    // should have both AC and DC components
+    lp.jpeg_header
+        .verify_huffman_table(true, true)
+        .context(here!())?;
+
     let mut sta = JPegDecodeStatus::DecodeInProgress;
     let mut lastdc = [0i16; 4]; // (re)set last DCs for diff coding
 
