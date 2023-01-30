@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::block_based_image::ExpandedBlockData;
+use super::block_based_image::AlignedBlock;
 
 use wide::i32x8;
 
@@ -32,7 +32,7 @@ const R2: i32 = 181; // 256/sqrt(2)
 fn get_raster<const IGNORE_DC: bool>(
     offset: usize,
     stride: usize,
-    block: &ExpandedBlockData,
+    block: &AlignedBlock,
 ) -> i32x8 {
     return i32x8::new([
         block.get_coefficient_raster(7 * stride + offset) as i32,
@@ -100,7 +100,7 @@ fn transpose(
 
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(
-    block: &ExpandedBlockData,
+    block: &AlignedBlock,
     q: &[u16; 64],
     outp: &mut [i16; 64],
 ) {
@@ -219,7 +219,7 @@ pub fn run_idct<const IGNORE_DC: bool>(
 use std::num::Wrapping;
 
 #[cfg(feature = "verify_old_dct")]
-fn verify_behavior(block: &ExpandedBlockData, q: &[u16; 64], new_outp: &[i16; 64]) -> bool {
+fn verify_behavior(block: &AlignedBlock, q: &[u16; 64], new_outp: &[i16; 64]) -> bool {
     let mut outp_orig = [0; 64];
     run_idct_old(block, q, &mut outp_orig, true);
 
@@ -233,7 +233,7 @@ fn mul(a: i16, b: u16) -> Wrapping<i32> {
 
 #[cfg(feature = "verify_old_dct")]
 pub fn run_idct_old(
-    block: &ExpandedBlockData,
+    block: &AlignedBlock,
     q: &[u16; 64],
     outp: &mut [i16; 64],
     ignore_dc: bool,

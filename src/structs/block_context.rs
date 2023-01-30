@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::block_based_image::{BlockBasedImage, ExpandedBlockData};
+use super::block_based_image::{BlockBasedImage, AlignedBlock};
 use super::neighbor_summary::NeighborSummary;
 
 pub struct BlockContext {
@@ -66,27 +66,27 @@ impl BlockContext {
         };
     }
 
-    pub fn here<'a>(&self, image_data: &'a BlockBasedImage) -> &'a ExpandedBlockData {
+    pub fn here<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
         let retval = image_data.get_block(self.cur_block_index);
         return retval;
     }
 
-    pub fn here_mut<'a>(&self, image_data: &'a mut BlockBasedImage) -> &'a mut ExpandedBlockData {
+    pub fn here_mut<'a>(&self, image_data: &'a mut BlockBasedImage) -> &'a mut AlignedBlock {
         let retval = image_data.get_block_mut(self.cur_block_index);
         return retval;
     }
 
-    pub fn left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a ExpandedBlockData {
+    pub fn left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
         let retval = image_data.get_block(self.cur_block_index - 1);
         return retval;
     }
 
-    pub fn above<'a>(&self, image_data: &'a BlockBasedImage) -> &'a ExpandedBlockData {
+    pub fn above<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
         let retval = image_data.get_block(self.above_block_index);
         return retval;
     }
 
-    pub fn above_left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a ExpandedBlockData {
+    pub fn above_left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
         let retval = image_data.get_block(self.above_block_index - 1);
         return retval;
     }

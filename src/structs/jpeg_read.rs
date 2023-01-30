@@ -39,7 +39,7 @@ use std::io::Read;
 use crate::helpers::here;
 
 use super::bit_reader::BitReader;
-use super::block_based_image::{BlockBasedImage, ExpandedBlockData};
+use super::block_based_image::{BlockBasedImage, AlignedBlock};
 use super::jpeg_position_state::JpegPositionState;
 use super::lepton_format::LeptonHeader;
 use super::thread_handoff::ThreadHandoff;
@@ -388,7 +388,7 @@ fn decode_baseline_rst<R: Read>(
         // prepare zigzagged block
         let mut zzblock = [0i16; 64];
         for bpos in 0..eob {
-            ExpandedBlockData::set_coefficient_zigzag_block(&mut zzblock, bpos as u8, block[bpos]);
+            AlignedBlock::set_coefficient_zigzag_block(&mut zzblock, bpos as u8, block[bpos]);
         }
 
         // set block data
