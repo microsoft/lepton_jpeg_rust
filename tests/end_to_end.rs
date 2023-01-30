@@ -10,6 +10,7 @@ use std::{io::Cursor, path::Path};
 use std::fs::File;
 use std::io::Read;
 
+use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage};
 use lepton_jpeg::{
     decode_lepton, encode_lepton,
     lepton_error::{ExitCode, LeptonError},
@@ -169,4 +170,39 @@ fn verify_nonoptimal() {
             false,
         ),
     );
+}
+
+#[test]
+fn extern_interface()
+{
+    let input = read_file("slrcity", ".jpg");
+
+    let mut compressed = Vec::new();
+
+    compressed.resize(input.len() + 10000, 0);
+
+    let mut result_size : u64 = 0;
+
+    unsafe
+    {
+        let retval = WrapperCompressImage(input[..].as_ptr(), input.len() as u64, compressed[..].as_mut_ptr(), compressed.len() as u64, 8, (&mut result_size) as *mut u64);
+
+        assert_eq!(retval, 0);
+    }
+
+    let mut original = Vec::new();
+    original.resize(input.len() + 10000, 0);
+
+    let mut original_size : u64 = 0;
+    unsafe
+    {
+        let retval = WrapperDecompressImage(compressed[..].as_ptr(), result_size, original[..].as_mut_ptr(), original.len() as u64, 8, (&mut original_size) as *mut u64);
+
+        assert_eq!(retval, 0);
+    }
+    assert_eq!(input.len() as u64, original_size);
+    assert_eq!(input[..], original[..(original_size as usize)]);
+
+
+   
 }
