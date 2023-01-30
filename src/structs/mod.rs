@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
- mod bit_reader;
+mod bit_reader;
 mod bit_writer;
 mod block_based_image;
 mod block_context;

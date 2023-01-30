@@ -9,9 +9,9 @@ use anyhow::{Context, Result};
 use std::cmp;
 use std::io::Write;
 
+use crate::consts::*;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
-use crate::{consts::*};
 
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
