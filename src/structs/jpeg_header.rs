@@ -188,7 +188,7 @@ impl JPegHeader {
         for cmp in 0..self.cmpc {
             if (self.cmp_info[cmp].sfv == 0)
                 || (self.cmp_info[cmp].sfh == 0)
-                || (usize::from(self.cmp_info[cmp].q_table_index) >= self.q_tables.len())
+                || (self.q_tables[usize::from(self.cmp_info[cmp].q_table_index)][0] == 0)
                 || (self.jpeg_type == JPegType::Unknown)
             {
                 return err_exit_code(
