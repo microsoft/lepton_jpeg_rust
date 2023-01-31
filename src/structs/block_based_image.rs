@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use log::info;
+
 use crate::consts::{ALIGNED_BLOCK_INDEX_DC_INDEX, RASTER_TO_ALIGNED, ZIGZAG_TO_ALIGNED};
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
@@ -88,7 +90,7 @@ impl BlockBasedImage {
 
     #[allow(dead_code)]
     pub fn dump(&self) {
-        println!(
+        info!(
             "size = {0}, capacity = {1}, dpos_offset = {2}",
             self.image.len(),
             self.image.capacity(),
