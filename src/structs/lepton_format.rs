@@ -1469,18 +1469,6 @@ fn prepare_to_decode_next_scan<R: Read>(lp: &mut LeptonHeader, reader: &mut R) -
         return Ok(false);
     }
 
-    // check if huffman tables are available
-    for icsc in 0..lp.jpeg_header.cs_cmpc {
-        let icmp = lp.jpeg_header.cs_cmp[icsc];
-        if ((lp.jpeg_header.cs_sal == 0)
-            && (lp.jpeg_header.ht_set[0][lp.jpeg_header.cmp_info[icmp].huff_dc as usize] == 0))
-            || ((lp.jpeg_header.cs_sah > 0)
-                && (lp.jpeg_header.ht_set[1][lp.jpeg_header.cmp_info[icmp].huff_ac as usize] == 0))
-        {
-            return err_exit_code(ExitCode::UnsupportedJpeg, "huffman table missing");
-        }
-    }
-
     lp.max_bpos = cmp::max(lp.max_bpos, lp.jpeg_header.cs_to as i32);
 
     // FIXME: not sure why only first bit of csSah is examined but 4 bits of it are stored
