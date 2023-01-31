@@ -170,7 +170,7 @@ pub fn read_jpeg<R: Read + Seek>(
         );
     }
 
-        if lp.jpeg_header.jpeg_type == JPegType::Sequential {
+    if lp.jpeg_header.jpeg_type == JPegType::Sequential {
         if lp.early_eof_encountered {
             lp.truncate_components
                 .set_truncation_bounds(&lp.jpeg_header, lp.max_dpos);
@@ -1226,11 +1226,10 @@ impl LeptonHeader {
             self.raw_jpeg_header.append(&mut output);
             return Ok(true);
         } else {
-
             // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
             // but we don't want the EOI since that goes into the garbage data.
             if output.len() > 2 {
-                self.raw_jpeg_header.extend(&output[0..output.len()-2]);
+                self.raw_jpeg_header.extend(&output[0..output.len() - 2]);
             }
 
             return Ok(false);
