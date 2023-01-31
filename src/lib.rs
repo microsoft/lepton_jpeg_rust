@@ -80,7 +80,14 @@ pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
     enabled_features: &EnabledFeatures,
 ) -> Result<(), LeptonError> {
     let mut total_cpu_time = Duration::ZERO;
-    encode_lepton_wrapper(reader, writer, max_threads, enabled_features, &mut total_cpu_time).map_err(translate_error)
+    encode_lepton_wrapper(
+        reader,
+        writer,
+        max_threads,
+        enabled_features,
+        &mut total_cpu_time,
+    )
+    .map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
