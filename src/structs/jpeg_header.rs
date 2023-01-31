@@ -243,6 +243,27 @@ impl JPegHeader {
         return Ok(true);
     }
 
+    /// verifies that the huffman tables for the given types are present for the current scan, and if not, return an error
+    pub fn verify_huffman_table(&self, dc_present: bool, ac_present: bool) -> Result<()> {
+        for icsc in 0..self.cs_cmpc {
+            let icmp = self.cs_cmp[icsc];
+
+            if dc_present && self.ht_set[0][self.cmp_info[icmp].huff_dc as usize] == 0 {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    format!("DC huffman table missing for component {0}", icmp).as_str(),
+                );
+            } else if ac_present && self.ht_set[1][self.cmp_info[icmp].huff_ac as usize] == 0 {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    format!("AC huffman table missing for component {0}", icmp).as_str(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     // returns true we should continue parsing headers or false if we hit SOS and should stop
     fn parse_next_segment<R: Read>(&mut self, reader: &mut R) -> Result<ParseSegmentResult> {
         let mut header = [0u8; 4];
