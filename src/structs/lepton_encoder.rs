@@ -285,7 +285,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let block = context.here(image_data);
 
     #[cfg(feature = "detailed_tracing")]
-    println!(
+    trace!(
         "block {0}:{1:x}",
         context.get_here_index(),
         block.get_hash()

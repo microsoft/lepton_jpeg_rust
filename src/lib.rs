@@ -19,6 +19,7 @@ use core::result::Result;
 use std::panic::catch_unwind;
 
 use std::io::{Cursor, Read, Seek, Write};
+use std::time::Duration;
 
 use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper};
 
@@ -47,7 +48,8 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
     writer: &mut W,
     num_threads: usize,
 ) -> Result<(), LeptonError> {
-    decode_lepton_wrapper(reader, writer, num_threads).map_err(translate_error)
+    let mut total_cpu_time = Duration::ZERO;
+    decode_lepton_wrapper(reader, writer, num_threads, &mut total_cpu_time).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -57,6 +59,7 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     max_threads: usize,
     no_progressive: bool,
 ) -> Result<(), LeptonError> {
+    let mut total_cpu_time = Duration::ZERO;
     encode_lepton_wrapper(
         reader,
         writer,
@@ -64,6 +67,7 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
         &EnabledFeatures {
             progressive: !no_progressive,
         },
+        &mut total_cpu_time,
     )
     .map_err(translate_error)
 }
@@ -75,7 +79,8 @@ pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
     max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<(), LeptonError> {
-    encode_lepton_wrapper(reader, writer, max_threads, enabled_features).map_err(translate_error)
+    let mut total_cpu_time = Duration::ZERO;
+    encode_lepton_wrapper(reader, writer, max_threads, enabled_features, &mut total_cpu_time).map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -96,11 +101,14 @@ pub unsafe extern "C" fn WrapperCompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
+        let mut total_cpu_time = Duration::ZERO;
+
         match encode_lepton_wrapper(
             &mut reader,
             &mut writer,
             number_of_threads as usize,
             &EnabledFeatures::all(),
+            &mut total_cpu_time,
         ) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
@@ -145,7 +153,14 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match decode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize) {
+        let mut total_cpu_time = Duration::ZERO;
+
+        match decode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            &mut total_cpu_time,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 return translate_error(e).exit_code as i32;
