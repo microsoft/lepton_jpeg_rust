@@ -63,15 +63,13 @@ impl HuffCodes {
 
 #[derive(Copy, Clone, Debug)]
 pub struct HuffTree {
-    pub left: [u16; 256],
-    pub right: [u16; 256],
+    pub node: [[u16; 2]; 256],
 }
 
 impl HuffTree {
     pub fn new() -> Self {
         HuffTree {
-            left: [0; 256],
-            right: [0; 256],
+            node: [[0; 2]; 256],
         }
     }
 }
@@ -692,19 +690,19 @@ impl JPegHeader {
                 while j > 0 {
                     if node <= 0xff {
                         if bitn(hc.c_val[i], j) == 1 {
-                            if ht.right[node] == 0 {
-                                ht.right[node] = nextfree;
+                            if ht.node[node][1] == 0 {
+                                ht.node[node][1] = nextfree;
                                 nextfree += 1;
                             }
 
-                            node = usize::from(ht.right[node]);
+                            node = usize::from(ht.node[node][1]);
                         } else {
-                            if ht.left[node] == 0 {
-                                ht.left[node] = nextfree;
+                            if ht.node[node][0] == 0 {
+                                ht.node[node][0] = nextfree;
                                 nextfree += 1;
                             }
 
-                            node = usize::from(ht.left[node]);
+                            node = usize::from(ht.node[node][0]);
                         }
                     } else {
                         // we accept any .lep file that was encoded this way
@@ -724,9 +722,9 @@ impl JPegHeader {
                 // last link is number of targetvalue + 256
                 if hc.c_len[i] > 0 {
                     if bitn(hc.c_val[i], 0) == 1 {
-                        ht.right[node] = (i + 256) as u16;
+                        ht.node[node][1] = (i + 256) as u16;
                     } else {
-                        ht.left[node] = (i + 256) as u16;
+                        ht.node[node][0] = (i + 256) as u16;
                     }
                 }
             } else {
@@ -734,6 +732,16 @@ impl JPegHeader {
                 if is_encoding {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "Huffman table out of space");
                 }
+            }
+        }
+
+        // for every illegal code node, store 0xffff we should never get here, but it will avoid an infinite loop in the case of a bug
+        for x in &mut ht.node {
+            if x[0] == 0 {
+                x[0] = 0xffff;
+            }
+            if x[1] == 0 {
+                x[1] = 0xffff;
             }
         }
 
