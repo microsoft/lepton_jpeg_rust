@@ -5,6 +5,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use cpu_time::ThreadTime;
+use log::{info, warn};
 use std::cmp;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::swap;
@@ -12,6 +14,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::thread::ScopedJoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
@@ -42,6 +45,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
+    worker_thread_cpu_time: &mut Duration,
 ) -> Result<()> {
     // figure out how long the input is
     let orig_pos = reader.stream_position()?;
@@ -52,7 +56,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
 
     lh.read_lepton_header(reader).context(here!())?;
 
-    lh.recode_jpeg(writer, reader, size, num_threads)
+    lh.recode_jpeg(writer, reader, size, num_threads, worker_thread_cpu_time)
         .context(here!())?;
 
     return Ok(());
@@ -64,6 +68,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
     writer: &mut W,
     max_threads: usize,
     disable_progressive: bool,
+    worker_thread_cpu_time: &mut Duration,
 ) -> Result<()> {
     let (lp, image_data) = read_jpeg(reader, disable_progressive, max_threads, |_jh| {})?;
 
@@ -75,6 +80,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         writer,
         &lp.thread_handoff[..],
         &image_data[..],
+        worker_thread_cpu_time,
     )
     .context(here!())?;
 
@@ -84,7 +90,10 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         .write_u32::<LittleEndian>(final_file_size as u32)
         .context(here!())?;
 
-    //println!("original size {0}, compressed size {1} bytes", lp.jpeg_file_size, final_file_size);
+    info!(
+        "original size {0}, compressed size {1} bytes",
+        lp.jpeg_file_size, final_file_size
+    );
 
     Ok(())
 }
@@ -160,7 +169,7 @@ pub fn read_jpeg<R: Read + Seek>(
         thread_handoff[i].segment_offset_in_file += start_scan;
 
         #[cfg(feature = "detailed_tracing")]
-        println!(
+        info!(
             "Crystalize: s:{0} ls: {1} le: {2} o: {3} nb: {4}",
             thread_handoff[i].segment_offset_in_file,
             thread_handoff[i].luma_y_start,
@@ -229,12 +238,15 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     reader: &mut R,
     last_data_position: u64,
     max_threads_to_use: usize,
+    worker_thread_cpu_time: &mut Duration,
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
         lh: &LeptonHeader,
     ) -> Result<P>,
 ) -> Result<Vec<P>> {
+    let wall_time = Instant::now();
+
     let pts = ProbabilityTablesSet::new();
     let mut qt = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
@@ -242,7 +254,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     }
 
     let r = thread::scope(|s| -> Result<Vec<P>> {
-        let mut running_threads: Vec<ScopedJoinHandle<Result<P>>> = Vec::new();
+        let mut running_threads: Vec<ScopedJoinHandle<Result<(P, Duration)>>> = Vec::new();
         let mut channel_to_sender = Vec::new();
 
         let pts_ref = &pts;
@@ -267,9 +279,11 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 rx_channels.push(Some(rx));
             }
 
-            println!("thread {0} with {1} iterations", t, iter_per_thread);
+            info!("thread {0} with {1} iterations", t, iter_per_thread);
 
-            running_threads.push(s.spawn(move || -> Result<P> {
+            running_threads.push(s.spawn(move || -> Result<(P, Duration)> {
+                let cpu_time = ThreadTime::now();
+
                 // determine how much we are going to write in total to presize the buffer
                 let mut decoded_size = 0;
                 for thread_id in start..end {
@@ -323,7 +337,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                     .context(here!())?;
                 }
 
-                return process(&combined_thread_handoff, image_data, lh);
+                process(&combined_thread_handoff, image_data, lh).map(|r| (r, cpu_time.elapsed()))
             }));
         }
 
@@ -357,7 +371,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 1024 << (2 * flags)
             };
 
-            //println!("offset {0} len {1}", reader.stream_position()?-2, data_length);
+            //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
 
             let mut buffer = Vec::<u8>::new();
             buffer.resize(data_length as usize, 0);
@@ -375,17 +389,31 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 .send(Message::WriteBlock(thread_id, buffer))
                 .context(here!())?;
         }
-        //println!("done sending!");
+        //info!("done sending!");
 
         for c in channel_to_sender {
             // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
             let _ = c.send(Message::Eof);
         }
 
+        let mut cpu_time_worker = Duration::ZERO;
+
         let mut result = Vec::new();
         for i in running_threads.drain(..) {
-            result.push(i.join().unwrap().context(here!())?);
+            let thread_result = i.join().unwrap().context(here!())?;
+
+            cpu_time_worker += thread_result.1;
+
+            result.push(thread_result.0);
         }
+
+        info!(
+            "worker threads {0}ms of CPU time in {1}ms of wall time",
+            cpu_time_worker.as_millis(),
+            wall_time.elapsed().as_millis()
+        );
+
+        *worker_thread_cpu_time += cpu_time_worker;
 
         return Ok(result);
     })
@@ -394,13 +422,17 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     Ok(r)
 }
 
+/// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
 fn run_lepton_encoder_threads<W: Write + Seek>(
     jpeg_header: &JPegHeader,
     colldata: &TruncateComponents,
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
     image_data: &[BlockBasedImage],
+    worker_thread_cpu_time: &mut Duration,
 ) -> Result<()> {
+    let wall_time = Instant::now();
+
     // Get number of threads. Verify that it is at most MAX_THREADS and fits in 4 bits for serialization.
     let num_threads = thread_handoffs.len();
     assert!(
@@ -421,6 +453,8 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     let mut sizes = Vec::<u64>::new();
     sizes.resize(thread_handoffs.len(), 0);
 
+    let mut cpu_time_worker = Duration::ZERO;
+
     thread::scope(|s| -> Result<()> {
         let (tx, rx) = channel();
 
@@ -429,7 +463,9 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
         for i in 0..thread_handoffs.len() {
             let cloned_sender = tx.clone();
 
-            running_threads.push(s.spawn(move || -> Result<()> {
+            running_threads.push(s.spawn(move || -> Result<Duration> {
+                let cpu_time = ThreadTime::now();
+
                 let thread_id = i;
                 let mut thread_writer = MessageSender {
                     thread_id: thread_id as u8,
@@ -455,7 +491,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
 
                 thread_writer.sender.send(Message::Eof).context(here!())?;
 
-                Ok(())
+                Ok(cpu_time.elapsed())
             }));
         }
 
@@ -473,8 +509,6 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
                 }
                 Ok(Message::WriteBlock(thread_id, b)) => {
                     let l = b.len() - 1;
-
-                    //println!("offset {0} - {1}b", writer.stream_position()?, b.len());
 
                     writer.write_u8(thread_id).context(here!())?;
                     writer.write_u8((l & 0xff) as u8).context(here!())?;
@@ -498,14 +532,26 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
             }
         }
 
+        for result in running_threads.drain(..) {
+            cpu_time_worker += result.join().unwrap().unwrap();
+        }
+
         return Ok(());
     })
     .context(here!())?;
 
     for i in 0..thread_handoffs.len() {
-        println!("handoff {0} output size = {1}", i, sizes[i]);
+        info!("handoff {0} output size = {1}", i, sizes[i]);
     }
-    println!("total uncompressed size = {0}", sizes.iter().sum::<u64>());
+    info!("total uncompressed size = {0}", sizes.iter().sum::<u64>());
+
+    info!(
+        "worker threads {0}ms of CPU time in {1}ms of wall time",
+        cpu_time_worker.as_millis(),
+        wall_time.elapsed().as_millis()
+    );
+
+    *worker_thread_cpu_time += cpu_time_worker;
 
     Ok(())
 }
@@ -600,6 +646,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        worker_thread_cpu_time: &mut Duration,
     ) -> Result<(), anyhow::Error> {
         writer.write_all(&SOI)?;
 
@@ -609,11 +656,23 @@ impl LeptonHeader {
             .context(here!())?;
 
         if self.jpeg_header.jpeg_type == JPegType::Progressive {
-            self.recode_progressive_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?;
+            self.recode_progressive_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                num_threads,
+                worker_thread_cpu_time,
+            )
+            .context(here!())?;
         } else {
-            self.recode_baseline_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?;
+            self.recode_baseline_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                num_threads,
+                worker_thread_cpu_time,
+            )
+            .context(here!())?;
         }
 
         if !self.early_eof_encountered {
@@ -633,6 +692,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        worker_thread_cpu_time: &mut Duration,
     ) -> Result<Vec<BlockBasedImage>> {
         // run the threads first, since we need everything before we can start decoding
         let mut results = run_lepton_decoder_threads(
@@ -640,6 +700,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            worker_thread_cpu_time,
             |_thread_handoff, image_data, _lh| {
                 // just return the image data directly to be merged together
                 return Ok(image_data);
@@ -679,10 +740,16 @@ impl LeptonHeader {
         last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
+        worker_thread_cpu_time: &mut Duration,
     ) -> Result<()> {
         // run the threads first, since we need everything before we can start decoding
         let merged = self
-            .decode_as_single_image(reader, last_data_position, num_threads)
+            .decode_as_single_image(
+                reader,
+                last_data_position,
+                num_threads,
+                worker_thread_cpu_time,
+            )
             .context(here!())?;
 
         loop {
@@ -716,6 +783,7 @@ impl LeptonHeader {
         last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
+        worker_thread_cpu_time: &mut Duration,
     ) -> Result<()> {
         // step 2: recode image data
         let results = run_lepton_decoder_threads(
@@ -723,6 +791,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            worker_thread_cpu_time,
             |thread_handoff, image_data, lh| {
                 let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
                 let mut cursor = Cursor::new(&mut result_buffer);
@@ -745,7 +814,7 @@ impl LeptonHeader {
                 .context(here!())?;
 
                 #[cfg(detailed_tracing)]
-                println!("ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}", 
+                info!("ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}", 
                 combined_thread_handoff.luma_y_start,
                 combined_thread_handoff.segment_size,
                 cursor.position() - _start_size,
@@ -755,7 +824,7 @@ impl LeptonHeader {
             );
 
                 if result_buffer.len() > thread_handoff.segment_size as usize {
-                    println!("warning: truncating segment");
+                    warn!("warning: truncating segment");
                     result_buffer.resize(thread_handoff.segment_size as usize, 0);
                 }
 
@@ -1037,26 +1106,6 @@ impl LeptonHeader {
             self.write_lepton_jpeg_garbage_if_needed(&mut mrw, false)?;
         }
 
-        /*
-        for i in 0..lepton_header.len()
-        {
-            if lepton_header[i] < 32 ||  lepton_header[i] > 127
-            {
-                print!("0x{0:x} ", lepton_header[i]);
-            }
-            else
-            {
-                print!("{0}", lepton_header[i] as char);
-            }
-
-            if i % 10 == 0
-            {
-                println!();
-            }
-        }
-        println!();
-        */
-
         let mut compressed_header = Vec::<u8>::new(); // we collect a zlib compressed version of the header here
         {
             let mut c = Cursor::new(&mut compressed_header);
@@ -1233,7 +1282,7 @@ fn split_row_handoffs_to_threads(
     let num_threads =
         get_number_of_threads_for_encoding(num_rows, framebuffer_byte_size, max_threads_to_use);
 
-    println!("Number of threads: {0}", num_threads);
+    info!("Number of threads: {0}", num_threads);
 
     let mut selected_splits = Vec::with_capacity(num_threads as usize);
 
@@ -1418,18 +1467,6 @@ fn prepare_to_decode_next_scan<R: Read>(lp: &mut LeptonHeader, reader: &mut R) -
     // parse the header and store it in the raw_jpeg_header
     if !lp.parse_jpeg_header(reader).context(here!())? {
         return Ok(false);
-    }
-
-    // check if huffman tables are available
-    for icsc in 0..lp.jpeg_header.cs_cmpc {
-        let icmp = lp.jpeg_header.cs_cmp[icsc];
-        if ((lp.jpeg_header.cs_sal == 0)
-            && (lp.jpeg_header.ht_set[0][lp.jpeg_header.cmp_info[icmp].huff_dc as usize] == 0))
-            || ((lp.jpeg_header.cs_sah > 0)
-                && (lp.jpeg_header.ht_set[1][lp.jpeg_header.cmp_info[icmp].huff_ac as usize] == 0))
-        {
-            return err_exit_code(ExitCode::UnsupportedJpeg, "huffman table missing");
-        }
     }
 
     lp.max_bpos = cmp::max(lp.max_bpos, lp.jpeg_header.cs_to as i32);

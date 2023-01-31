@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use log::info;
+
 use crate::consts::{ALIGNED_BLOCK_INDEX_DC_INDEX, RASTER_TO_ALIGNED, ZIGZAG_TO_ALIGNED};
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
@@ -18,10 +20,10 @@ pub struct BlockBasedImage {
 
     dpos_offset: i32,
 
-    image: Vec<ExpandedBlockData>,
+    image: Vec<AlignedBlock>,
 }
 
-static EMPTY: ExpandedBlockData = ExpandedBlockData { raw_data: [0; 64] };
+static EMPTY: AlignedBlock = AlignedBlock { raw_data: [0; 64] };
 
 impl BlockBasedImage {
     // constructs new block image for the given y-coordinate range
@@ -88,7 +90,7 @@ impl BlockBasedImage {
 
     #[allow(dead_code)]
     pub fn dump(&self) {
-        println!(
+        info!(
             "size = {0}, capacity = {1}, dpos_offset = {2}",
             self.image.len(),
             self.image.capacity(),
@@ -130,18 +132,18 @@ impl BlockBasedImage {
             if self.image.len() >= self.image.capacity() {
                 panic!("out of memory");
             }
-            self.image.push(ExpandedBlockData { raw_data: [0; 64] });
+            self.image.push(AlignedBlock { raw_data: [0; 64] });
         }
     }
 
     pub fn set_block_data(&mut self, dpos: i32, block_data: &[i16; 64]) {
         self.fill_up_to_dpos(dpos);
-        self.image[(dpos - self.dpos_offset) as usize] = ExpandedBlockData {
+        self.image[(dpos - self.dpos_offset) as usize] = AlignedBlock {
             raw_data: *block_data,
         };
     }
 
-    pub fn get_block(&self, dpos: i32) -> &ExpandedBlockData {
+    pub fn get_block(&self, dpos: i32) -> &AlignedBlock {
         if (dpos - self.dpos_offset) as usize >= self.image.len() {
             return &EMPTY;
         } else {
@@ -149,17 +151,19 @@ impl BlockBasedImage {
         }
     }
 
-    pub fn get_block_mut(&mut self, dpos: i32) -> &mut ExpandedBlockData {
+    pub fn get_block_mut(&mut self, dpos: i32) -> &mut AlignedBlock {
         self.fill_up_to_dpos(dpos);
         return &mut self.image[(dpos - self.dpos_offset) as usize];
     }
 }
 
-pub struct ExpandedBlockData {
+/// block of 64 coefficients in the aligned order, which is similar to zigzag except that the 7x7 lower right square comes first,
+/// followed by the DC, followed by the edges
+pub struct AlignedBlock {
     raw_data: [i16; 64],
 }
 
-impl ExpandedBlockData {
+impl AlignedBlock {
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[ALIGNED_BLOCK_INDEX_DC_INDEX];
     }
