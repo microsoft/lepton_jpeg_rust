@@ -17,6 +17,7 @@ use core::result::Result;
 use std::panic::catch_unwind;
 
 use std::io::{Cursor, Read, Seek, Write};
+use std::time::Duration;
 
 use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper};
 
@@ -45,7 +46,8 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
     writer: &mut W,
     num_threads: usize,
 ) -> Result<(), LeptonError> {
-    decode_lepton_wrapper(reader, writer, num_threads).map_err(translate_error)
+    let mut total_cpu_time = Duration::ZERO;
+    decode_lepton_wrapper(reader, writer, num_threads, &mut total_cpu_time).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -55,7 +57,15 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     max_threads: usize,
     no_progressive: bool,
 ) -> Result<(), LeptonError> {
-    encode_lepton_wrapper(reader, writer, max_threads, no_progressive).map_err(translate_error)
+    let mut total_cpu_time = Duration::ZERO;
+    encode_lepton_wrapper(
+        reader,
+        writer,
+        max_threads,
+        no_progressive,
+        &mut total_cpu_time,
+    )
+    .map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -76,7 +86,15 @@ pub unsafe extern "C" fn WrapperCompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match encode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize, false) {
+        let mut total_cpu_time = Duration::ZERO;
+
+        match encode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            false,
+            &mut total_cpu_time,
+        ) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
                 // try to extract the exit code if it was a well known error
@@ -120,7 +138,14 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match decode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize) {
+        let mut total_cpu_time = Duration::ZERO;
+
+        match decode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            &mut total_cpu_time,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 return translate_error(e).exit_code as i32;

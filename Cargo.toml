@@ -28,6 +28,9 @@ flate2 = "1.0.25"
 default-boxed = "0.2.0"
 anyhow = { version="1.0.68", features = ["backtrace"]}
 wide = "0.7.5"
+log = "0.4.17"
+simple_logger ="4.0.0"
+cpu-time = "1.0.0"
 
 [dev-dependencies]
 rstest = "0.16.0"
