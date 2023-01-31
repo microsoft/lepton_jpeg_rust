@@ -9,8 +9,10 @@ mod helpers;
 mod jpeg_code;
 mod structs;
 
+pub mod enabled_features;
 pub mod lepton_error;
 
+use crate::enabled_features::EnabledFeatures;
 use crate::lepton_error::{ExitCode, LeptonError};
 
 use core::result::Result;
@@ -55,7 +57,25 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     max_threads: usize,
     no_progressive: bool,
 ) -> Result<(), LeptonError> {
-    encode_lepton_wrapper(reader, writer, max_threads, no_progressive).map_err(translate_error)
+    encode_lepton_wrapper(
+        reader,
+        writer,
+        max_threads,
+        &EnabledFeatures {
+            progressive: !no_progressive,
+        },
+    )
+    .map_err(translate_error)
+}
+
+/// Encodes JPEG as compressed Lepton format.
+pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
+    reader: &mut R,
+    writer: &mut W,
+    max_threads: usize,
+    enabled_features: &EnabledFeatures,
+) -> Result<(), LeptonError> {
+    encode_lepton_wrapper(reader, writer, max_threads, enabled_features).map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -76,7 +96,12 @@ pub unsafe extern "C" fn WrapperCompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match encode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize, false) {
+        match encode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            &EnabledFeatures::all(),
+        ) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
                 // try to extract the exit code if it was a well known error

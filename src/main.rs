@@ -5,6 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 mod consts;
+mod enabled_features;
 mod helpers;
 mod jpeg_code;
 mod lepton_error;
@@ -24,6 +25,7 @@ use std::{
     time::Instant,
 };
 
+use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
 use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper, LeptonHeader};
 
@@ -45,7 +47,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut verify = false;
     let mut dump = false;
     let mut all = false;
-    let mut disable_progressive = false;
+    let mut enabled_features = EnabledFeatures::all();
 
     for i in 1..args.len() {
         if args[i].starts_with("-") {
@@ -60,7 +62,7 @@ fn main_with_result() -> anyhow::Result<()> {
             } else if args[i] == "-verify" {
                 verify = true;
             } else if args[i] == "-noprogressive" {
-                disable_progressive = true;
+                enabled_features.progressive = false;
             } else {
                 return err_exit_code(
                     ExitCode::SyntaxError,
@@ -82,11 +84,16 @@ fn main_with_result() -> anyhow::Result<()> {
         let block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
-            (lh, block_image) = read_jpeg(&mut reader, false, num_threads as usize, |jh| {
-                println!("parsed header:");
-                let s = format!("{jh:?}");
-                println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-            })
+            (lh, block_image) = read_jpeg(
+                &mut reader,
+                &EnabledFeatures::all(),
+                num_threads as usize,
+                |jh| {
+                    println!("parsed header:");
+                    let s = format!("{jh:?}");
+                    println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+                },
+            )
             .context(here!())?;
         } else {
             lh = LeptonHeader::new();
@@ -160,7 +167,7 @@ fn main_with_result() -> anyhow::Result<()> {
                     &mut input_cursor,
                     &mut output_cursor,
                     num_threads as usize,
-                    disable_progressive,
+                    &enabled_features,
                 )
                 .context(here!())?;
             }
@@ -229,7 +236,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 &mut reader,
                 &mut writer,
                 num_threads as usize,
-                disable_progressive,
+                &enabled_features,
             )
             .context(here!())?;
         } else {
