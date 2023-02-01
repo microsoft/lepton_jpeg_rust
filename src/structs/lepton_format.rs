@@ -179,8 +179,31 @@ pub fn read_jpeg<R: Read + Seek>(
         );
     }
 
-    if lp.early_eof_encountered {
-        if lp.jpeg_header.jpeg_type != JPegType::Sequential {
+    if lp.jpeg_header.jpeg_type == JPegType::Sequential {
+        if lp.early_eof_encountered {
+            lp.truncate_components
+                .set_truncation_bounds(&lp.jpeg_header, lp.max_dpos);
+
+            // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
+            // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
+            // even if early EOF was set to true.
+            reader.seek(SeekFrom::Current(-2))?;
+            lp.garbage_data.resize(2, 0);
+            reader.read_exact(&mut lp.garbage_data)?;
+
+            // take these two last bytes off the last segment. For some reason the C++/CS version only chop of one byte
+            // and then fix up the broken file later in the decoder. The following logic will create a valid file
+            // that the C++ and CS version will still decode properly without the fixup logic.
+            let len = thread_handoff.len();
+            thread_handoff[len - 1].segment_size -= 2;
+        }
+
+        // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
+        reader.read_to_end(&mut lp.garbage_data).context(here!())?;
+    } else {
+        assert!(lp.jpeg_header.jpeg_type == JPegType::Progressive);
+
+        if lp.early_eof_encountered {
             return err_exit_code(
                 ExitCode::UnsupportedJpeg,
                 "truncation is only supported for baseline images",
@@ -188,25 +211,6 @@ pub fn read_jpeg<R: Read + Seek>(
             .context(here!());
         }
 
-        lp.truncate_components
-            .set_truncation_bounds(&lp.jpeg_header, lp.max_dpos);
-
-        // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
-        // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
-        // even if early EOF was set to true.
-        reader.seek(SeekFrom::Current(-2))?;
-        lp.garbage_data.resize(2, 0);
-        reader.read_exact(&mut lp.garbage_data)?;
-
-        // take these two last bytes off the last segment. For some reason the C++/CS version only chop of one byte
-        // and then fix up the broken file later in the decoder. The following logic will create a valid file
-        // that the C++ and CS version will still decode properly without the fixup logic.
-        let len = thread_handoff.len();
-        thread_handoff[len - 1].segment_size -= 2;
-    } else if lp.jpeg_header.jpeg_type == JPegType::Sequential {
-        // rest of data is garbage data if it is a sequential jpeg
-        reader.read_to_end(&mut lp.garbage_data).context(here!())?;
-    } else {
         // for progressive images, loop around reading headers and decoding until we a complete image_data
         while prepare_to_decode_next_scan(&mut lp, reader).context(here!())? {
             callback(&lp.jpeg_header);
@@ -224,6 +228,16 @@ pub fn read_jpeg<R: Read + Seek>(
         }
 
         end_scan = reader.stream_position()? as i32;
+
+        // since prepare_to_decode_next_scan consumes the EOI,
+        // we need to add it to the beginning of the garbage data (if there is any)
+        lp.garbage_data = Vec::from(EOI);
+
+        // append the rest of the file to the buffer
+        if reader.read_to_end(&mut lp.garbage_data).context(here!())? == 0 {
+            // no need to record EOI garbage data if there wasn't anything read
+            lp.garbage_data.clear();
+        }
     }
 
     set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan as i32);
@@ -1261,6 +1275,12 @@ impl LeptonHeader {
             self.raw_jpeg_header.append(&mut output);
             return Ok(true);
         } else {
+            // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
+            // but we don't want the EOI since that goes into the garbage data.
+            if output.len() > 2 {
+                self.raw_jpeg_header.extend(&output[0..output.len() - 2]);
+            }
+
             return Ok(false);
         }
     }
