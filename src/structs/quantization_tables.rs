@@ -31,7 +31,10 @@ impl QuantizationTables {
             min_noise_threshold: [0; 64],
         };
 
-        retval.set_quantization_table(component, &jpeg_header.cmp_info[component].q_table);
+        retval.set_quantization_table(
+            component,
+            &jpeg_header.q_tables[usize::from(jpeg_header.cmp_info[component].q_table_index)],
+        );
 
         return retval;
     }

@@ -7,7 +7,7 @@
 #[derive(Debug)]
 pub struct ComponentInfo {
     /// quantization table
-    pub q_table: [u16; 64],
+    pub q_table_index: u8,
 
     /// no of huffman table (DC)
     pub huff_dc: u8,
@@ -52,7 +52,7 @@ pub struct ComponentInfo {
 impl ComponentInfo {
     pub fn new() -> ComponentInfo {
         return ComponentInfo {
-            q_table: [0; 64],
+            q_table_index: 0xff,
             sfv: -1,
             sfh: -1,
             mbs: -1,

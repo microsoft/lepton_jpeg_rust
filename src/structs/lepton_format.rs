@@ -23,6 +23,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
 use crate::consts::*;
+use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
@@ -67,10 +68,10 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     max_threads: usize,
-    disable_progressive: bool,
+    enabled_features: &EnabledFeatures,
     worker_thread_cpu_time: &mut Duration,
 ) -> Result<()> {
-    let (lp, image_data) = read_jpeg(reader, disable_progressive, max_threads, |_jh| {})?;
+    let (lp, image_data) = read_jpeg(reader, enabled_features, max_threads, |_jh| {})?;
 
     lp.write_lepton_header(writer).context(here!())?;
 
@@ -105,7 +106,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
 /// is currently only used by the dump utility for debugging purposes.
 pub fn read_jpeg<R: Read + Seek>(
     reader: &mut R,
-    disable_progressive: bool,
+    enabled_features: &EnabledFeatures,
     max_threads: usize,
     callback: fn(&JPegHeader),
 ) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
@@ -122,7 +123,7 @@ pub fn read_jpeg<R: Read + Seek>(
 
     callback(&lp.jpeg_header);
 
-    if disable_progressive && lp.jpeg_header.jpeg_type == JPegType::Progressive {
+    if !enabled_features.progressive && lp.jpeg_header.jpeg_type == JPegType::Progressive {
         return err_exit_code(
             ExitCode::ProgressiveUnsupported,
             "file is progressive, but this is disabled",

@@ -9,8 +9,10 @@ mod helpers;
 mod jpeg_code;
 mod structs;
 
+pub mod enabled_features;
 pub mod lepton_error;
 
+use crate::enabled_features::EnabledFeatures;
 use crate::lepton_error::{ExitCode, LeptonError};
 
 use core::result::Result;
@@ -62,7 +64,27 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
         reader,
         writer,
         max_threads,
-        no_progressive,
+        &EnabledFeatures {
+            progressive: !no_progressive,
+        },
+        &mut total_cpu_time,
+    )
+    .map_err(translate_error)
+}
+
+/// Encodes JPEG as compressed Lepton format.
+pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
+    reader: &mut R,
+    writer: &mut W,
+    max_threads: usize,
+    enabled_features: &EnabledFeatures,
+) -> Result<(), LeptonError> {
+    let mut total_cpu_time = Duration::ZERO;
+    encode_lepton_wrapper(
+        reader,
+        writer,
+        max_threads,
+        enabled_features,
         &mut total_cpu_time,
     )
     .map_err(translate_error)
@@ -92,7 +114,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             &mut reader,
             &mut writer,
             number_of_threads as usize,
-            false,
+            &EnabledFeatures::all(),
             &mut total_cpu_time,
         ) {
             Ok(_) => {}
