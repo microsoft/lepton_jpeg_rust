@@ -188,7 +188,7 @@ impl JPegHeader {
         for cmp in 0..self.cmpc {
             if (self.cmp_info[cmp].sfv == 0)
                 || (self.cmp_info[cmp].sfh == 0)
-                || (self.cmp_info[cmp].q_table[0] == 0)
+                || (self.q_tables[usize::from(self.cmp_info[cmp].q_table_index)][0] == 0)
                 || (self.jpeg_type == JPegType::Unknown)
             {
                 return err_exit_code(
@@ -494,13 +494,13 @@ impl JPegHeader {
                         return err_exit_code(ExitCode::SamplingBeyondTwoUnsupported, "Sampling type beyond to not supported");
                     }
 
-                    let quantization_table_value = usize::from(segment[hpos + 2]);
-                    if quantization_table_value >= self.q_tables.len()
+                    let quantization_table_value = segment[hpos + 2];
+                    if usize::from(quantization_table_value) >= self.q_tables.len()
                     {
                         return err_exit_code(ExitCode::UnsupportedJpeg,"quantizationTableValue too big");
                     }
 
-                    self.cmp_info[cmp].q_table = self.q_tables[quantization_table_value];
+                    self.cmp_info[cmp].q_table_index = quantization_table_value;
                     hpos += 3;
                 }
 

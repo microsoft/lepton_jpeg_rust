@@ -40,6 +40,7 @@ fn verify_decode(
         "androidcrop",
         "androidcropoptions",
         "androidprogressive",
+        "androidprogressive_garbage",
         "androidtrail",
         "colorswap",
         "gray2sf",
@@ -54,6 +55,7 @@ fn verify_decode(
         "iphoneprogressive",
         "iphoneprogressive2",
         "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
+        "out_of_order_dqt",     // image with quanatization table dqt that comes after image definition SOF
         "narrowrst",
         "nofsync",
         "slrcity",
@@ -87,6 +89,7 @@ fn verify_encode(
             "androidcrop",
             "androidcropoptions",
             "androidprogressive",
+            "androidprogressive_garbage",
             "androidtrail",
             "colorswap",
             "gray2sf",
@@ -101,6 +104,7 @@ fn verify_encode(
             "iphoneprogressive",
             "iphoneprogressive2",
             "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
+            "out_of_order_dqt",
             //"narrowrst",
             //"nofsync",
             "slrcity",
