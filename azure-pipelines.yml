@@ -14,7 +14,7 @@ steps:
   displayName: 'Install Rust '
   inputs:
     rustVersion: 'ms-1.65'
-    authenticationToken: $(CDP_DEFAULT_CLIENT_PACKAGE_PAT)
+    authenticationToken: $(RustInstallerToken)
     additionalTargets: 'i686-pc-windows-msvc'
 
 - script: |
