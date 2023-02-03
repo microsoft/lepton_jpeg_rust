@@ -7,13 +7,69 @@ trigger:
 - main
 
 pool:
-  vmImage: ubuntu-latest
+  name: Azure Pipelines
 
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+- task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
+  displayName: 'Install Rust '
+  inputs:
+    rustVersion: 'ms-1.65'
+    authenticationToken: $(CDP_DEFAULT_CLIENT_PACKAGE_PAT)
+    additionalTargets: 'i686-pc-windows-msvc'
 
 - script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+   cargo build --locked 2>&1
+   
+  displayName: 'Build debug'
+
+- script: |
+   cargo test --locked --lib -- -Z unstable-options --report-time  --format junit 1> $(System.DefaultWorkingDirectory)\TEST-rust.xml
+   echo content of xml
+   type $(System.DefaultWorkingDirectory)\TEST-rust.xml
+   echo end
+  displayName: 'Test debug'
+
+- task: PublishTestResults@2
+  displayName: 'Publish Test Results **/TEST-*.xml'
+  inputs:
+    mergeTestResults: true
+
+- script: 'cargo build --locked --release 2>&1'
+  displayName: 'Build Release'
+
+- task: CopyFiles@2
+  displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
+  inputs:
+    SourceFolder: '$(Build.SourcesDirectory)\rust'
+    Contents: |
+     target\debug\?(*.dll|*.exe|*.pdb)
+     target\release\?(*.dll|*.exe|*.pdb)
+     
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Artifact'
+  inputs:
+    ArtifactName: 'drop_rust'
+
+- task: PublishSymbols@2
+  displayName: 'Publish symbols copy'
+  inputs:
+    SymbolsFolder: '$(Build.ArtifactStagingDirectory)'
+    SearchPattern: '**\*.pdb'
+    SymbolServerType: TeamServices
+
+- task: NuGetCommand@2
+  displayName: 'NuGet pack'
+  inputs:
+    command: pack
+    packagesToPack: package/Lepton.OneDrive.Rust.nuspec
+
+- task: NuGetCommand@2
+  displayName: 'NuGet push'
+  inputs:
+    command: push
+    packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
+    publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
+    allowPackageConflicts: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'))
