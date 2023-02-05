@@ -465,7 +465,10 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     } else {
         [0; 64]
     };
+    
     let here = block_context.here(image_data).get_block().clone();
+
+    let here_mut = block_context.here_mut(image_data);
 
     for lane in 0..7 {
         if num_non_zeros_edge == 0 {
@@ -487,7 +490,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge -= 1;
         }
 
-        block_context.here_mut(image_data).set_coefficient(
+        here_mut.set_coefficient(
             aligned_block_offset as usize + (lane << log_edge_step),
             coef,
         );

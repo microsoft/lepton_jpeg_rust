@@ -131,8 +131,7 @@ impl ProbabilityTables {
 
             // compiler does a pretty amazing job with SSE/AVX2 here
             for i in 0..49 {
-                // approximate average of 3 without a divide
-                // (not sure why they didn't use 22 and 10 as the coefficients since it's divided by 32, but can't change without breaking the format)
+                // approximate average of 3 without a divide with double the weight for left/top vs diagonal
                 best_prior[i] = (((left[i].abs() as u32 + above[i].abs() as u32) * 13
                     + 6 * above_left[i].abs() as u32)
                     >> 5) as i16;
@@ -339,6 +338,7 @@ impl ProbabilityTables {
             dir_average += cur_est as i32;
         }
 
+        // compiler vectorizes this using pminsw and pmaxsw, so no need to optimize further
         *min_dc = min(
             *min_dc,
             min(
