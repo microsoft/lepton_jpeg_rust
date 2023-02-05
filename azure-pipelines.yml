@@ -40,7 +40,7 @@ steps:
 - task: CopyFiles@2
   displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
   inputs:
-    SourceFolder: '$(Build.SourcesDirectory)\rust'
+    SourceFolder: '$(Build.SourcesDirectory)'
     Contents: |
      target\debug\?(*.dll|*.exe|*.pdb)
      target\release\?(*.dll|*.exe|*.pdb)
