@@ -465,7 +465,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     } else {
         [0; 64]
     };
-    
+
     let here = block_context.here(image_data).get_block().clone();
 
     let here_mut = block_context.here_mut(image_data);
