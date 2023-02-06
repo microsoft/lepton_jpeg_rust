@@ -70,19 +70,21 @@ impl Metrics {
 
         sort_vec.sort_by(|a, b| a.1.total_compressed.cmp(&b.1.total_compressed).reverse());
 
+        let total_compressed: i64 = sort_vec.iter().map(|x| x.1.total_compressed).sum();
+
         for x in &sort_vec {
             let name = format!("{0:?}", x.0);
 
             println!(
-                "{0:20} total_bits={1:10} compressed_bits={2:10} ratio={3:10}",
+                "{0:16} total_bits={1:9} compressed_bits={2:9} ratio={3:4} (global improvement {4:10} bytes ({5:0.2}%)",
                 name,
                 x.1.total_bits,
                 x.1.total_compressed,
-                x.1.total_compressed * 100 / x.1.total_bits
+                x.1.total_compressed * 100 / x.1.total_bits,
+                (x.1.total_bits - x.1.total_compressed)/8,
+                ((x.1.total_bits - x.1.total_compressed) as f64)/(total_compressed as f64)*100f64
             );
         }
-
-        let total_compressed: i64 = sort_vec.iter().map(|x| x.1.total_compressed).sum();
 
         println!(
             "total_compressed = {0} bits, {1} bytes",
