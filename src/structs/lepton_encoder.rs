@@ -22,6 +22,7 @@ use crate::structs::{
 
 use default_boxed::DefaultBoxed;
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
     pts: &ProbabilityTablesSet,
     quantization_tables: &[QuantizationTables],
@@ -165,6 +166,7 @@ pub fn lepton_encode_row_range<W: Write>(
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn process_row<W: Write>(
     model: &mut Model,
     bool_writer: &mut VPXBoolWriter<W>,
@@ -243,21 +245,36 @@ fn process_row<W: Write>(
             .neighbor_context_here(num_non_zeros)
             .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
 
-        serialize_tokens::<W, false>(
-            state,
-            qt,
-            right_model,
-            model,
-            image_data,
-            num_non_zeros,
-            bool_writer,
-        )
-        .context(here!())?;
+        if right_model.is_all_present() {
+            serialize_tokens::<W, true>(
+                state,
+                qt,
+                right_model,
+                model,
+                image_data,
+                num_non_zeros,
+                bool_writer,
+            )
+            .context(here!())?;
+        } else {
+            serialize_tokens::<W, false>(
+                state,
+                qt,
+                right_model,
+                model,
+                image_data,
+                num_non_zeros,
+                bool_writer,
+            )
+            .context(here!())?;
+        }
+
         state.next(false);
     }
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     context: &mut BlockContext,
     qt: &QuantizationTables,
@@ -267,6 +284,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     num_non_zeros: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
 ) -> Result<()> {
+    debug_assert!(ALL_PRESENT == pt.is_all_present());
+
     let num_non_zeros_7x7 = context.non_zeros_here(&num_non_zeros);
 
     model
@@ -291,22 +310,19 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         block.get_hash()
     );
 
+    let best_priors =
+        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
+
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
 
-        let coord = UNZIGZAG_49[zig49];
-
-        let ptcc7x7 = pt.calc_coefficient_context_7x7_aavg::<ALL_PRESENT>(
-            image_data,
-            coord.into(),
-            context,
-            num_non_zeros_left_7x7,
-        );
+        let best_prior_bit_length = u16_bit_length(best_priors[zig49] as u16);
 
         // this should work in all cases but doesn't utilize that the zig49 is related
         let coef = block.get_coefficient(zig49);
+        let coord = UNZIGZAG_49[zig49];
 
         model
             .write_coef(
@@ -315,8 +331,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
                 coef,
                 coord as usize,
                 zig49,
-                ptcc7x7.num_non_zeros_bin as usize,
-                ptcc7x7.best_prior_bit_len as usize,
+                ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
+                best_prior_bit_length as usize,
             )
             .context(here!())?;
 
@@ -393,6 +409,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     Ok(())
 }
 
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     context: &BlockContext,
     image_data: &BlockBasedImage,
@@ -496,6 +513,19 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         zig15offset = 7;
     }
 
+    // load everything here so that everything ends up cached
+    let above = if pt.is_above_present() {
+        block_context.above(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let left = if pt.is_left_present() {
+        block_context.left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let here = block_context.here(image_data).get_block().clone();
+
     let mut coord = delta;
     for lane in 0..7 {
         if num_non_zeros_edge == 0 {
@@ -503,10 +533,11 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            image_data,
             qt,
             coord,
-            block_context,
+            &here,
+            &above,
+            &left,
             num_non_zeros_edge,
         );
 

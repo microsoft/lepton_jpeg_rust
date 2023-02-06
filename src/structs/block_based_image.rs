@@ -176,6 +176,14 @@ impl AlignedBlock {
         block_data[usize::from(crate::consts::ZIGZAG_TO_ALIGNED[usize::from(index)])] = value;
     }
 
+    pub fn get_block(&self) -> &[i16; 64] {
+        return &self.raw_data;
+    }
+
+    pub fn get_block_mut(&mut self) -> &mut [i16; 64] {
+        return &mut self.raw_data;
+    }
+
     // used for debugging
     #[allow(dead_code)]
     pub fn get_hash(&self) -> i32 {
