@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
+use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
@@ -102,7 +103,16 @@ impl Model {
             best_prior_bit_len,
         );
 
-        return Model::read_length_sign_coef(bool_reader, exp, sign, bits, "coef").context(here!());
+        return Model::read_length_sign_coef(
+            bool_reader,
+            exp,
+            sign,
+            bits,
+            ModelComponent::Coef(ModelSubComponent::Exp),
+            ModelComponent::Coef(ModelSubComponent::Sign),
+            ModelComponent::Coef(ModelSubComponent::Noise),
+        )
+        .context(here!());
     }
 
     pub fn write_coef<W: Write>(
@@ -123,8 +133,17 @@ impl Model {
             best_prior_bit_len,
         );
 
-        return Model::write_length_sign_coef(bool_writer, coef, exp, sign, bits, "coef")
-            .context(here!());
+        return Model::write_length_sign_coef(
+            bool_writer,
+            coef,
+            exp,
+            sign,
+            bits,
+            ModelComponent::Coef(ModelSubComponent::Exp),
+            ModelComponent::Coef(ModelSubComponent::Sign),
+            ModelComponent::Coef(ModelSubComponent::Noise),
+        )
+        .context(here!());
     }
 
     fn get_coef_branches(
@@ -167,7 +186,16 @@ impl Model {
     ) -> Result<i16> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::read_length_sign_coef(bool_reader, exp, sign, bits, "dc").context(here!());
+        return Model::read_length_sign_coef(
+            bool_reader,
+            exp,
+            sign,
+            bits,
+            ModelComponent::DC(ModelSubComponent::Exp),
+            ModelComponent::DC(ModelSubComponent::Sign),
+            ModelComponent::DC(ModelSubComponent::Noise),
+        )
+        .context(here!());
     }
 
     pub fn write_dc<W: Write>(
@@ -180,8 +208,17 @@ impl Model {
     ) -> Result<()> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::write_length_sign_coef(bool_writer, coef, exp, sign, bits, "dc")
-            .context(here!());
+        return Model::write_length_sign_coef(
+            bool_writer,
+            coef,
+            exp,
+            sign,
+            bits,
+            ModelComponent::DC(ModelSubComponent::Exp),
+            ModelComponent::DC(ModelSubComponent::Sign),
+            ModelComponent::DC(ModelSubComponent::Noise),
+        )
+        .context(here!());
     }
 
     fn get_dc_branches(
@@ -227,7 +264,11 @@ impl Model {
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return bool_writer
-            .put_grid(num_non_zeros_7x7, num_non_zeros_prob, "7x7")
+            .put_grid(
+                num_non_zeros_7x7,
+                num_non_zeros_prob,
+                ModelComponent::NonZero7x7Count,
+            )
             .context(here!());
     }
 
@@ -246,7 +287,11 @@ impl Model {
         );
 
         return bool_writer
-            .put_grid(num_non_zeros_edge, prob_edge_eob, "nze")
+            .put_grid(
+                num_non_zeros_edge,
+                prob_edge_eob,
+                ModelComponent::NonZeroEdgeCount,
+            )
             .context(here!());
     }
 
@@ -260,7 +305,7 @@ impl Model {
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return Ok(bool_reader
-            .get_grid(num_non_zeros_prob, "7x7")
+            .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
             .context(here!())? as u8);
     }
 
@@ -278,7 +323,7 @@ impl Model {
         );
 
         return Ok(bool_reader
-            .get_grid(prob_edge_eob, "nze")
+            .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
             .context(here!())? as u8);
     }
 
@@ -287,26 +332,28 @@ impl Model {
         magnitude_branches: &mut [Branch; A],
         sign_branch: &mut Branch,
         bits_branch: &mut [Branch; B],
-        caller: &str,
+        mag_cmp: ModelComponent,
+        sign_cmp: ModelComponent,
+        bits_cmp: ModelComponent,
     ) -> Result<i16> {
         assert!(
             A - 1 <= B,
-            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2}",
+            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
             A,
             B,
-            caller
+            mag_cmp
         );
 
         let length = bool_reader
-            .get_unary_encoded(magnitude_branches, caller)
+            .get_unary_encoded(magnitude_branches, mag_cmp)
             .context(here!())?;
 
         let mut coef: i16 = 0;
         if length != 0 {
-            let neg = !bool_reader.get(sign_branch, caller)?;
+            let neg = !bool_reader.get(sign_branch, sign_cmp)?;
             if length > 1 {
                 coef = bool_reader
-                    .get_n_bits(length - 1, bits_branch, caller)
+                    .get_n_bits(length - 1, bits_branch, bits_cmp)
                     .context(here!())? as i16;
             }
 
@@ -326,14 +373,16 @@ impl Model {
         magnitude_branches: &mut [Branch; A],
         sign_branch: &mut Branch,
         bits_branch: &mut [Branch; B],
-        caller: &str,
+        mag_cmp: ModelComponent,
+        sign_cmp: ModelComponent,
+        bits_cmp: ModelComponent,
     ) -> Result<()> {
         assert!(
             A - 1 <= B,
-            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2}",
+            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
             A,
             B,
-            caller
+            mag_cmp,
         );
 
         let abs_coef = coef.unsigned_abs();
@@ -346,9 +395,9 @@ impl Model {
             );
         }
 
-        bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, "le")?;
+        bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
         if coef != 0 {
-            bool_writer.put(coef >= 0, sign_branch, "s")?;
+            bool_writer.put(coef >= 0, sign_branch, sign_cmp)?;
         }
 
         if coef_bit_len > 1 {
@@ -365,7 +414,7 @@ impl Model {
                 abs_coef as usize,
                 coef_bit_len as usize - 1,
                 bits_branch,
-                "bits",
+                bits_cmp,
             )?;
         }
 
@@ -385,14 +434,19 @@ impl Model {
             [ptcc8.num_non_zeros_bin as usize][zig15offset][ptcc8.best_prior_bit_len as usize];
 
         let length = bool_reader
-            .get_unary_encoded(length_branches, "eax")
+            .get_unary_encoded(
+                length_branches,
+                ModelComponent::Edge(ModelSubComponent::Exp),
+            )
             .context(here!())? as i32;
 
         let mut coef = 0;
         if length != 0 {
             let sign = self.get_sign_counts_mut(pt, ptcc8);
 
-            let neg = !bool_reader.get(sign, "SignArray8").context(here!())?;
+            let neg = !bool_reader
+                .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
+                .context(here!())?;
 
             coef = 1 << (length - 1);
 
@@ -406,9 +460,10 @@ impl Model {
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
-                        let cur_bit = bool_reader
-                            .get(&mut thresh_prob[decoded_so_far], "ResidualThreshArray")?
-                            as i16;
+                        let cur_bit = bool_reader.get(
+                            &mut thresh_prob[decoded_so_far],
+                            ModelComponent::Edge(ModelSubComponent::Residual),
+                        )? as i16;
 
                         coef |= cur_bit << i;
                         decoded_so_far <<= 1;
@@ -439,7 +494,11 @@ impl Model {
                     let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
                         [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
 
-                    coef |= bool_reader.get_n_bits(i as usize + 1, res_prob, "rnx")? as i16;
+                    coef |= bool_reader.get_n_bits(
+                        i as usize + 1,
+                        res_prob,
+                        ModelComponent::Edge(ModelSubComponent::Noise),
+                    )? as i16;
                 }
             }
 
@@ -466,7 +525,11 @@ impl Model {
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
 
-        bool_writer.put_unary_encoded(length, exp_array, "ExponentArrayX")?;
+        bool_writer.put_unary_encoded(
+            length,
+            exp_array,
+            ModelComponent::Edge(ModelSubComponent::Exp),
+        )?;
         if length > MAX_EXPONENT {
             return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
         }
@@ -475,7 +538,11 @@ impl Model {
             let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
             let sign = self.get_sign_counts_mut(pt, ptcc8);
 
-            bool_writer.put(coef >= 0, sign, "s8")?;
+            bool_writer.put(
+                coef >= 0,
+                sign,
+                ModelComponent::Edge(ModelSubComponent::Sign),
+            )?;
 
             if length > 1 {
                 let mut i: i32 = length as i32 - 2;
@@ -490,7 +557,11 @@ impl Model {
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
                         let cur_bit = (abs_coef & (1 << i)) != 0;
-                        bool_writer.put(cur_bit, &mut thresh_prob[encoded_so_far], "threshProb")?;
+                        bool_writer.put(
+                            cur_bit,
+                            &mut thresh_prob[encoded_so_far],
+                            ModelComponent::Edge(ModelSubComponent::Residual),
+                        )?;
 
                         encoded_so_far <<= 1;
                         if cur_bit {
@@ -520,7 +591,12 @@ impl Model {
                         [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
 
                     bool_writer
-                        .put_n_bits(abs_coef as usize, (i + 1) as usize, res_prob, "resProb")
+                        .put_n_bits(
+                            abs_coef as usize,
+                            (i + 1) as usize,
+                            res_prob,
+                            ModelComponent::Edge(ModelSubComponent::Noise),
+                        )
                         .context(here!())?;
                 }
             }

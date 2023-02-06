@@ -13,6 +13,7 @@ use crate::consts::*;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
 
+use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
     neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
@@ -33,7 +34,7 @@ pub fn lepton_encode_row_range<W: Write>(
     max_y: i32,
     is_last_thread: bool,
     full_file_compression: bool,
-) -> Result<()> {
+) -> Result<Metrics> {
     let mut model = Model::default_boxed();
     let mut bool_writer = VPXBoolWriter::new(writer)?;
 
@@ -162,7 +163,7 @@ pub fn lepton_encode_row_range<W: Write>(
 
     bool_writer.finish().context(here!())?;
 
-    Ok(())
+    Ok(bool_writer.drain_stats())
 }
 
 fn process_row<W: Write>(

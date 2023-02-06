@@ -24,6 +24,11 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 
 use std::io::{Result, Write};
 
+use crate::metrics::{Metrics, ModelComponent};
+
+#[cfg(feature = "compression_stats")]
+use crate::metrics::ModelStatsCollector;
+
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 pub struct VPXBoolWriter<W> {
@@ -32,6 +37,7 @@ pub struct VPXBoolWriter<W> {
     count: i32,
     writer: W,
     buffer: Vec<u8>,
+    model_statistics: Metrics,
     pub hash: SimpleHash,
 }
 
@@ -43,13 +49,18 @@ impl<W: Write> VPXBoolWriter<W> {
             count: -24,
             buffer: Vec::new(),
             writer: writer,
+            model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
 
         let mut dummy_branch = Branch::new();
-        retval.put(false, &mut dummy_branch, "dummy")?;
+        retval.put(false, &mut dummy_branch, ModelComponent::Dummy)?;
 
         Ok(retval)
+    }
+
+    pub fn drain_stats(&mut self) -> Metrics {
+        self.model_statistics.drain()
     }
 
     #[inline(never)]
@@ -57,7 +68,7 @@ impl<W: Write> VPXBoolWriter<W> {
         &mut self,
         v: u8,
         branches: &mut [[Branch; B]; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<()> {
         assert!(1 << (A - 1) == B);
 
@@ -69,7 +80,7 @@ impl<W: Write> VPXBoolWriter<W> {
             self.put(
                 cur_bit,
                 &mut branches[index as usize][serialized_so_far],
-                caller,
+                cmp,
             )?;
             serialized_so_far <<= 1;
             serialized_so_far |= cur_bit as usize;
@@ -90,11 +101,11 @@ impl<W: Write> VPXBoolWriter<W> {
         bits: usize,
         num_bits: usize,
         branches: &mut [Branch; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<()> {
         let mut i: i32 = (num_bits - 1) as i32;
         while i >= 0 {
-            self.put((bits & (1 << i)) != 0, &mut branches[i as usize], caller)?;
+            self.put((bits & (1 << i)) != 0, &mut branches[i as usize], cmp)?;
             i -= 1;
         }
 
@@ -106,14 +117,14 @@ impl<W: Write> VPXBoolWriter<W> {
         &mut self,
         v: usize,
         branches: &mut [Branch; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<()> {
         assert!(v <= A);
 
         for i in 0..A {
             let cur_bit = v != i;
 
-            self.put(cur_bit, &mut branches[i], caller)?;
+            self.put(cur_bit, &mut branches[i], cmp)?;
             if !cur_bit {
                 break;
             }
@@ -123,7 +134,7 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     #[inline(always)]
-    pub fn put(&mut self, value: bool, branch: &mut Branch, _caller: &str) -> Result<()> {
+    pub fn put(&mut self, value: bool, branch: &mut Branch, _cmp: ModelComponent) -> Result<()> {
         #[cfg(feature = "detailed_tracing")]
         {
             // used to detect divergences between the C++ and rust versions
@@ -195,6 +206,12 @@ impl<W: Write> VPXBoolWriter<W> {
         self.low_value = tmp_low_value;
         self.range = tmp_range;
 
+        #[cfg(feature = "compression_stats")]
+        {
+            self.model_statistics
+                .record_compression_stats(_cmp, 1, i64::from(shift));
+        }
+
         // check if we're out of buffer space, if yes - send the buffer to output,
         if self.buffer.len() > 65536 - 128 {
             self.flush_non_final_data()?;
@@ -206,7 +223,7 @@ impl<W: Write> VPXBoolWriter<W> {
     pub fn finish(&mut self) -> Result<()> {
         for _i in 0..32 {
             let mut dummy_branch = Branch::new();
-            self.put(false, &mut dummy_branch, "dummy")?;
+            self.put(false, &mut dummy_branch, ModelComponent::Dummy)?;
         }
 
         // Ensure there's no ambigous collision with any index marker bytes
