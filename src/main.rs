@@ -187,7 +187,7 @@ fn main_with_result() -> anyhow::Result<()> {
             }
 
             #[cfg(feature = "compression_stats")]
-            metrics.print_metrics();
+            comp_metrics.print_metrics();
 
             let mut verify = Vec::new();
 

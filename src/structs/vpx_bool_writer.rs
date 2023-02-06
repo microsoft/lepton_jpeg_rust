@@ -172,6 +172,12 @@ impl<W: Write> VPXBoolWriter<W> {
         //let mut shift = VPX_NORM[tmp_range as usize] as i32;
         let mut shift = tmp_range.leading_zeros() as i32 - 24;
 
+        #[cfg(feature = "compression_stats")]
+        {
+            self.model_statistics
+                .record_compression_stats(_cmp, 1, i64::from(shift));
+        }
+
         tmp_range <<= shift;
 
         let mut tmp_count = self.count;
@@ -205,12 +211,6 @@ impl<W: Write> VPXBoolWriter<W> {
         self.count = tmp_count;
         self.low_value = tmp_low_value;
         self.range = tmp_range;
-
-        #[cfg(feature = "compression_stats")]
-        {
-            self.model_statistics
-                .record_compression_stats(_cmp, 1, i64::from(shift));
-        }
 
         // check if we're out of buffer space, if yes - send the buffer to output,
         if self.buffer.len() > 65536 - 128 {
