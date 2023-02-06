@@ -59,8 +59,8 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     writer: &mut W,
     max_threads: usize,
     no_progressive: bool,
-) -> Result<(), LeptonError> {
-    let _metrics = encode_lepton_wrapper(
+) -> Result<Metrics, LeptonError> {
+    encode_lepton_wrapper(
         reader,
         writer,
         max_threads,
@@ -68,9 +68,7 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
             progressive: !no_progressive,
         },
     )
-    .map_err(translate_error)?;
-
-    Ok(())
+    .map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -79,11 +77,8 @@ pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
     writer: &mut W,
     max_threads: usize,
     enabled_features: &EnabledFeatures,
-) -> Result<(), LeptonError> {
-    let _metrics = encode_lepton_wrapper(reader, writer, max_threads, enabled_features)
-        .map_err(translate_error)?;
-
-    Ok(())
+) -> Result<Metrics, LeptonError> {
+    encode_lepton_wrapper(reader, writer, max_threads, enabled_features).map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
