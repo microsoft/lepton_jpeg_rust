@@ -330,7 +330,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
                 bool_writer,
                 pt.get_color_index(),
                 coef,
-                coord as usize,
                 zig49,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
