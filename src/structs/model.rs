@@ -25,8 +25,6 @@ pub const MAX_EXPONENT: usize = 11;
 const BLOCK_TYPES: usize = 2; // setting this to 3 gives us ~1% savings.. 2/3 from BLOCK_TYPES=2
 pub const NUM_NON_ZERO_BINS: usize = 10;
 //const BsrBestPriorMax : usize = 11; // 1023 requires 11 bits to describe
-pub const BAND_DIVISOR: usize = 1;
-const COEF_BANDS: usize = 64 / BAND_DIVISOR;
 //const EntropyNodes : usize = 15;
 //const NunNonZerosEofPiors : usize = 66;
 //const ZeroOrEob : usize = 3;
@@ -49,19 +47,10 @@ pub const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
 pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
 pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
-pub const RESIDUAL_NOISE_COUNTS_D1: usize = COEF_BANDS;
-pub const RESIDUAL_NOISE_COUNTS_D2: usize = if NUM_NON_ZERO_BINS < 8 {
-    8
-} else {
-    NUM_NON_ZERO_BINS
-};
-pub const RESIDUAL_NOISE_COUNTS_D3: usize = COEF_BITS;
-
 #[derive(Default)]
-struct ExpGoul
-{
-    exp : [Branch; 11],
-    bits : [Branch; 10]
+struct ExpGoul {
+    exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
+    bits: [Branch; 10],
 }
 
 #[derive(DefaultBoxed)]
@@ -72,18 +61,11 @@ pub struct Model {
 
     num_non_zeros_counts8x1: [NumNonZerosCountsT; BLOCK_TYPES],
 
-    residual_noise_counts: [[[[Branch; RESIDUAL_NOISE_COUNTS_D3]; RESIDUAL_NOISE_COUNTS_D2];
-        RESIDUAL_NOISE_COUNTS_D1]; BLOCK_TYPES],
-
     residual_threshold_counts: [[[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
         RESIDUAL_THRESHOLD_COUNTS_D2];
         RESIDUAL_THRESHOLD_COUNTS_D1]; BLOCK_TYPES],
 
-    exponent_counts:
-        [[[[ExpGoul; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
-
-    exponent_counts_x:
-        [[[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 15]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
+    coef_bins: [[[ExpGoul; NUM_NON_ZERO_BINS]; 64]; BLOCK_TYPES],
 
     sign_counts: [[[Branch; NUMERIC_LENGTH_MAX]; 4]; BLOCK_TYPES],
 
@@ -98,18 +80,12 @@ impl Model {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         color_index: usize,
-        coord: usize,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<i16> {
-        let (exp, sign, bits) = self.get_coef_branches(
-            coord,
-            num_non_zeros_bin,
-            color_index,
-            zig49,
-            best_prior_bit_len,
-        );
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, color_index, zig49, best_prior_bit_len);
 
         return Model::read_length_sign_coef(
             bool_reader,
@@ -129,18 +105,12 @@ impl Model {
         bool_writer: &mut VPXBoolWriter<W>,
         color_index: usize,
         coef: i16,
-        coord: usize,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<()> {
-        let (exp, sign, bits) = self.get_coef_branches(
-            coord,
-            num_non_zeros_bin,
-            color_index,
-            zig49,
-            best_prior_bit_len,
-        );
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, color_index, zig49, best_prior_bit_len);
 
         return Model::write_length_sign_coef(
             bool_writer,
@@ -157,7 +127,6 @@ impl Model {
 
     fn get_coef_branches(
         &mut self,
-        coord: usize,
         num_non_zeros_bin: usize,
         color_index: usize,
         zig49: usize,
@@ -168,22 +137,14 @@ impl Model {
         &mut [Branch; MAX_EXPONENT - 1],
     ) {
         debug_assert!(
-            coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-            "coord {0} too high",
-            coord
-        );
-        debug_assert!(
-            num_non_zeros_bin < RESIDUAL_NOISE_COUNTS_D2,
+            num_non_zeros_bin < NUM_NON_ZERO_BINS,
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
         );
 
-        let exp =
-            &mut self.exponent_counts[color_index][num_non_zeros_bin][zig49][best_prior_bit_len];
+        let exp = &mut self.coef_bins[color_index][zig49][num_non_zeros_bin];
         let sign = &mut self.sign_counts[color_index][0][0];
-        let bits =
-            &mut self.residual_noise_counts[color_index][zig49][num_non_zeros_bin];
-        (&mut exp.exp, sign, bits)
+        (&mut exp.exp[best_prior_bit_len], sign, &mut exp.bits)
     }
 
     pub fn read_dc<R: Read>(
@@ -439,8 +400,9 @@ impl Model {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let length_branches = &mut self.exponent_counts_x[pt.get_color_index()]
-            [ptcc8.num_non_zeros_bin as usize][zig15offset][ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+            [ptcc8.num_non_zeros_bin as usize]
+            .exp[usize::from(ptcc8.best_prior_bit_len)];
 
         let length = bool_reader
             .get_unary_encoded(
@@ -490,7 +452,9 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = self.get_residual_noise_count_branch(zig15offset + 49, ptcc8, pt);
+                    let res_prob = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+                        [ptcc8.num_non_zeros_bin as usize]
+                        .bits;
 
                     coef |= bool_reader.get_n_bits(
                         i as usize + 1,
@@ -507,23 +471,6 @@ impl Model {
         Ok(coef)
     }
 
-    fn get_residual_noise_count_branch(&mut self, coord: usize, ptcc8: &ProbabilityTablesCoefficientContext, pt: &ProbabilityTables) -> &mut [Branch; 10] {
-        debug_assert!(
-            coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-            "d1 too high"
-        );
-        debug_assert!(
-            (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
-            "d1 {0} too high",
-            ptcc8.num_non_zeros_bin
-        );
-
-        let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
-            [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
-
-        res_prob
-    }
-
     pub fn write_edge_coefficient<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
@@ -534,8 +481,9 @@ impl Model {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.exponent_counts_x[pt.get_color_index()]
-            [ptcc8.num_non_zeros_bin as usize][zig15offset][ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+            [ptcc8.num_non_zeros_bin as usize]
+            .exp[ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -593,7 +541,9 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = self.get_residual_noise_count_branch(zig15offset + 49, ptcc8, pt);
+                    let res_prob = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+                        [ptcc8.num_non_zeros_bin as usize]
+                        .bits;
 
                     bool_writer
                         .put_n_bits(
