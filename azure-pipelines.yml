@@ -51,7 +51,7 @@ steps:
 - task: PublishBuildArtifacts@1
   displayName: 'Publish Artifact'
   inputs:
-    ArtifactName: 'drop_rust'
+    ArtifactName: 'drop_lepton_jpeg_rust'
 
 - task: PublishSymbols@2
   displayName: 'Publish symbols copy'
@@ -64,7 +64,7 @@ steps:
   displayName: 'NuGet pack'
   inputs:
     command: pack
-    packagesToPack: package/Lepton.OneDrive.Rust.nuspec
+    packagesToPack: package/Lepton.Jpeg.Rust.nuspec
 
 - task: NuGetCommand@2
   displayName: 'NuGet push'
@@ -73,4 +73,4 @@ steps:
     packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
     publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
     allowPackageConflicts: true
-  condition: and(succeeded(), in(variables['Build.Reason'], 'IndividualCI', 'BatchedCI', 'Manual'))
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
