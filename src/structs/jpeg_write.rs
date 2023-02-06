@@ -577,7 +577,7 @@ fn encode_eobrun(huffw: &mut BitWriter, actbl: &HuffCodes, state: &mut JpegPosit
 /// encodes the correction bits, which are simply encoded as a vector of single bit values
 fn encode_crbits(huffw: &mut BitWriter, correction_bits: &mut Vec<u8>) {
     for x in correction_bits.drain(..) {
-        huffw.write(x as u32, 1);
+        huffw.write(u32::from(x), 1);
     }
 }
 

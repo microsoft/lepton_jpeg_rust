@@ -46,7 +46,7 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
 }
 
 #[inline(always)]
-pub const fn devli(s: u8, value: u32) -> i16 {
+pub const fn devli(s: u8, value: u16) -> i16 {
     if s == 0 {
         value as i16
     } else if value < (1 << (s as u16 - 1)) {

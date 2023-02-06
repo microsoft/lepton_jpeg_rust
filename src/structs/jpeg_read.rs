@@ -488,24 +488,19 @@ fn decode_block_seq<R: Read>(
     return Ok(eob);
 }
 
-/// <summary>
-/// Returns next code (from huffman tree and data)
-/// </summary>
+/// Reads and decodes next Huffman code from BitReader using the provided tree
 fn next_huff_code<R: Read>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
-    let mut node: usize = 0;
+    let mut node: u16 = 0;
 
     while node < 256 {
-        node = usize::from(if bit_reader.read(1)? == 1 {
-            ctree.right[node]
-        } else {
-            ctree.left[node]
-        });
-        if node == 0 {
-            break;
-        }
+        node = ctree.node[usize::from(node)][usize::from(bit_reader.read(1)?)];
     }
 
-    return Ok((node - 256) as u8);
+    if node == 0xffff {
+        err_exit_code(ExitCode::UnsupportedJpeg, "illegal Huffman code detected")
+    } else {
+        Ok((node - 256) as u8)
+    }
 }
 
 fn read_dc<R: Read>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i16> {

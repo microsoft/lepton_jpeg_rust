@@ -37,7 +37,7 @@ impl<R: Read> BitReader<R> {
     }
 
     #[inline(always)]
-    pub fn read(&mut self, bits_to_read: u8) -> std::io::Result<u32> {
+    pub fn read(&mut self, bits_to_read: u8) -> std::io::Result<u16> {
         if bits_to_read == 0 {
             return Ok(0);
         }
@@ -46,7 +46,7 @@ impl<R: Read> BitReader<R> {
             self.fill_register(bits_to_read)?;
         }
 
-        let retval = ((self.bits >> (64 - bits_to_read)) & ((1 << bits_to_read) - 1)) as u32;
+        let retval = ((self.bits >> (64 - bits_to_read)) & ((1 << bits_to_read) - 1)) as u16;
         self.bits <<= bits_to_read as usize;
         self.num_bits -= bits_to_read;
         return Ok(retval);
@@ -155,7 +155,7 @@ impl<R: Read> BitReader<R> {
                 }
                 Some(x) => {
                     // if we already saw a padding, then it should match
-                    let expected = u32::from(x) & all_one;
+                    let expected = u16::from(x) & all_one;
                     if actual != expected {
                         return err_exit_code(ExitCode::UnsupportedJpeg, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
                     }
