@@ -21,6 +21,9 @@ debug=true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+compression_stats = []
 
 [dependencies]
 byteorder = "1.4.3"
@@ -39,6 +42,8 @@ rstest = "0.16.0"
 name = "lepton_jpeg_util"
 path = "src/main.rs"
 
+
 [lib]
 crate-type = ["cdylib","lib"]
+
 
