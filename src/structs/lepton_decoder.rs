@@ -17,6 +17,7 @@ use crate::consts::{
 use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 
+use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
     neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
@@ -37,7 +38,7 @@ pub fn lepton_decode_row_range<R: Read>(
     max_y: i32,
     is_last_thread: bool,
     full_file_compression: bool,
-) -> Result<()> {
+) -> Result<Metrics> {
     let component_size_in_blocks = trunc.get_component_sizes_in_blocks();
     let max_coded_heights = trunc.get_max_coded_heights();
 
@@ -100,7 +101,7 @@ pub fn lepton_decode_row_range<R: Read>(
         )
         .context(here!())?;
     }
-    Ok(())
+    Ok(bool_reader.drain_stats())
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data

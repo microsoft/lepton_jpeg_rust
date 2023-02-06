@@ -9,6 +9,7 @@ mod enabled_features;
 mod helpers;
 mod jpeg_code;
 mod lepton_error;
+mod metrics;
 mod structs;
 
 use anyhow;
@@ -104,15 +105,10 @@ fn main_with_result() -> anyhow::Result<()> {
             lh = LeptonHeader::new();
             lh.read_lepton_header(&mut reader).context(here!())?;
 
-            let mut total_cpu_time = Duration::ZERO;
+            let _metrics;
 
-            block_image = lh
-                .decode_as_single_image(
-                    &mut reader,
-                    filelen,
-                    num_threads as usize,
-                    &mut total_cpu_time,
-                )
+            (block_image, _metrics) = lh
+                .decode_as_single_image(&mut reader, filelen, num_threads as usize)
                 .context(here!())?;
 
             loop {
@@ -173,49 +169,49 @@ fn main_with_result() -> anyhow::Result<()> {
             let mut output = Vec::new();
             let now = Instant::now();
 
-            let mut total_worker_thread_cpu = Duration::ZERO;
-
             let thread_cpu = ThreadTime::now();
 
+            let comp_metrics;
             {
                 println!("encoding...");
                 let mut input_cursor = Cursor::new(&input);
                 let mut output_cursor = Cursor::new(&mut output);
 
-                encode_lepton_wrapper(
+                comp_metrics = encode_lepton_wrapper(
                     &mut input_cursor,
                     &mut output_cursor,
                     num_threads as usize,
                     &enabled_features,
-                    &mut total_worker_thread_cpu,
                 )
                 .context(here!())?;
             }
 
+            #[cfg(feature = "compression_stats")]
+            comp_metrics.print_metrics();
+
             let mut verify = Vec::new();
 
+            let decomp_metrics;
             {
                 println!("decoding...");
                 let mut input_cursor = Cursor::new(&output);
                 let mut output_cursor = Cursor::new(&mut verify);
 
-                decode_lepton_wrapper(
+                decomp_metrics = decode_lepton_wrapper(
                     &mut input_cursor,
                     &mut output_cursor,
                     num_threads as usize,
-                    &mut total_worker_thread_cpu,
                 )
                 .context(here!())?;
             }
 
-            let thread_cpu_elapsed = thread_cpu.elapsed();
+            let iter_duration = thread_cpu.elapsed()
+                + comp_metrics.get_cpu_time_worker_time()
+                + decomp_metrics.get_cpu_time_worker_time();
 
-            println!(
-                "Total CPU time consumed:{0}ms",
-                (thread_cpu_elapsed + total_worker_thread_cpu).as_millis()
-            );
+            println!("Total CPU time consumed:{0}ms", iter_duration.as_millis());
 
-            overall_cpu += thread_cpu_elapsed + total_worker_thread_cpu;
+            overall_cpu += iter_duration;
 
             if verify.len() != input.len() {
                 return err_exit_code(
@@ -242,6 +238,7 @@ fn main_with_result() -> anyhow::Result<()> {
             "Overall average CPU consumed per iteration {0}ms ",
             overall_cpu.as_millis() / (iterations as u128)
         );
+
         return Ok(());
     }
 
@@ -269,31 +266,25 @@ fn main_with_result() -> anyhow::Result<()> {
         //let mut writer = VerifyWriter::new( BufWriter::new(fileout), File::open("C:\\temp\\tgood.jpg")? );
 
         let thread_cpu = ThreadTime::now();
-        let mut total_worker_thread_cpu = Duration::ZERO;
+        let metrics;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
-            encode_lepton_wrapper(
+            metrics = encode_lepton_wrapper(
                 &mut reader,
                 &mut writer,
                 num_threads as usize,
                 &enabled_features,
-                &mut total_worker_thread_cpu,
             )
             .context(here!())?;
         } else {
-            decode_lepton_wrapper(
-                &mut reader,
-                &mut writer,
-                num_threads as usize,
-                &mut total_worker_thread_cpu,
-            )
-            .context(here!())?;
+            metrics = decode_lepton_wrapper(&mut reader, &mut writer, num_threads as usize)
+                .context(here!())?;
         }
 
         println!(
             "Itr {0} Total CPU time consumed:{1}ms",
             i,
-            (thread_cpu.elapsed() + total_worker_thread_cpu).as_millis()
+            (thread_cpu.elapsed() + metrics.get_cpu_time_worker_time()).as_millis()
         );
     }
 

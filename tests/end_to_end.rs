@@ -10,6 +10,7 @@ use std::{io::Cursor, path::Path};
 use std::fs::File;
 use std::io::Read;
 
+use lepton_jpeg::metrics::Metrics;
 use lepton_jpeg::{
     decode_lepton, encode_lepton,
     lepton_error::{ExitCode, LeptonError},
@@ -134,9 +135,9 @@ fn verify_encode(
     assert!(input[..] == output[..]);
 }
 
-fn assert_exception(expected_error: ExitCode, result: Result<(), LeptonError>) {
+fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
     match result {
-        Ok(()) => panic!("failure was expected"),
+        Ok(_) => panic!("failure was expected"),
         Err(e) => {
             assert_eq!(expected_error, e.exit_code, "unexpected error {0:?}", e);
         }

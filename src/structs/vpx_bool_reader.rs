@@ -24,6 +24,11 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 
 use std::io::{Read, Result};
 
+use crate::metrics::{Metrics, ModelComponent};
+
+#[cfg(feature = "compression_stats")]
+use crate::metrics::ModelStatsCollector;
+
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 const BITS_IN_BYTE: i32 = 8;
@@ -35,6 +40,7 @@ pub struct VPXBoolReader<R> {
     range: u32,
     count: i32,
     upstream_reader: R,
+    model_statistics: Metrics,
     pub hash: SimpleHash,
 }
 
@@ -45,22 +51,27 @@ impl<R: Read> VPXBoolReader<R> {
             value: 0,
             count: -8,
             range: 255,
+            model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
 
         r.vpx_reader_fill()?;
 
         let mut dummy_branch = Branch::new();
-        r.get(&mut dummy_branch, "dummy")?; // marker bit
+        r.get(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
 
         return Ok(r);
+    }
+
+    pub fn drain_stats(&mut self) -> Metrics {
+        self.model_statistics.drain()
     }
 
     #[inline(never)]
     pub fn get_grid<const A: usize, const B: usize>(
         &mut self,
         branches: &mut [[Branch; B]; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<usize> {
         assert!(1 << (A - 1) == B);
 
@@ -69,7 +80,7 @@ impl<R: Read> VPXBoolReader<R> {
         let mut decoded_so_far = 0;
 
         loop {
-            let cur_bit = self.get(&mut branches[index as usize][decoded_so_far], caller)? as usize;
+            let cur_bit = self.get(&mut branches[index as usize][decoded_so_far], cmp)? as usize;
             value |= cur_bit << index;
             decoded_so_far <<= 1;
             decoded_so_far |= cur_bit as usize;
@@ -88,12 +99,12 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<usize> {
         let mut value = 0;
 
         while value != A {
-            let cur_bit = self.get(&mut branches[value], caller)?;
+            let cur_bit = self.get(&mut branches[value], cmp)?;
             if !cur_bit {
                 break;
             }
@@ -109,20 +120,20 @@ impl<R: Read> VPXBoolReader<R> {
         &mut self,
         n: usize,
         branches: &mut [Branch; A],
-        caller: &str,
+        cmp: ModelComponent,
     ) -> Result<usize> {
         assert!(n <= branches.len());
 
         let mut coef = 0;
         for i in (0..n).rev() {
-            coef |= (self.get(&mut branches[i], caller)? as usize) << i;
+            coef |= (self.get(&mut branches[i], cmp)? as usize) << i;
         }
 
         return Ok(coef);
     }
 
     #[inline(always)]
-    pub fn get(&mut self, branch: &mut Branch, _caller: &str) -> Result<bool> {
+    pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         if self.count < 0 {
             self.vpx_reader_fill()?;
         }
@@ -152,6 +163,12 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value << shift;
         self.count -= shift;
         self.range = tmp_range << shift;
+
+        #[cfg(feature = "compression_stats")]
+        {
+            self.model_statistics
+                .record_compression_stats(_cmp, 1, i64::from(shift));
+        }
 
         #[cfg(feature = "detailed_tracing")]
         {
