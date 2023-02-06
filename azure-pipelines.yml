@@ -8,6 +8,7 @@ trigger:
 
 pool:
   name: Azure Pipelines
+  vmImage: windows-latest
 
 steps:
 - task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
