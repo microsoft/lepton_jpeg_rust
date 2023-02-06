@@ -57,6 +57,13 @@ pub const RESIDUAL_NOISE_COUNTS_D2: usize = if NUM_NON_ZERO_BINS < 8 {
 };
 pub const RESIDUAL_NOISE_COUNTS_D3: usize = COEF_BITS;
 
+#[derive(Default)]
+struct ExpGoul
+{
+    exp : [Branch; 11],
+    bits : [Branch; 10]
+}
+
 #[derive(DefaultBoxed)]
 pub struct Model {
     num_non_zeros_counts7x7: [NumNonZerosCounts7x7T; BLOCK_TYPES],
@@ -73,7 +80,7 @@ pub struct Model {
         RESIDUAL_THRESHOLD_COUNTS_D1]; BLOCK_TYPES],
 
     exponent_counts:
-        [[[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
+        [[[[ExpGoul; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
 
     exponent_counts_x:
         [[[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 15]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
@@ -175,8 +182,8 @@ impl Model {
             &mut self.exponent_counts[color_index][num_non_zeros_bin][zig49][best_prior_bit_len];
         let sign = &mut self.sign_counts[color_index][0][0];
         let bits =
-            &mut self.residual_noise_counts[color_index][coord / BAND_DIVISOR][num_non_zeros_bin];
-        (exp, sign, bits)
+            &mut self.residual_noise_counts[color_index][zig49][num_non_zeros_bin];
+        (&mut exp.exp, sign, bits)
     }
 
     pub fn read_dc<R: Read>(
@@ -483,18 +490,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-                        "d1 too high"
-                    );
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
-                        [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
+                    let res_prob = self.get_residual_noise_count_branch(zig15offset + 49, ptcc8, pt);
 
                     coef |= bool_reader.get_n_bits(
                         i as usize + 1,
@@ -509,6 +505,23 @@ impl Model {
             }
         }
         Ok(coef)
+    }
+
+    fn get_residual_noise_count_branch(&mut self, coord: usize, ptcc8: &ProbabilityTablesCoefficientContext, pt: &ProbabilityTables) -> &mut [Branch; 10] {
+        debug_assert!(
+            coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
+            "d1 too high"
+        );
+        debug_assert!(
+            (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
+            "d1 {0} too high",
+            ptcc8.num_non_zeros_bin
+        );
+
+        let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
+            [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
+
+        res_prob
     }
 
     pub fn write_edge_coefficient<W: Write>(
@@ -580,18 +593,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-                        "d1 too high"
-                    );
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
-                        [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
+                    let res_prob = self.get_residual_noise_count_branch(zig15offset + 49, ptcc8, pt);
 
                     bool_writer
                         .put_n_bits(
