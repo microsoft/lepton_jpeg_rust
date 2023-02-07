@@ -394,7 +394,7 @@ fn decode_baseline_rst<R: Read>(
         }
 
         // fix dc
-        block[0] += lastdc[state.get_cmp()];
+        block[0] = block[0].wrapping_add(lastdc[state.get_cmp()]);
         lastdc[state.get_cmp()] = block[0];
 
         // prepare zigzagged block

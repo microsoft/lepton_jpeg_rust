@@ -41,9 +41,17 @@ impl BlockBasedImage {
             block_width: block_width,
             original_height: original_height,
             image: Vec::with_capacity(
-                (max_size * (luma_y_end - luma_y_start) / jpeg_header.cmp_info[0].bcv) as usize,
+                usize::try_from(
+                    i64::from(max_size) * i64::from(luma_y_end - luma_y_start)
+                        / i64::from(jpeg_header.cmp_info[0].bcv),
+                )
+                .unwrap(),
             ),
-            dpos_offset: max_size * luma_y_start / jpeg_header.cmp_info[0].bcv,
+            dpos_offset: i32::try_from(
+                i64::from(max_size) * i64::from(luma_y_start)
+                    / i64::from(jpeg_header.cmp_info[0].bcv),
+            )
+            .unwrap(),
         };
     }
 
