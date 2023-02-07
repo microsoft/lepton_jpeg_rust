@@ -57,7 +57,7 @@ impl BitWriter {
             // first see if everything fits in the current register
             let tmp_current_bit = self.current_bit;
             if new_bits <= tmp_current_bit {
-                self.fill_register |= (val as u64) << (tmp_current_bit - new_bits);
+                self.fill_register |= (val as u64).wrapping_shl(tmp_current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
                 self.current_bit = tmp_current_bit - new_bits;
                 return;
             }
