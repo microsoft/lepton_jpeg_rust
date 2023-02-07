@@ -399,10 +399,15 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, z: u8, tbl: &HuffCodes) {
     let (n, s) = envli(coef);
     let hc = ((z & 0xf) << 4) + s;
 
-    // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[usize::from(hc)]) << s) | u32::from(n);
-    let new_bits = u32::from(tbl.c_len[usize::from(hc)]) + u32::from(s);
-    huffw.write(val, new_bits);
+    let codelen = u32::from(tbl.c_val[usize::from(hc)]);
+
+    // huffman code might no exist in some extreme corner cases where JPEG was truncated
+    if codelen != 0 {
+        // write to huffman writer (combine into single write)
+        let val = (codelen << s) | u32::from(n);
+        let new_bits = u32::from(tbl.c_len[usize::from(hc)]) + u32::from(s);
+        huffw.write(val, new_bits);
+    }
 }
 
 /// progressive AC encoding (first pass)

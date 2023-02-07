@@ -505,12 +505,12 @@ impl JPegHeader {
                 self.img_height = i32::from(b_short(segment[hpos + 1], segment[hpos + 2]));
                 self.img_width = i32::from(b_short(segment[hpos + 3], segment[hpos + 4]));
 
-                if self.img_height == 0 || self.img_height == 0
+                if self.img_height == 0 || self.img_width == 0
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions can't be zero");
                 }
 
-                if self.img_height > enabled_features.max_jpeg_width || self.img_height > enabled_features.max_jpeg_height
+                if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions larger than 16386");
                 }
