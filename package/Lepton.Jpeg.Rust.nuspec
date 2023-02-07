@@ -15,12 +15,10 @@
     <file src="..\target\debug\lepton_jpeg_util.pdb" target="exe\debug\x64" />
     <file src="..\target\debug\lepton_jpeg.dll" target="lib\debug\x64" />
     <file src="..\target\debug\lepton_jpeg.pdb" target="lib\debug\x64" />
-    <file src="..\target\debug\lepton_jpeg.lib" target="lib\debug\x64" />
 
     <file src="..\target\release\lepton_jpeg_util.exe" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg_util.pdb" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg.dll" target="lib\release\x64" />
     <file src="..\target\release\lepton_jpeg.pdb" target="lib\release\x64" />
-    <file src="..\target\release\lepton_jpeg.lib" target="lib\release\x64" />
   </files>
 </package>
