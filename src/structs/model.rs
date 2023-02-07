@@ -527,14 +527,15 @@ impl Model {
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
 
+        if length > MAX_EXPONENT {
+            return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
+        }
+
         bool_writer.put_unary_encoded(
             length,
             exp_array,
             ModelComponent::Edge(ModelSubComponent::Exp),
         )?;
-        if length > MAX_EXPONENT {
-            return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
-        }
 
         if coef != 0 {
             let min_threshold = i32::from(qt.get_min_noise_threshold(coord));

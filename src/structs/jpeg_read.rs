@@ -231,6 +231,13 @@ pub fn read_progressive_scan<R: Read>(
             jf.verify_huffman_table(false, true).context(here!())?;
 
             if jf.cs_sah == 0 {
+                if jf.cs_cmpc != 1 {
+                    return err_exit_code(
+                        ExitCode::UnsupportedJpeg,
+                        "Progressive AC encoding cannot be interleaved",
+                    );
+                }
+
                 // ---> succesive approximation first stage <---
                 let mut block = [0; 64];
 
@@ -394,7 +401,7 @@ fn decode_baseline_rst<R: Read>(
         }
 
         // fix dc
-        block[0] += lastdc[state.get_cmp()];
+        block[0] = block[0].wrapping_add(lastdc[state.get_cmp()]);
         lastdc[state.get_cmp()] = block[0];
 
         // prepare zigzagged block

@@ -116,7 +116,7 @@ pub fn read_jpeg<R: Read + Seek>(
     }
 
     let mut lp = LeptonHeader::new();
-    if !prepare_to_decode_next_scan(&mut lp, reader).context(here!())? {
+    if !prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context(here!())? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
 
@@ -212,7 +212,7 @@ pub fn read_jpeg<R: Read + Seek>(
         }
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
-        while prepare_to_decode_next_scan(&mut lp, reader).context(here!())? {
+        while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context(here!())? {
             callback(&lp.jpeg_header);
 
             read_progressive_scan(&mut lp, reader, &mut image_data[..]).context(here!())?;
@@ -320,7 +320,12 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                         &lh.jpeg_header,
                         i,
                         combined_thread_handoff.luma_y_start,
-                        combined_thread_handoff.luma_y_end,
+                        if t == m - 1 {
+                            // if this is the last thead, then the image should extend all the way to the bottom
+                            lh.jpeg_header.cmp_info[0].bcv
+                        } else {
+                            combined_thread_handoff.luma_y_end
+                        },
                     ));
                 }
 
@@ -723,13 +728,16 @@ impl LeptonHeader {
     }
 
     /// parses and advances to the next header segment out of raw_jpeg_header into the jpeg header
-    pub fn advance_next_header_segment(&mut self) -> Result<bool> {
+    pub fn advance_next_header_segment(
+        &mut self,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<bool> {
         let mut header_cursor =
             Cursor::new(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..]);
 
         let result = self
             .jpeg_header
-            .parse(&mut header_cursor)
+            .parse(&mut header_cursor, enabled_features)
             .context(here!())?;
 
         self.raw_jpeg_header_read_index += header_cursor.stream_position()? as usize;
@@ -756,7 +764,9 @@ impl LeptonHeader {
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
             let old_pos = self.raw_jpeg_header_read_index;
-            let result = self.advance_next_header_segment().context(here!())?;
+            let result = self
+                .advance_next_header_segment(&EnabledFeatures::all())
+                .context(here!())?;
 
             writer
                 .write_all(&self.raw_jpeg_header[old_pos..self.raw_jpeg_header_read_index])
@@ -929,7 +939,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor)
+                .parse(&mut header_data_cursor, &EnabledFeatures::all())
                 .context(here!())?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -1242,7 +1252,11 @@ impl LeptonHeader {
         Ok(())
     }
 
-    fn parse_jpeg_header<R: Read>(&mut self, reader: &mut R) -> Result<bool> {
+    fn parse_jpeg_header<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<bool> {
         // the raw header in the lepton file can actually be spread across different sections
         // seperated by the Start-of-Scan marker. We use the mirror to write out whatever
         // data we parse until we hit the SOS
@@ -1252,7 +1266,11 @@ impl LeptonHeader {
 
         let mut mirror = Mirror::new(reader, &mut output_cursor);
 
-        if self.jpeg_header.parse(&mut mirror).context(here!())? {
+        if self
+            .jpeg_header
+            .parse(&mut mirror, enabled_features)
+            .context(here!())?
+        {
             // append the header if it was not the end of file marker
             self.raw_jpeg_header.append(&mut output);
             return Ok(true);
@@ -1465,9 +1483,16 @@ impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
 }
 
 // false means we hit the end of file marker
-fn prepare_to_decode_next_scan<R: Read>(lp: &mut LeptonHeader, reader: &mut R) -> Result<bool> {
+fn prepare_to_decode_next_scan<R: Read>(
+    lp: &mut LeptonHeader,
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+) -> Result<bool> {
     // parse the header and store it in the raw_jpeg_header
-    if !lp.parse_jpeg_header(reader).context(here!())? {
+    if !lp
+        .parse_jpeg_header(reader, enabled_features)
+        .context(here!())?
+    {
         return Ok(false);
     }
 
@@ -1526,7 +1551,8 @@ fn parse_and_write_header() {
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
 
-    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg)).unwrap();
+    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &EnabledFeatures::all())
+        .unwrap();
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
         luma_y_end: 1,

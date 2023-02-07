@@ -215,9 +215,13 @@ impl ProbabilityTables {
             };
         }
 
-        let mut best_prior = 0;
+        let mut best_prior: i32 = 0;
         for i in 0..8 {
-            best_prior += coef_idct[i] * (compute_lak_coeffs_a[i] - compute_lak_coeffs_x[i]);
+            // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
+            best_prior = best_prior.wrapping_add(
+                coef_idct[i]
+                    .wrapping_mul(compute_lak_coeffs_a[i].wrapping_sub(compute_lak_coeffs_x[i])),
+            );
             // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
         }
 

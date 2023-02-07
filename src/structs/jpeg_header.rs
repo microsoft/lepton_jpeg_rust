@@ -36,6 +36,7 @@ use anyhow::{Context, Result};
 
 use std::io::Read;
 
+use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
@@ -158,11 +159,15 @@ impl JPegHeader {
     }
 
     /// Parses header for imageinfo
-    pub fn parse<R: Read>(&mut self, reader: &mut R) -> Result<bool> {
+    pub fn parse<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<bool> {
         // header parser loop
         loop {
             match self
-                .parse_next_segment(reader)
+                .parse_next_segment(reader, enabled_features)
                 .context(crate::helpers::here!())?
             {
                 ParseSegmentResult::EOI => {
@@ -263,7 +268,11 @@ impl JPegHeader {
     }
 
     // returns true we should continue parsing headers or false if we hit SOS and should stop
-    fn parse_next_segment<R: Read>(&mut self, reader: &mut R) -> Result<ParseSegmentResult> {
+    fn parse_next_segment<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<ParseSegmentResult> {
         let mut header = [0u8; 4];
 
         if reader.read(&mut header[0..1]).context(here!())? == 0 {
@@ -284,7 +293,13 @@ impl JPegHeader {
         reader.read_exact(&mut header[2..]).context(here!())?;
 
         let mut segment_data = Vec::new();
-        segment_data.resize(b_short(header[2], header[3]) as usize - 2, 0);
+
+        let segment_size = b_short(header[2], header[3]);
+        if segment_size < 2 {
+            return err_exit_code(ExitCode::UnsupportedJpeg, "segment is too short");
+        }
+
+        segment_data.resize(usize::from(segment_size) - 2, 0);
 
         reader.read_exact(&mut segment_data).context(here!())?;
 
@@ -316,12 +331,15 @@ impl JPegHeader {
                     self.ht_set[lval][rval] = 1;
 
                     let mut skip = 16;
+
+                    ensure_space(segment,hpos, 16)?;
+
                     for i in 0..16
                     {
-                        skip += segment[hpos + i];
+                        skip += usize::from(segment[hpos + i]);
                     }
 
-                    hpos += usize::from(skip);
+                    hpos += skip;
                 }
 
                 if hpos != len
@@ -338,26 +356,23 @@ impl JPegHeader {
                 {
                     let lval = usize::from(lbits(segment[hpos], 4));
                     let rval = usize::from(rbits(segment[hpos], 4));
-                    if lval >= 2
+                    if lval >= 2 || rval >= 4
                     {
-                        break;
-                    }
-
-                    if rval >= 4
-                    {
-                        break;
+                        return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has invalid index");
                     }
 
                     hpos+=1;
                     if lval == 0
                     {
+                        ensure_space(segment,hpos, 64).context(here!())?;
+
                         // 8 bit precision
                         for i in 0..64
                         {
                             self.q_tables[rval][i] = segment[hpos + i] as u16;
                             if self.q_tables[rval][i] == 0
                             {
-                                break;
+                                return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
                             }
                         }
 
@@ -365,13 +380,15 @@ impl JPegHeader {
                     }
                     else
                     {
+                        ensure_space(segment,hpos, 128).context(here!())?;
+
                         // 16 bit precision
                         for i in 0..64
                         {
                             self.q_tables[rval][i] = b_short(segment[hpos + (2 * i)], segment[hpos + (2 * i) + 1]);
                             if self.q_tables[rval][i] == 0
                             {
-                                break;
+                                return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
                             }
                         }
 
@@ -390,13 +407,22 @@ impl JPegHeader {
             jpeg_code::DRI =>
             {  // DRI segment
                 // define restart interval
+                ensure_space(segment,hpos, 2).context(here!())?;
                 self.rsti = b_short(segment[hpos], segment[hpos + 1]) as i32;
             }
 
             jpeg_code::SOS => // SOS segment
             {
                 // prepare next scan
+                ensure_space(segment,hpos, 1).context(here!())?;
+
                 self.cs_cmpc = usize::from(segment[hpos]);
+
+                if self.cs_cmpc == 0
+                {
+                    return err_exit_code( ExitCode::UnsupportedJpeg, "zero components in scan");
+                }
+
                 if self.cs_cmpc > self.cmpc
                 {
                     return err_exit_code( ExitCode::UnsupportedJpeg, format!("{0} components in scan, only {1} are allowed", self.cs_cmpc, self.cmpc).as_str());
@@ -405,11 +431,14 @@ impl JPegHeader {
                 hpos+=1;
                 for i in 0..self.cs_cmpc
                 {
+                    ensure_space(segment,hpos, 2).context(here!())?;
+
                     let mut cmp = 0;
-                    while (segment[hpos] != self.cmp_info[cmp].jid) && (cmp < self.cmpc)
+                    while cmp < self.cmpc && segment[hpos] != self.cmp_info[cmp].jid
                     {
                         cmp+=1;
                     }
+
                     if cmp == self.cmpc
                     {
                         return err_exit_code(ExitCode::UnsupportedJpeg, "component id mismatch in start-of-scan");
@@ -427,6 +456,8 @@ impl JPegHeader {
 
                     hpos += 2;
                 }
+
+                ensure_space(segment,hpos, 3).context(here!())?;
 
                 self.cs_from = segment[hpos + 0];
                 self.cs_to = segment[hpos + 1];
@@ -461,6 +492,8 @@ impl JPegHeader {
                     self.jpeg_type = JPegType::Sequential;
                 }
 
+                ensure_space(segment,hpos, 6).context(here!())?;
+
                 // check data precision, only 8 bit is allowed
                 let lval = segment[hpos];
                 if lval != 8
@@ -469,9 +502,20 @@ impl JPegHeader {
                 }
 
                 // image size, height & component count
-                self.img_height = b_short(segment[hpos + 1], segment[hpos + 2]) as i32;
-                self.img_width = b_short(segment[hpos + 3], segment[hpos + 4]) as i32;
-                self.cmpc = segment[hpos + 5] as usize;
+                self.img_height = i32::from(b_short(segment[hpos + 1], segment[hpos + 2]));
+                self.img_width = i32::from(b_short(segment[hpos + 3], segment[hpos + 4]));
+
+                if self.img_height == 0 || self.img_width == 0
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions can't be zero");
+                }
+
+                if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions larger than 16386");
+                }
+
+                self.cmpc = usize::from(segment[hpos + 5]);
 
                 if self.cmpc > 4
                 {
@@ -483,6 +527,8 @@ impl JPegHeader {
                 // components contained in image
                 for cmp in  0..self.cmpc
                 {
+                    ensure_space(segment,hpos, 3).context(here!())?;
+
                     self.cmp_info[cmp].jid = segment[hpos];
                     self.cmp_info[cmp].sfv = lbits(segment[hpos + 1], 4) as i32;
                     self.cmp_info[cmp].sfh = rbits(segment[hpos + 1], 4) as i32;
@@ -640,10 +686,18 @@ impl JPegHeader {
 
         // symbol-value of code is its position in the table
         for i in 0..16 {
+            ensure_space(segment, clen_offset, i + 1).context(here!())?;
+
             let mut j = 0;
             while j < segment[clen_offset + (i & 0xff)] {
+                ensure_space(segment, cval_offset, k + 1).context(here!())?;
+
                 hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = (1 + i) as u16;
                 hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
+
+                if code == 65535 {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "huffman code too large");
+                }
 
                 k += 1;
                 code += 1;
@@ -747,4 +801,12 @@ impl JPegHeader {
 
         return Ok(());
     }
+}
+
+fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
+    if hpos + amount > segment.len() {
+        return err_exit_code(ExitCode::UnsupportedJpeg, "SOF too small");
+    }
+
+    Ok(())
 }
