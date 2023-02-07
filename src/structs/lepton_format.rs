@@ -320,7 +320,12 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                         &lh.jpeg_header,
                         i,
                         combined_thread_handoff.luma_y_start,
-                        combined_thread_handoff.luma_y_end,
+                        if t == m - 1 {
+                            // if this is the last thead, then the image should extend all the way to the bottom
+                            lh.jpeg_header.cmp_info[0].bcv
+                        } else {
+                            combined_thread_handoff.luma_y_end
+                        },
                     ));
                 }
 
