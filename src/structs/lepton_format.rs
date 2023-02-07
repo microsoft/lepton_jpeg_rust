@@ -157,7 +157,8 @@ pub fn read_jpeg<R: Read + Seek>(
 
     let mut end_scan = reader.stream_position()? as i32;
 
-    if thread_handoff.len() == 0 {
+    // need at least two bytes of scan data
+    if start_scan + 2 > end_scan || thread_handoff.len() == 0 {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
             "couldnt find any sections to encode",

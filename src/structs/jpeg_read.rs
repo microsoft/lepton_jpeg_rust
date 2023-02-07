@@ -230,6 +230,17 @@ pub fn read_progressive_scan<R: Read>(
         } else {
             // ---> progressive AC encoding <---
 
+            if jf.cs_from == 0 || jf.cs_to >= 64 || jf.cs_from >= jf.cs_to {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    format!(
+                        "progressive encoding range was invalid {0} to {1}",
+                        jf.cs_from, jf.cs_to
+                    )
+                    .as_str(),
+                );
+            }
+
             // only need AC
             jf.verify_huffman_table(false, true).context(here!())?;
 

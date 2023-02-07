@@ -692,7 +692,16 @@ impl JPegHeader {
             while j < segment[clen_offset + (i & 0xff)] {
                 ensure_space(segment, cval_offset, k + 1).context(here!())?;
 
-                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = (1 + i) as u16;
+                let len = (1 + i) as u16;
+
+                if u32::from(code) >= (1u32 << len) {
+                    return err_exit_code(
+                        ExitCode::UnsupportedJpeg,
+                        "invalid huffman code layout, too many codes for a given length",
+                    );
+                }
+
+                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = len;
                 hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
 
                 if code == 65535 {
