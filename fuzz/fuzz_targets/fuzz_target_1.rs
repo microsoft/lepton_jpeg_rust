@@ -14,7 +14,7 @@ fuzz_target!(|data: &[u8]| {
     {
         let mut writer = Cursor::new(&mut output);
 
-        // kepp the jpeg dimensions small otherwise the fuzzer gets really slow
+        // keep the jpeg dimensions small otherwise the fuzzer gets really slow
         let features = EnabledFeatures {
             progressive: true,
             max_jpeg_height: 131,
