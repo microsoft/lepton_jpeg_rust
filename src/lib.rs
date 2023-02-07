@@ -13,9 +13,9 @@ mod structs;
 pub mod enabled_features;
 pub mod lepton_error;
 
-pub use metrics::Metrics;
 pub use crate::enabled_features::EnabledFeatures;
 pub use crate::lepton_error::{ExitCode, LeptonError};
+pub use metrics::Metrics;
 
 use core::result::Result;
 use std::panic::catch_unwind;

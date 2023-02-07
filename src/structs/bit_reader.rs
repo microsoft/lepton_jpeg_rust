@@ -64,7 +64,9 @@ impl<R: Read> BitReader<R> {
                 self.num_bits += 8;
                 self.prev_offset = self.offset;
                 self.last_byte_read = 0;
-                break;
+
+                // continue since we still might need to read more 0 bits
+                continue;
             }
 
             // 0xff is an escape code, if the next by is zero, then it is just a normal 0
@@ -79,7 +81,9 @@ impl<R: Read> BitReader<R> {
                     self.bits |= (0xff as u64) << (56 - self.num_bits);
                     self.num_bits += 8;
                     self.last_byte_read = 0xff;
-                    break;
+
+                    // continue since we still might need to read more 0 bits
+                    continue;
                 }
 
                 if buffer[0] == 0 {
