@@ -82,6 +82,9 @@ pub fn read_scan<R: Read>(
             )
             .context(here!())?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
+            // only need DC
+            jf.verify_huffman_table(true, false).context(here!())?;
+
             let mut last_dc = [0i16; 4];
 
             while sta == JPegDecodeStatus::DecodeInProgress {
