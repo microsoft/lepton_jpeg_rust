@@ -17,8 +17,8 @@ fuzz_target!(|data: &[u8]| {
         // kepp the jpeg dimensions small otherwise the fuzzer gets really slow
         let features = EnabledFeatures {
             progressive: true,
-            max_jpeg_height: 503,
-            max_jpeg_width: 503,
+            max_jpeg_height: 131,
+            max_jpeg_width: 131,
         };
 
         r = encode_lepton_feat(&mut Cursor::new(&data), &mut writer, 8, &features);
