@@ -51,7 +51,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut verify = false;
     let mut dump = false;
     let mut all = false;
-    let mut enabled_features = EnabledFeatures::all();
+    let mut enabled_features = EnabledFeatures::default();
 
     SimpleLogger::new().init().unwrap();
 
@@ -92,7 +92,7 @@ fn main_with_result() -> anyhow::Result<()> {
         if filenames[0].to_lowercase().ends_with(".jpg") {
             (lh, block_image) = read_jpeg(
                 &mut reader,
-                &EnabledFeatures::all(),
+                &EnabledFeatures::default(),
                 num_threads as usize,
                 |jh| {
                     println!("parsed header:");
@@ -116,7 +116,10 @@ fn main_with_result() -> anyhow::Result<()> {
                 let s = format!("{0:?}", lh.jpeg_header);
                 println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
 
-                if !lh.advance_next_header_segment().context(here!())? {
+                if !lh
+                    .advance_next_header_segment(&EnabledFeatures::default())
+                    .context(here!())?
+                {
                     break;
                 }
             }

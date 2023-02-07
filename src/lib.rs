@@ -13,10 +13,9 @@ mod structs;
 pub mod enabled_features;
 pub mod lepton_error;
 
-use metrics::Metrics;
-
-use crate::enabled_features::EnabledFeatures;
-use crate::lepton_error::{ExitCode, LeptonError};
+pub use metrics::Metrics;
+pub use crate::enabled_features::EnabledFeatures;
+pub use crate::lepton_error::{ExitCode, LeptonError};
 
 use core::result::Result;
 use std::panic::catch_unwind;
@@ -66,6 +65,7 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
         max_threads,
         &EnabledFeatures {
             progressive: !no_progressive,
+            ..Default::default()
         },
     )
     .map_err(translate_error)
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             &mut reader,
             &mut writer,
             number_of_threads as usize,
-            &EnabledFeatures::all(),
+            &EnabledFeatures::default(),
         ) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {

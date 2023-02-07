@@ -36,6 +36,7 @@ use anyhow::{Context, Result};
 
 use std::io::Read;
 
+use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
@@ -158,11 +159,15 @@ impl JPegHeader {
     }
 
     /// Parses header for imageinfo
-    pub fn parse<R: Read>(&mut self, reader: &mut R) -> Result<bool> {
+    pub fn parse<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<bool> {
         // header parser loop
         loop {
             match self
-                .parse_next_segment(reader)
+                .parse_next_segment(reader, enabled_features)
                 .context(crate::helpers::here!())?
             {
                 ParseSegmentResult::EOI => {
@@ -263,7 +268,11 @@ impl JPegHeader {
     }
 
     // returns true we should continue parsing headers or false if we hit SOS and should stop
-    fn parse_next_segment<R: Read>(&mut self, reader: &mut R) -> Result<ParseSegmentResult> {
+    fn parse_next_segment<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<ParseSegmentResult> {
         let mut header = [0u8; 4];
 
         if reader.read(&mut header[0..1]).context(here!())? == 0 {
@@ -501,7 +510,7 @@ impl JPegHeader {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions can't be zero");
                 }
 
-                if self.img_height > 16386 || self.img_height > 16386
+                if self.img_height > enabled_features.max_jpeg_width || self.img_height > enabled_features.max_jpeg_height
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions larger than 16386");
                 }
