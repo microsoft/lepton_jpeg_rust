@@ -482,6 +482,11 @@ impl JPegHeader {
             jpeg_code::SOF1| // SOF1 segment, coding process: extended sequential DCT
             jpeg_code::SOF2 =>  // SOF2 segment, coding process: progressive DCT
             {
+                if self.jpeg_type != JPegType::Unknown
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "image cannot have multiple SOF blocks");
+                }
+
                 // set JPEG coding type
                 if btype == jpeg_code::SOF2
                 {
