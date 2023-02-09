@@ -482,6 +482,11 @@ impl JPegHeader {
             jpeg_code::SOF1| // SOF1 segment, coding process: extended sequential DCT
             jpeg_code::SOF2 =>  // SOF2 segment, coding process: progressive DCT
             {
+                if self.jpeg_type != JPegType::Unknown
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "image cannot have multiple SOF blocks");
+                }
+
                 // set JPEG coding type
                 if btype == jpeg_code::SOF2
                 {
@@ -692,7 +697,16 @@ impl JPegHeader {
             while j < segment[clen_offset + (i & 0xff)] {
                 ensure_space(segment, cval_offset, k + 1).context(here!())?;
 
-                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = (1 + i) as u16;
+                let len = (1 + i) as u16;
+
+                if u32::from(code) >= (1u32 << len) {
+                    return err_exit_code(
+                        ExitCode::UnsupportedJpeg,
+                        "invalid huffman code layout, too many codes for a given length",
+                    );
+                }
+
+                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = len;
                 hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
 
                 if code == 65535 {

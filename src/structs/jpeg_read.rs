@@ -82,6 +82,9 @@ pub fn read_scan<R: Read>(
             )
             .context(here!())?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
+            // only need DC
+            jf.verify_huffman_table(true, false).context(here!())?;
+
             let mut last_dc = [0i16; 4];
 
             while sta == JPegDecodeStatus::DecodeInProgress {
@@ -226,6 +229,17 @@ pub fn read_progressive_scan<R: Read>(
             }
         } else {
             // ---> progressive AC encoding <---
+
+            if jf.cs_from == 0 || jf.cs_to >= 64 || jf.cs_from >= jf.cs_to {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    format!(
+                        "progressive encoding range was invalid {0} to {1}",
+                        jf.cs_from, jf.cs_to
+                    )
+                    .as_str(),
+                );
+            }
 
             // only need AC
             jf.verify_huffman_table(false, true).context(here!())?;
