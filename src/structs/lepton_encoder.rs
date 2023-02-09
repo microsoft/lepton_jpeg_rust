@@ -323,7 +323,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
         // this should work in all cases but doesn't utilize that the zig49 is related
         let coef = block.get_coefficient(zig49);
-        let coord = UNZIGZAG_49[zig49];
 
         model
             .write_coef(
@@ -339,10 +338,11 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         if coef != 0 {
             num_non_zeros_left_7x7 -= 1;
 
+            let coord = UNZIGZAG_49[zig49];
             let bx = coord & 7;
             let by = coord >> 3;
 
-            assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
+            debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
             eob_x = cmp::max(eob_x, bx);
             eob_y = cmp::max(eob_y, by);
