@@ -48,7 +48,7 @@ pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
 pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
 #[derive(Default)]
-struct ExpGoul {
+struct CoefficientBin {
     exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
     bits: [Branch; 10],
 }
@@ -65,7 +65,7 @@ pub struct Model {
         RESIDUAL_THRESHOLD_COUNTS_D2];
         RESIDUAL_THRESHOLD_COUNTS_D1]; BLOCK_TYPES],
 
-    coef_bins: [[[ExpGoul; NUM_NON_ZERO_BINS]; 64]; BLOCK_TYPES],
+    coef_bins: [[[CoefficientBin; NUM_NON_ZERO_BINS]; 64]; BLOCK_TYPES],
 
     sign_counts: [[[Branch; NUMERIC_LENGTH_MAX]; 4]; BLOCK_TYPES],
 
@@ -400,7 +400,7 @@ impl Model {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let exp_array = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+        let length_branches = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
             [ptcc8.num_non_zeros_bin as usize]
             .exp[usize::from(ptcc8.best_prior_bit_len)];
 
