@@ -157,7 +157,8 @@ pub fn read_jpeg<R: Read + Seek>(
 
     let mut end_scan = reader.stream_position()? as i32;
 
-    if thread_handoff.len() == 0 {
+    // need at least two bytes of scan data
+    if start_scan + 2 > end_scan || thread_handoff.len() == 0 {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
             "couldnt find any sections to encode",
@@ -263,7 +264,14 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     let pts = ProbabilityTablesSet::new();
     let mut qt = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
-        qt.push(QuantizationTables::new(&lh.jpeg_header, i));
+        let qtables = QuantizationTables::new(&lh.jpeg_header, i);
+
+        // check to see if quantitization table was properly initialized
+        // (table contains divisors for coefficients so it never should have a zero)
+        if qtables.get_quantization_table()[0] == 0 {
+            return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table is missing");
+        }
+        qt.push(qtables);
     }
 
     let r = thread::scope(|s| -> Result<(Metrics, Vec<P>)> {
@@ -467,7 +475,14 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     let pts = ProbabilityTablesSet::new();
     let mut quantization_tables = Vec::new();
     for i in 0..image_data.len() {
-        quantization_tables.push(QuantizationTables::new(jpeg_header, i));
+        let qtables = QuantizationTables::new(jpeg_header, i);
+
+        // check to see if quantitization table was properly initialized
+        // (table contains divisors for coefficients so it never should have a zero)
+        if qtables.get_quantization_table()[0] == 0 {
+            return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table is missing");
+        }
+        quantization_tables.push(qtables);
     }
 
     let pts_ref = &pts;
