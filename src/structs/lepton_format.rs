@@ -265,6 +265,9 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     let mut qt = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
         let qtables = QuantizationTables::new(&lh.jpeg_header, i);
+
+        // check to see if quantitization table was properly initialized
+        // (table contains divisors for coefficients so it never should have a zero)
         if qtables.get_quantization_table()[0] == 0 {
             return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table is missing");
         }
@@ -473,6 +476,9 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     let mut quantization_tables = Vec::new();
     for i in 0..image_data.len() {
         let qtables = QuantizationTables::new(jpeg_header, i);
+
+        // check to see if quantitization table was properly initialized
+        // (table contains divisors for coefficients so it never should have a zero)
         if qtables.get_quantization_table()[0] == 0 {
             return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table is missing");
         }

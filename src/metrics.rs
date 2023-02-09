@@ -76,12 +76,13 @@ impl Metrics {
             let name = format!("{0:?}", x.0);
 
             println!(
-                "{0:16} total_bits={1:9} compressed_bits={2:9} ratio={3:4} (global improvement {4:10} bytes ({5:0.2}%)",
+                "{0:16} total_bits={1:9} compressed_bits={2:9} ratio={3:4} comp_delta={4:10}k storage={5:0.1}%, comp={6:0.2}%)",
                 name,
                 x.1.total_bits,
                 x.1.total_compressed,
                 x.1.total_compressed * 100 / x.1.total_bits,
-                (x.1.total_bits - x.1.total_compressed)/8,
+                (x.1.total_bits - x.1.total_compressed)/(8*1024),
+                (x.1.total_compressed as f64) * 100f64 / (total_compressed as f64),
                 ((x.1.total_bits - x.1.total_compressed) as f64)/(total_compressed as f64)*100f64
             );
         }
