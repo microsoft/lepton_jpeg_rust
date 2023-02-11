@@ -54,38 +54,41 @@ struct CoefficientBin {
 }
 
 #[derive(DefaultBoxed)]
+pub struct ModelBlock {
+    num_non_zeros_counts7x7: NumNonZerosCounts7x7T,
+
+    num_non_zeros_counts1x8: NumNonZerosCountsT,
+
+    num_non_zeros_counts8x1: NumNonZerosCountsT,
+
+    residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
+        RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
+
+    coef_bins: [[CoefficientBin; NUM_NON_ZERO_BINS]; 64],
+
+    sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 4],
+}
+
+#[derive(DefaultBoxed)]
 pub struct Model {
-    num_non_zeros_counts7x7: [NumNonZerosCounts7x7T; BLOCK_TYPES],
-
-    num_non_zeros_counts1x8: [NumNonZerosCountsT; BLOCK_TYPES],
-
-    num_non_zeros_counts8x1: [NumNonZerosCountsT; BLOCK_TYPES],
-
-    residual_threshold_counts: [[[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
-        RESIDUAL_THRESHOLD_COUNTS_D2];
-        RESIDUAL_THRESHOLD_COUNTS_D1]; BLOCK_TYPES],
-
-    coef_bins: [[[CoefficientBin; NUM_NON_ZERO_BINS]; 64]; BLOCK_TYPES],
-
-    sign_counts: [[[Branch; NUMERIC_LENGTH_MAX]; 4]; BLOCK_TYPES],
+    cmp: [ModelBlock; BLOCK_TYPES],
 
     exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
 
     residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
 }
 
-impl Model {
+impl ModelBlock {
     #[inline(never)]
     pub fn read_coef<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<i16> {
         let (exp, sign, bits) =
-            self.get_coef_branches(num_non_zeros_bin, color_index, zig49, best_prior_bit_len);
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
         return Model::read_length_sign_coef(
             bool_reader,
@@ -103,14 +106,13 @@ impl Model {
     pub fn write_coef<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
         coef: i16,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<()> {
         let (exp, sign, bits) =
-            self.get_coef_branches(num_non_zeros_bin, color_index, zig49, best_prior_bit_len);
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
         return Model::write_length_sign_coef(
             bool_writer,
@@ -128,7 +130,6 @@ impl Model {
     fn get_coef_branches(
         &mut self,
         num_non_zeros_bin: usize,
-        color_index: usize,
         zig49: usize,
         best_prior_bit_len: usize,
     ) -> (
@@ -142,9 +143,15 @@ impl Model {
             num_non_zeros_bin
         );
 
-        let exp = &mut self.coef_bins[color_index][zig49][num_non_zeros_bin];
-        let sign = &mut self.sign_counts[color_index][0][0];
+        let exp = &mut self.coef_bins[zig49][num_non_zeros_bin];
+        let sign = &mut self.sign_counts[0][0];
         (&mut exp.exp[best_prior_bit_len], sign, &mut exp.bits)
+    }
+}
+
+impl Model {
+    pub fn get_block_type_mut(&mut self, pt: &ProbabilityTables) -> &mut ModelBlock {
+        return &mut self.cmp[pt.get_color_index()];
     }
 
     pub fn read_dc<R: Read>(
@@ -206,7 +213,7 @@ impl Model {
             self.exponent_counts_dc[0].len() - 1,
         )];
 
-        let sign = &mut self.sign_counts[color_index][0][if uncertainty2 >= 0 {
+        let sign = &mut self.cmp[color_index].sign_counts[0][if uncertainty2 >= 0 {
             if uncertainty2 == 0 {
                 3
             } else {
@@ -230,7 +237,7 @@ impl Model {
         num_non_zeros_context: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7[color_index]
+        let num_non_zeros_prob = &mut self.cmp[color_index].num_non_zeros_counts7x7
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return bool_writer
@@ -271,7 +278,7 @@ impl Model {
         color_index: usize,
         num_non_zeros_context: u8,
     ) -> Result<u8> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7[color_index]
+        let num_non_zeros_prob = &mut self.cmp[color_index].num_non_zeros_counts7x7
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return Ok(bool_reader
@@ -400,7 +407,7 @@ impl Model {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let length_branches = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+        let length_branches = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
             [ptcc8.num_non_zeros_bin as usize]
             .exp[usize::from(ptcc8.best_prior_bit_len)];
 
@@ -452,7 +459,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+                    let res_prob = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
                         .bits;
 
@@ -481,7 +488,7 @@ impl Model {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+        let exp_array = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
             [ptcc8.num_non_zeros_bin as usize]
             .exp[ptcc8.best_prior_bit_len as usize];
 
@@ -541,7 +548,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.coef_bins[pt.get_color_index()][49 + zig15offset]
+                    let res_prob = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
                         .bits;
 
@@ -567,12 +574,15 @@ impl Model {
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
-        return &mut self.residual_threshold_counts[pt.get_color_index()][cmp::min(
+        return &mut self.cmp[pt.get_color_index()].residual_threshold_counts[cmp::min(
             (ptcc8.best_prior.abs() >> min_threshold) as usize,
-            self.residual_threshold_counts[0].len() - 1,
+            self.cmp[pt.get_color_index()]
+                .residual_threshold_counts
+                .len()
+                - 1,
         )][cmp::min(
             (length - min_threshold) as usize,
-            self.residual_threshold_counts[0][0].len() - 1,
+            self.cmp[pt.get_color_index()].residual_threshold_counts[0].len() - 1,
         )];
     }
 
@@ -583,10 +593,10 @@ impl Model {
         num_nonzeros: u8,
     ) -> &mut [[Branch; 4]; 3] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[color_index][est_eob as usize]
+            return &mut self.cmp[color_index].num_non_zeros_counts8x1[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];
         } else {
-            return &mut self.num_non_zeros_counts1x8[color_index][est_eob as usize]
+            return &mut self.cmp[color_index].num_non_zeros_counts1x8[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];
         }
     }
@@ -596,7 +606,7 @@ impl Model {
         pt: &ProbabilityTables,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> &mut Branch {
-        &mut self.sign_counts[pt.get_color_index()][calc_sign_index(ptcc8.best_prior)]
+        &mut self.cmp[pt.get_color_index()].sign_counts[calc_sign_index(ptcc8.best_prior)]
             [ptcc8.best_prior_bit_len as usize]
     }
 }

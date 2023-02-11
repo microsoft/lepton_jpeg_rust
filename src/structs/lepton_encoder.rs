@@ -314,6 +314,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
 
+    let model_block = model.get_block_type_mut(pt);
+
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -324,10 +326,9 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         // this should work in all cases but doesn't utilize that the zig49 is related
         let coef = block.get_coefficient(zig49);
 
-        model
+        model_block
             .write_coef(
                 bool_writer,
-                pt.get_color_index(),
                 coef,
                 zig49,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,

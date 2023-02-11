@@ -294,6 +294,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
 
+    let model_block = model.get_block_type_mut(pt);
+
     let block = context.here_mut(image_data).get_block_mut();
     for zz in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
@@ -302,16 +304,9 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 
         let best_prior_bit_length = u16_bit_length(best_priors[zz] as u16);
 
-        let coord = UNZIGZAG_49[zz];
-        assert!(
-            (coord & 7) > 0 && (coord >> 3) > 0,
-            "this does the DC and the lower 7x7 AC"
-        );
-
-        let coef = model
+        let coef = model_block
             .read_coef(
                 bool_reader,
-                pt.get_color_index(),
                 zz.into(),
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
@@ -319,6 +314,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             .context(here!())?;
 
         if coef != 0 {
+            let coord = UNZIGZAG_49[zz];
+            debug_assert!(
+                (coord & 7) > 0 && (coord >> 3) > 0,
+                "this does the DC and the lower 7x7 AC"
+            );
+
             let b_x = coord & 7;
             let b_y = coord >> 3;
 
