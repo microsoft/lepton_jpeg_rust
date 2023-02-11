@@ -47,14 +47,21 @@ pub const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
 pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
 pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
-#[derive(Default)]
-struct CoefficientBin {
-    exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
-    bits: [Branch; 10],
+/// model used to track probabilities of the bins
+#[derive(DefaultBoxed)]
+pub struct Model {
+    cmp: [ModelPerColor; BLOCK_TYPES],
+
+    /// non color dependent bins. Not sure why, but changing this will brake the file format
+    exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
+
+    residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
 }
 
+/// this is the model per component or color. Currently there are only two that are used,
+/// 0 for the first component and 1 for the rest of all components
 #[derive(DefaultBoxed)]
-pub struct ModelBlock {
+pub struct ModelPerColor {
     num_non_zeros_counts7x7: NumNonZerosCounts7x7T,
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
@@ -64,93 +71,20 @@ pub struct ModelBlock {
     residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
         RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
 
-    coef_bins: [[CoefficientBin; NUM_NON_ZERO_BINS]; 64],
+    coef_bins: [[AcCoefficientBin; NUM_NON_ZERO_BINS]; 64],
 
     sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 4],
 }
 
-#[derive(DefaultBoxed)]
-pub struct Model {
-    cmp: [ModelBlock; BLOCK_TYPES],
-
-    exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
-
-    residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
-}
-
-impl ModelBlock {
-    #[inline(never)]
-    pub fn read_coef<R: Read>(
-        &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
-        zig49: usize,
-        num_non_zeros_bin: usize,
-        best_prior_bit_len: usize,
-    ) -> Result<i16> {
-        let (exp, sign, bits) =
-            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
-
-        return Model::read_length_sign_coef(
-            bool_reader,
-            exp,
-            sign,
-            bits,
-            ModelComponent::Coef(ModelSubComponent::Exp),
-            ModelComponent::Coef(ModelSubComponent::Sign),
-            ModelComponent::Coef(ModelSubComponent::Noise),
-        )
-        .context(here!());
-    }
-
-    #[inline(never)]
-    pub fn write_coef<W: Write>(
-        &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
-        coef: i16,
-        zig49: usize,
-        num_non_zeros_bin: usize,
-        best_prior_bit_len: usize,
-    ) -> Result<()> {
-        let (exp, sign, bits) =
-            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
-
-        return Model::write_length_sign_coef(
-            bool_writer,
-            coef,
-            exp,
-            sign,
-            bits,
-            ModelComponent::Coef(ModelSubComponent::Exp),
-            ModelComponent::Coef(ModelSubComponent::Sign),
-            ModelComponent::Coef(ModelSubComponent::Noise),
-        )
-        .context(here!());
-    }
-
-    fn get_coef_branches(
-        &mut self,
-        num_non_zeros_bin: usize,
-        zig49: usize,
-        best_prior_bit_len: usize,
-    ) -> (
-        &mut [Branch; MAX_EXPONENT],
-        &mut Branch,
-        &mut [Branch; MAX_EXPONENT - 1],
-    ) {
-        debug_assert!(
-            num_non_zeros_bin < NUM_NON_ZERO_BINS,
-            "num_non_zeros_bin {0} too high",
-            num_non_zeros_bin
-        );
-
-        let exp = &mut self.coef_bins[zig49][num_non_zeros_bin];
-        let sign = &mut self.sign_counts[0][0];
-        (&mut exp.exp[best_prior_bit_len], sign, &mut exp.bits)
-    }
+/// bins for a single AC coefficent
+#[derive(Default)]
+struct AcCoefficientBin {
+    exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
+    bits: [Branch; 10],
 }
 
 impl Model {
-    pub fn get_block_type_mut(&mut self, pt: &ProbabilityTables) -> &mut ModelBlock {
+    pub fn get_per_color(&mut self, pt: &ProbabilityTables) -> &mut ModelPerColor {
         return &mut self.cmp[pt.get_color_index()];
     }
 
@@ -163,7 +97,7 @@ impl Model {
     ) -> Result<i16> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::read_length_sign_coef(
+        return read_length_sign_coef(
             bool_reader,
             exp,
             sign,
@@ -185,7 +119,7 @@ impl Model {
     ) -> Result<()> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::write_length_sign_coef(
+        return write_length_sign_coef(
             bool_writer,
             coef,
             exp,
@@ -229,15 +163,85 @@ impl Model {
         )];
         (exp, sign, bits)
     }
+}
+
+impl ModelPerColor {
+    #[inline(never)]
+    pub fn read_coef<R: Read>(
+        &mut self,
+        bool_reader: &mut VPXBoolReader<R>,
+        zig49: usize,
+        num_non_zeros_bin: usize,
+        best_prior_bit_len: usize,
+    ) -> Result<i16> {
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
+
+        return read_length_sign_coef(
+            bool_reader,
+            exp,
+            sign,
+            bits,
+            ModelComponent::Coef(ModelSubComponent::Exp),
+            ModelComponent::Coef(ModelSubComponent::Sign),
+            ModelComponent::Coef(ModelSubComponent::Noise),
+        )
+        .context(here!());
+    }
+
+    #[inline(never)]
+    pub fn write_coef<W: Write>(
+        &mut self,
+        bool_writer: &mut VPXBoolWriter<W>,
+        coef: i16,
+        zig49: usize,
+        num_non_zeros_bin: usize,
+        best_prior_bit_len: usize,
+    ) -> Result<()> {
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
+
+        return write_length_sign_coef(
+            bool_writer,
+            coef,
+            exp,
+            sign,
+            bits,
+            ModelComponent::Coef(ModelSubComponent::Exp),
+            ModelComponent::Coef(ModelSubComponent::Sign),
+            ModelComponent::Coef(ModelSubComponent::Noise),
+        )
+        .context(here!());
+    }
+
+    fn get_coef_branches(
+        &mut self,
+        num_non_zeros_bin: usize,
+        zig49: usize,
+        best_prior_bit_len: usize,
+    ) -> (
+        &mut [Branch; MAX_EXPONENT],
+        &mut Branch,
+        &mut [Branch; MAX_EXPONENT - 1],
+    ) {
+        debug_assert!(
+            num_non_zeros_bin < NUM_NON_ZERO_BINS,
+            "num_non_zeros_bin {0} too high",
+            num_non_zeros_bin
+        );
+
+        let exp = &mut self.coef_bins[zig49][num_non_zeros_bin];
+        let sign = &mut self.sign_counts[0][0];
+        (&mut exp.exp[best_prior_bit_len], sign, &mut exp.bits)
+    }
 
     pub fn write_non_zero_7x7_count<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
         num_non_zeros_context: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
-        let num_non_zeros_prob = &mut self.cmp[color_index].num_non_zeros_counts7x7
+        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return bool_writer
@@ -252,16 +256,12 @@ impl Model {
     pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
         est_eob: u8,
         num_non_zeros_7x7: u8,
         num_non_zeros_edge: u8,
     ) -> Result<()> {
-        let prob_edge_eob = self.get_non_zero_counts_edge_mut::<HORIZONTAL>(
-            color_index,
-            est_eob,
-            num_non_zeros_7x7,
-        );
+        let prob_edge_eob =
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
 
         return bool_writer
             .put_grid(
@@ -275,10 +275,9 @@ impl Model {
     pub fn read_non_zero_7x7_count<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
         num_non_zeros_context: u8,
     ) -> Result<u8> {
-        let num_non_zeros_prob = &mut self.cmp[color_index].num_non_zeros_counts7x7
+        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
             [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
 
         return Ok(bool_reader
@@ -289,125 +288,26 @@ impl Model {
     pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
         est_eob: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<u8> {
-        let prob_edge_eob = self.get_non_zero_counts_edge_mut::<HORIZONTAL>(
-            color_index,
-            est_eob,
-            num_non_zeros_7x7,
-        );
+        let prob_edge_eob =
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
 
         return Ok(bool_reader
             .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
             .context(here!())? as u8);
     }
 
-    fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
-        bool_reader: &mut VPXBoolReader<R>,
-        magnitude_branches: &mut [Branch; A],
-        sign_branch: &mut Branch,
-        bits_branch: &mut [Branch; B],
-        mag_cmp: ModelComponent,
-        sign_cmp: ModelComponent,
-        bits_cmp: ModelComponent,
-    ) -> Result<i16> {
-        assert!(
-            A - 1 <= B,
-            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
-            A,
-            B,
-            mag_cmp
-        );
-
-        let length = bool_reader
-            .get_unary_encoded(magnitude_branches, mag_cmp)
-            .context(here!())?;
-
-        let mut coef: i16 = 0;
-        if length != 0 {
-            let neg = !bool_reader.get(sign_branch, sign_cmp)?;
-            if length > 1 {
-                coef = bool_reader
-                    .get_n_bits(length - 1, bits_branch, bits_cmp)
-                    .context(here!())? as i16;
-            }
-
-            coef |= (1 << (length - 1)) as i16;
-
-            if neg {
-                coef = -coef;
-            }
-        }
-
-        return Ok(coef);
-    }
-
-    fn write_length_sign_coef<const A: usize, const B: usize, W: Write>(
-        bool_writer: &mut VPXBoolWriter<W>,
-        coef: i16,
-        magnitude_branches: &mut [Branch; A],
-        sign_branch: &mut Branch,
-        bits_branch: &mut [Branch; B],
-        mag_cmp: ModelComponent,
-        sign_cmp: ModelComponent,
-        bits_cmp: ModelComponent,
-    ) -> Result<()> {
-        assert!(
-            A - 1 <= B,
-            "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
-            A,
-            B,
-            mag_cmp,
-        );
-
-        let abs_coef = coef.unsigned_abs();
-        let coef_bit_len = u16_bit_length(abs_coef);
-
-        if coef_bit_len > A as u8 {
-            return err_exit_code(
-                ExitCode::CoefficientOutOfRange,
-                "coefficient > MAX_EXPONENT",
-            );
-        }
-
-        bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
-        if coef != 0 {
-            bool_writer.put(coef >= 0, sign_branch, sign_cmp)?;
-        }
-
-        if coef_bit_len > 1 {
-            assert!(
-                (abs_coef & (1 << (coef_bit_len - 1))) != 0,
-                "Biggest bit must be set"
-            );
-            assert!(
-                (abs_coef & (1 << coef_bit_len)) == 0,
-                "Beyond Biggest bit must be zero"
-            );
-
-            bool_writer.put_n_bits(
-                abs_coef as usize,
-                coef_bit_len as usize - 1,
-                bits_branch,
-                bits_cmp,
-            )?;
-        }
-
-        Ok(())
-    }
-
     pub fn read_edge_coefficient<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        pt: &ProbabilityTables,
         qt: &QuantizationTables,
         coord: usize,
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let length_branches = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
+        let length_branches = &mut self.coef_bins[49 + zig15offset]
             [ptcc8.num_non_zeros_bin as usize]
             .exp[usize::from(ptcc8.best_prior_bit_len)];
 
@@ -420,7 +320,7 @@ impl Model {
 
         let mut coef = 0;
         if length != 0 {
-            let sign = self.get_sign_counts_mut(pt, ptcc8);
+            let sign = self.get_sign_counts_mut(ptcc8);
 
             let neg = !bool_reader
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
@@ -434,7 +334,7 @@ impl Model {
 
                 if i >= min_threshold {
                     let thresh_prob =
-                        self.get_residual_threshold_counts_mut(pt, ptcc8, min_threshold, length);
+                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length);
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
@@ -459,7 +359,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
+                    let res_prob = &mut self.coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
                         .bits;
 
@@ -482,15 +382,13 @@ impl Model {
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
-        pt: &ProbabilityTables,
         coef: i16,
         coord: usize,
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
-            [ptcc8.num_non_zeros_bin as usize]
-            .exp[ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.coef_bins[49 + zig15offset][ptcc8.num_non_zeros_bin as usize].exp
+            [ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -507,7 +405,7 @@ impl Model {
 
         if coef != 0 {
             let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
-            let sign = self.get_sign_counts_mut(pt, ptcc8);
+            let sign = self.get_sign_counts_mut(ptcc8);
 
             bool_writer.put(
                 coef >= 0,
@@ -518,12 +416,8 @@ impl Model {
             if length > 1 {
                 let mut i: i32 = length as i32 - 2;
                 if i >= min_threshold {
-                    let thresh_prob = self.get_residual_threshold_counts_mut(
-                        pt,
-                        ptcc8,
-                        min_threshold,
-                        length as i32,
-                    );
+                    let thresh_prob =
+                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length as i32);
 
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
@@ -548,7 +442,7 @@ impl Model {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.cmp[pt.get_color_index()].coef_bins[49 + zig15offset]
+                    let res_prob = &mut self.coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
                         .bits;
 
@@ -569,44 +463,128 @@ impl Model {
 
     fn get_residual_threshold_counts_mut(
         &mut self,
-        pt: &ProbabilityTables,
         ptcc8: &ProbabilityTablesCoefficientContext,
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
-        return &mut self.cmp[pt.get_color_index()].residual_threshold_counts[cmp::min(
+        return &mut self.residual_threshold_counts[cmp::min(
             (ptcc8.best_prior.abs() >> min_threshold) as usize,
-            self.cmp[pt.get_color_index()]
-                .residual_threshold_counts
-                .len()
-                - 1,
+            self.residual_threshold_counts.len() - 1,
         )][cmp::min(
             (length - min_threshold) as usize,
-            self.cmp[pt.get_color_index()].residual_threshold_counts[0].len() - 1,
+            self.residual_threshold_counts[0].len() - 1,
         )];
     }
 
     fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
         &mut self,
-        color_index: usize,
         est_eob: u8,
         num_nonzeros: u8,
     ) -> &mut [[Branch; 4]; 3] {
         if HORIZONTAL {
-            return &mut self.cmp[color_index].num_non_zeros_counts8x1[est_eob as usize]
+            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];
         } else {
-            return &mut self.cmp[color_index].num_non_zeros_counts1x8[est_eob as usize]
+            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];
         }
     }
 
-    fn get_sign_counts_mut(
-        &mut self,
-        pt: &ProbabilityTables,
-        ptcc8: &ProbabilityTablesCoefficientContext,
-    ) -> &mut Branch {
-        &mut self.cmp[pt.get_color_index()].sign_counts[calc_sign_index(ptcc8.best_prior)]
-            [ptcc8.best_prior_bit_len as usize]
+    fn get_sign_counts_mut(&mut self, ptcc8: &ProbabilityTablesCoefficientContext) -> &mut Branch {
+        &mut self.sign_counts[calc_sign_index(ptcc8.best_prior)][ptcc8.best_prior_bit_len as usize]
     }
+}
+
+fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
+    bool_reader: &mut VPXBoolReader<R>,
+    magnitude_branches: &mut [Branch; A],
+    sign_branch: &mut Branch,
+    bits_branch: &mut [Branch; B],
+    mag_cmp: ModelComponent,
+    sign_cmp: ModelComponent,
+    bits_cmp: ModelComponent,
+) -> Result<i16> {
+    assert!(
+        A - 1 <= B,
+        "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
+        A,
+        B,
+        mag_cmp
+    );
+
+    let length = bool_reader
+        .get_unary_encoded(magnitude_branches, mag_cmp)
+        .context(here!())?;
+
+    let mut coef: i16 = 0;
+    if length != 0 {
+        let neg = !bool_reader.get(sign_branch, sign_cmp)?;
+        if length > 1 {
+            coef = bool_reader
+                .get_n_bits(length - 1, bits_branch, bits_cmp)
+                .context(here!())? as i16;
+        }
+
+        coef |= (1 << (length - 1)) as i16;
+
+        if neg {
+            coef = -coef;
+        }
+    }
+
+    return Ok(coef);
+}
+
+fn write_length_sign_coef<const A: usize, const B: usize, W: Write>(
+    bool_writer: &mut VPXBoolWriter<W>,
+    coef: i16,
+    magnitude_branches: &mut [Branch; A],
+    sign_branch: &mut Branch,
+    bits_branch: &mut [Branch; B],
+    mag_cmp: ModelComponent,
+    sign_cmp: ModelComponent,
+    bits_cmp: ModelComponent,
+) -> Result<()> {
+    assert!(
+        A - 1 <= B,
+        "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
+        A,
+        B,
+        mag_cmp,
+    );
+
+    let abs_coef = coef.unsigned_abs();
+    let coef_bit_len = u16_bit_length(abs_coef);
+
+    if coef_bit_len > A as u8 {
+        return err_exit_code(
+            ExitCode::CoefficientOutOfRange,
+            "coefficient > MAX_EXPONENT",
+        );
+    }
+
+    bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
+    if coef != 0 {
+        bool_writer.put(coef >= 0, sign_branch, sign_cmp)?;
+    }
+
+    if coef_bit_len > 1 {
+        assert!(
+            (abs_coef & (1 << (coef_bit_len - 1))) != 0,
+            "Biggest bit must be set"
+        );
+        assert!(
+            (abs_coef & (1 << coef_bit_len)) == 0,
+            "Beyond Biggest bit must be zero"
+        );
+
+        bool_writer.put_n_bits(
+            abs_coef as usize,
+            coef_bit_len as usize - 1,
+            bits_branch,
+            bits_cmp,
+        )?;
+    }
+
+    Ok(())
 }
