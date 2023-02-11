@@ -52,7 +52,7 @@ pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 pub struct Model {
     cmp: [ModelPerColor; BLOCK_TYPES],
 
-    /// non color dependent bins. Not sure why, but changing this will brake the file format
+    /// non color dependent bins. Not sure why, I guess to save space, but changing this will break the file format
     exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
 
     residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
