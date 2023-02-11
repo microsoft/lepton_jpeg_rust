@@ -23,6 +23,8 @@ use crate::structs::{
 
 use default_boxed::DefaultBoxed;
 
+use super::model::ModelPerColor;
+
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
     pts: &ProbabilityTablesSet,
@@ -289,10 +291,11 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
     let num_non_zeros_7x7 = context.non_zeros_here(&num_non_zeros);
 
-    model
+    let model_per_color = model.get_per_color(pt);
+
+    model_per_color
         .write_non_zero_7x7_count(
             bool_writer,
-            pt.get_color_index(),
             pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
             num_non_zeros_7x7,
         )
@@ -314,8 +317,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
 
-    let model_block = model.get_block_type_mut(pt);
-
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -326,7 +327,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         // this should work in all cases but doesn't utilize that the zig49 is related
         let coef = block.get_coefficient(zig49);
 
-        model_block
+        model_per_color
             .write_coef(
                 bool_writer,
                 coef,
@@ -353,7 +354,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     encode_edge::<W, ALL_PRESENT>(
         context,
         image_data,
-        model,
+        model_per_color,
         bool_writer,
         qt,
         pt,
@@ -414,7 +415,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     context: &BlockContext,
     image_data: &BlockBasedImage,
-    model: &mut Model,
+    model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -425,7 +426,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     encode_one_edge::<W, ALL_PRESENT, true>(
         context,
         image_data,
-        model,
+        model_per_color,
         bool_writer,
         qt,
         pt,
@@ -436,7 +437,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     encode_one_edge::<W, ALL_PRESENT, false>(
         context,
         image_data,
-        model,
+        model_per_color,
         bool_writer,
         qt,
         pt,
@@ -458,7 +459,7 @@ fn count_non_zero(v: i16) -> u8 {
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     block_context: &BlockContext,
     image_data: &BlockBasedImage,
-    model: &mut Model,
+    model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -487,10 +488,9 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             + count_non_zero(block.get_coefficient_raster(7 * 8));
     }
 
-    model
+    model_per_color
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
-            pt.get_color_index(),
             est_eob,
             num_non_zeros_7x7,
             num_non_zeros_edge,
@@ -544,8 +544,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
         let coef = block.get_coefficient((aligned_block_offset + (lane << log_edge_step)) as usize);
 
-        model
-            .write_edge_coefficient(bool_writer, qt, pt, coef, coord, zig15offset, &ptcc8)
+        model_per_color
+            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
             .context(here!())?;
 
         if coef != 0 {
