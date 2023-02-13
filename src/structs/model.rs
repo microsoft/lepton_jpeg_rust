@@ -79,8 +79,8 @@ pub struct ModelPerColor {
 /// bins for a single AC coefficent
 #[derive(Default)]
 struct ModelAc {
-    exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
-    bits: [Branch; 10],
+    exp: [[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX],
+    noise: [Branch; COEF_BITS],
 }
 
 impl Model {
@@ -232,7 +232,7 @@ impl ModelPerColor {
 
         let exp = &mut self.coef_bins[zig49][num_non_zeros_bin];
         let sign = &mut self.sign_counts[0][0];
-        (&mut exp.exp[best_prior_bit_len], sign, &mut exp.bits)
+        (&mut exp.exp[best_prior_bit_len], sign, &mut exp.noise)
     }
 
     pub fn write_non_zero_7x7_count<W: Write>(
@@ -361,7 +361,7 @@ impl ModelPerColor {
                 if i >= 0 {
                     let res_prob = &mut self.coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
-                        .bits;
+                        .noise;
 
                     coef |= bool_reader.get_n_bits(
                         i as usize + 1,
@@ -444,7 +444,7 @@ impl ModelPerColor {
                 if i >= 0 {
                     let res_prob = &mut self.coef_bins[49 + zig15offset]
                         [ptcc8.num_non_zeros_bin as usize]
-                        .bits;
+                        .noise;
 
                     bool_writer
                         .put_n_bits(
