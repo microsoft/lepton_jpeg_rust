@@ -71,14 +71,14 @@ pub struct ModelPerColor {
     residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
         RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
 
-    coef_bins: [[AcCoefficientBin; NUM_NON_ZERO_BINS]; 64],
+    coef_bins: [[ModelAc; NUM_NON_ZERO_BINS]; 64],
 
     sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 4],
 }
 
 /// bins for a single AC coefficent
 #[derive(Default)]
-struct AcCoefficientBin {
+struct ModelAc {
     exp: [[Branch; 11]; NUMERIC_LENGTH_MAX],
     bits: [Branch; 10],
 }
