@@ -68,32 +68,6 @@ fn copy_to_output(row: i32x8, offset: usize, outp: &mut [i16; 64]) {
     }
 }
 
-// returns a vector representing a column at index. Used to
-// transpose the matrix
-#[inline(always)]
-fn transpose(
-    index: usize,
-    row0: i32x8,
-    row1: i32x8,
-    row2: i32x8,
-    row3: i32x8,
-    row4: i32x8,
-    row5: i32x8,
-    row6: i32x8,
-    row7: i32x8,
-) -> i32x8 {
-    return i32x8::new([
-        row0.as_array_ref()[7 - index],
-        row1.as_array_ref()[7 - index],
-        row2.as_array_ref()[7 - index],
-        row3.as_array_ref()[7 - index],
-        row4.as_array_ref()[7 - index],
-        row5.as_array_ref()[7 - index],
-        row6.as_array_ref()[7 - index],
-        row7.as_array_ref()[7 - index],
-    ]);
-}
-
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64]) {
     // horizontal
@@ -143,65 +117,60 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     xv4 = ((R2 * (xv4 - xv5)) + 128) >> 8;
 
     // Stage 4.
-    let row0: i32x8 = (xv7 + xv1) >> 8;
-    let row1: i32x8 = (xv3 + xv2) >> 8;
-    let row2: i32x8 = (xv0 + xv4) >> 8;
-    let row3: i32x8 = (xv8 + xv6) >> 8;
-    let row4: i32x8 = (xv8 - xv6) >> 8;
-    let row5: i32x8 = (xv0 - xv4) >> 8;
-    let row6: i32x8 = (xv3 - xv2) >> 8;
-    let row7: i32x8 = (xv7 - xv1) >> 8;
+    let row = [
+        (xv7 + xv1) >> 8,
+        (xv3 + xv2) >> 8,
+        (xv0 + xv4) >> 8,
+        (xv8 + xv6) >> 8,
+        (xv8 - xv6) >> 8,
+        (xv0 - xv4) >> 8,
+        (xv3 - xv2) >> 8,
+        (xv7 - xv1) >> 8,
+    ];
 
     // transpose and now do vertical
-    // compiler does a surprisingly good job of this
-    let mut yv0 = transpose(0, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv1 = transpose(4, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv2 = transpose(6, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv3 = transpose(2, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv4 = transpose(1, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv5 = transpose(7, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv6 = transpose(5, row0, row1, row2, row3, row4, row5, row6, row7);
-    let mut yv7 = transpose(3, row0, row1, row2, row3, row4, row5, row6, row7);
+    let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
+        i32x8::transpose(row);
 
-    yv0 = (yv0 << 8) + 8192;
-    yv1 = yv1 << 8;
+    yv7 = (yv7 << 8) + 8192;
+    yv3 = yv3 << 8;
 
     // Stage 1.
-    let mut yv8 = ((W7) * (yv4 + yv5)) + (4);
-    yv4 = (yv8 + ((W1MW7) * yv4)) >> 3;
-    yv5 = (yv8 - ((W1PW7) * yv5)) >> 3;
-    yv8 = ((W3) * (yv6 + yv7)) + (4);
-    yv6 = (yv8 - ((W3MW5) * yv6)) >> 3;
-    yv7 = (yv8 - ((W3PW5) * yv7)) >> 3;
+    let mut yv8 = ((W7) * (yv6 + yv0)) + (4);
+    yv6 = (yv8 + ((W1MW7) * yv6)) >> 3;
+    yv0 = (yv8 - ((W1PW7) * yv0)) >> 3;
+    yv8 = ((W3) * (yv2 + yv4)) + (4);
+    yv2 = (yv8 - ((W3MW5) * yv2)) >> 3;
+    yv4 = (yv8 - ((W3PW5) * yv4)) >> 3;
 
     // Stage 2.
-    yv8 = yv0 + yv1;
-    yv0 -= yv1;
-    yv1 = ((W6) * (yv3 + yv2)) + (4);
-    yv2 = (yv1 - ((W2PW6) * yv2)) >> 3;
-    yv3 = (yv1 + ((W2MW6) * yv3)) >> 3;
-    yv1 = yv4 + yv6;
-    yv4 -= yv6;
-    yv6 = yv5 + yv7;
-    yv5 -= yv7;
+    yv8 = yv7 + yv3;
+    yv7 -= yv3;
+    yv3 = ((W6) * (yv5 + yv1)) + (4);
+    yv1 = (yv3 - ((W2PW6) * yv1)) >> 3;
+    yv5 = (yv3 + ((W2MW6) * yv5)) >> 3;
+    yv3 = yv6 + yv2;
+    yv6 -= yv2;
+    yv2 = yv0 + yv4;
+    yv0 -= yv4;
 
     // Stage 3.
-    yv7 = yv8 + yv3;
-    yv8 -= yv3;
-    yv3 = yv0 + yv2;
-    yv0 -= yv2;
-    yv2 = (((R2) * (yv4 + yv5)) + (128)) >> 8;
-    yv4 = (((R2) * (yv4 - yv5)) + (128)) >> 8;
+    yv4 = yv8 + yv5;
+    yv8 -= yv5;
+    yv5 = yv7 + yv1;
+    yv7 -= yv1;
+    yv1 = (((R2) * (yv6 + yv0)) + (128)) >> 8;
+    yv6 = (((R2) * (yv6 - yv0)) + (128)) >> 8;
 
     // Stage 4.
-    copy_to_output((yv7 + yv1) >> 11, 0, outp);
-    copy_to_output((yv3 + yv2) >> 11, 1 * 8, outp);
-    copy_to_output((yv0 + yv4) >> 11, 2 * 8, outp);
-    copy_to_output((yv8 + yv6) >> 11, 3 * 8, outp);
-    copy_to_output((yv8 - yv6) >> 11, 4 * 8, outp);
-    copy_to_output((yv0 - yv4) >> 11, 5 * 8, outp);
-    copy_to_output((yv3 - yv2) >> 11, 6 * 8, outp);
-    copy_to_output((yv7 - yv1) >> 11, 7 * 8, outp);
+    copy_to_output((yv4 + yv3) >> 11, 0, outp);
+    copy_to_output((yv5 + yv1) >> 11, 1 * 8, outp);
+    copy_to_output((yv7 + yv6) >> 11, 2 * 8, outp);
+    copy_to_output((yv8 + yv2) >> 11, 3 * 8, outp);
+    copy_to_output((yv8 - yv2) >> 11, 4 * 8, outp);
+    copy_to_output((yv7 - yv6) >> 11, 5 * 8, outp);
+    copy_to_output((yv5 - yv1) >> 11, 6 * 8, outp);
+    copy_to_output((yv4 - yv3) >> 11, 7 * 8, outp);
 }
 
 /// test with random permutations to verify that the current implementation matches the legacy
