@@ -269,6 +269,7 @@ name = "lepton_jpeg"
 version = "0.1.2"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "byteorder",
  "cpu-time",
  "default-boxed",
