@@ -6,7 +6,7 @@
 
 use super::block_based_image::AlignedBlock;
 
-use wide::i32x8;
+use wide::{i32x8, i16x8};
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -61,11 +61,19 @@ pub fn get_q(offset: usize, stride: usize, q: &[u16; 64]) -> i32x8 {
 }
 
 #[inline(always)]
-fn copy_to_output(row: i32x8, offset: usize, outp: &mut [i16; 64]) {
-    let r = row.as_array_ref();
-    for i in 0..8 {
-        outp[i + offset] = r[i] as i16;
-    }
+fn narrow(row: i32x8) -> i16x8 {
+    
+    i16x8::new([
+            row.as_array_ref()[0] as i16,
+            row.as_array_ref()[1] as i16,
+            row.as_array_ref()[2] as i16,
+            row.as_array_ref()[3] as i16,
+            row.as_array_ref()[4] as i16,
+            row.as_array_ref()[5] as i16,
+            row.as_array_ref()[6] as i16,
+            row.as_array_ref()[7] as i16,
+        ]
+    )
 }
 
 #[inline(never)]
@@ -136,19 +144,19 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     yv3 = yv3 << 8;
 
     // Stage 1.
-    let mut yv8 = ((W7) * (yv6 + yv0)) + (4);
-    yv6 = (yv8 + ((W1MW7) * yv6)) >> 3;
-    yv0 = (yv8 - ((W1PW7) * yv0)) >> 3;
-    yv8 = ((W3) * (yv2 + yv4)) + (4);
-    yv2 = (yv8 - ((W3MW5) * yv2)) >> 3;
-    yv4 = (yv8 - ((W3PW5) * yv4)) >> 3;
+    let mut yv8 = (W7 * (yv6 + yv0)) + 4;
+    yv6 = (yv8 + (W1MW7 * yv6)) >> 3;
+    yv0 = (yv8 - (W1PW7 * yv0)) >> 3;
+    yv8 = (W3 * (yv2 + yv4)) + 4;
+    yv2 = (yv8 - (W3MW5 * yv2)) >> 3;
+    yv4 = (yv8 - (W3PW5 * yv4)) >> 3;
 
     // Stage 2.
     yv8 = yv7 + yv3;
     yv7 -= yv3;
-    yv3 = ((W6) * (yv5 + yv1)) + (4);
-    yv1 = (yv3 - ((W2PW6) * yv1)) >> 3;
-    yv5 = (yv3 + ((W2MW6) * yv5)) >> 3;
+    yv3 = ((W6) * (yv5 + yv1)) + 4;
+    yv1 = (yv3 - (W2PW6 * yv1)) >> 3;
+    yv5 = (yv3 + (W2MW6 * yv5)) >> 3;
     yv3 = yv6 + yv2;
     yv6 -= yv2;
     yv2 = yv0 + yv4;
@@ -159,18 +167,22 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     yv8 -= yv5;
     yv5 = yv7 + yv1;
     yv7 -= yv1;
-    yv1 = (((R2) * (yv6 + yv0)) + (128)) >> 8;
-    yv6 = (((R2) * (yv6 - yv0)) + (128)) >> 8;
+    yv1 = ((R2 * (yv6 + yv0)) + 128) >> 8;
+    yv6 = ((R2 * (yv6 - yv0)) + 128) >> 8;
 
     // Stage 4.
-    copy_to_output((yv4 + yv3) >> 11, 0, outp);
-    copy_to_output((yv5 + yv1) >> 11, 1 * 8, outp);
-    copy_to_output((yv7 + yv6) >> 11, 2 * 8, outp);
-    copy_to_output((yv8 + yv2) >> 11, 3 * 8, outp);
-    copy_to_output((yv8 - yv2) >> 11, 4 * 8, outp);
-    copy_to_output((yv7 - yv6) >> 11, 5 * 8, outp);
-    copy_to_output((yv5 - yv1) >> 11, 6 * 8, outp);
-    copy_to_output((yv4 - yv3) >> 11, 7 * 8, outp);
+    let output = [
+        narrow((yv4 + yv3) >> 11),
+        narrow((yv5 + yv1) >> 11),
+        narrow((yv7 + yv6) >> 11),
+        narrow((yv8 + yv2) >> 11),
+        narrow((yv8 - yv2) >> 11),
+        narrow((yv7 - yv6) >> 11),
+        narrow((yv5 - yv1) >> 11),
+        narrow((yv4 - yv3) >> 11),
+    ];
+
+    *outp = bytemuck::cast(output);
 }
 
 /// test with random permutations to verify that the current implementation matches the legacy
