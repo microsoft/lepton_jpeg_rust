@@ -31,7 +31,7 @@ bytemuck = "1.13.0"
 flate2 = "1.0.25"
 default-boxed = "0.2.0"
 anyhow = { version="1.0.68", features = ["backtrace"]}
-wide = "0.7.7"
+wide = "0.7.8"
 log = "0.4.17"
 simple_logger ="4.0.0"
 cpu-time = "1.0.0"
