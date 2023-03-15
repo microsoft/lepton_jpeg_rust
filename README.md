@@ -15,7 +15,9 @@ Some operations are vectorized such as the IDCT using the [Wide](https://crates.
 
 #### Running
 
-There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress;/decompress and also to verify the test end-to-end on a given JPEG. If the input file is has a .jpg extension, it will encode. If the input file has a .lep extension, it will decode back to a .jpg. It supports the following options:
+There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress/decompress and also to verify the test end-to-end on a given JPEG. If the input file has a `.jpg` extension, it will encode. If the input file has a `.lep` extension, it will decode back to the original`.jpg`. 
+
+It supports the following options:
 
 `lepton_jpeg_util.exe [options] <inputfile> [<outputfile>]`
 
@@ -27,7 +29,9 @@ There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project.
 | `-verify`        | Reads, encodes and unencodes verifying that there is an exact match. No output file is specified. |
 | `-iter:n`        | Runs N iterations of the operation. Useful when we are running inside a profiler. |
 
+## Design
 
+[Link to overall design of library](DESIGN.md)
 
 ## Contributing
 
