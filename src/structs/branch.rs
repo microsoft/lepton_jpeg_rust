@@ -48,7 +48,47 @@ const fn problookup() -> [u8; 65536] {
     return retval;
 }
 
-static PROB_LOOKUP: [u8; 65536] = problookup();
+const PROB_LOOKUP: [u8; 65536] = problookup();
+
+const fn truelookup() -> [u16; 256] {
+    let mut retval = [0; 256];
+    let mut i = 0i32;
+    while i < 256 {
+        retval[i as usize] = if i == 0 || i == 1 {
+            // special case where we have many trues in a row
+            0
+        } else {
+            ((((i << 8) as u32 + 0x100) >> 1) & 0xff00) as u16 | 0x81
+        };
+        i += 1;
+    }
+
+    retval
+}
+
+const NORMALIZE_TRUE: [u16; 256] = truelookup();
+
+const fn falselookup() -> [u16; 256] {
+    let mut retval = [0; 256];
+    let mut i = 0i32;
+    while i < 256 {
+        retval[i as usize] = if i == 0 {
+            // special case where counts is zero
+            0x02ff
+        } else if i == 1 {
+            // special case where we have many falses in a row
+            0xff01
+        } else {
+            ((1 + (i as u32)) >> 1) as u16 | 0x8100
+        };
+
+        i += 1;
+    }
+
+    retval
+}
+
+const NORMALIZE_FALSE: [u16; 256] = falselookup();
 
 impl Branch {
     pub fn new() -> Self {
@@ -75,44 +115,30 @@ impl Branch {
 
     #[inline(always)]
     pub fn record_and_update_true_obs(&mut self) {
-        if self.counts == 0 {
-            return; // no need to do anything since we are already as baised towards all trues as possible
-        }
-
-        if (self.counts & 0xff) != 0xff {
+        // do a wrapping subtraction so that we can catch both the case
+        // where counts is zero (special case for many trues in a row), or
+        // 0xff in which case we need to normalize
+        // The adjustment to handle zero is handled in the lookup table
+        if (self.counts & 0xff).wrapping_sub(1) < 0xfe {
             // non-overflow case is easy
-            self.counts += 1;
+            self.counts = self.counts.wrapping_add(1);
         } else {
-            // special case where it is all trues
-            if self.counts == 0x01ff {
-                // corner case since the original implementation
-                // insists on setting the probabily to zero,
-                // although the probability calculation would
-                // return 1.
-                self.counts = 0;
-            } else {
-                self.counts = (((self.counts as u32 + 0x100) >> 1) & 0xff00) as u16 | 129;
-            }
+            self.counts = NORMALIZE_TRUE[(self.counts >> 8) as usize];
         }
     }
 
     #[inline(always)]
     pub fn record_and_update_false_obs(&mut self) {
-        if self.counts == 0 {
-            // handle corner case where prob was set badly
-            self.counts = 0x02ff;
-            return;
-        }
-
-        if (self.counts & 0xff00) != 0xff00 {
+        // do a wrapping subtraction so that we can catch both the case
+        // where counts is zero (special case for many trues in a row), or
+        // 0xff00 in which case we need to normalize.
+        // The adjustment to handle zero is handled in the lookup table
+        if self.counts.wrapping_sub(1) < 0xff00 {
             // non-overflow case is easy
-            self.counts += 0x100;
+            self.counts = self.counts.wrapping_add(0x100);
         } else {
             // special case where it is all falses
-            if self.counts == 0xff01 {
-            } else {
-                self.counts = ((1 + (self.counts & 0xff) as u32) >> 1) as u16 | 0x8100;
-            }
+            self.counts = NORMALIZE_FALSE[(self.counts & 0xff) as usize];
         }
     }
 }
