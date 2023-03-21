@@ -46,10 +46,21 @@ impl<R: Read> BitReader<R> {
             self.fill_register(bits_to_read)?;
         }
 
-        let retval = ((self.bits >> (64 - bits_to_read)) & ((1 << bits_to_read) - 1)) as u16;
+        let retval = (self.bits >> (64 - bits_to_read)) as u16;
         self.bits <<= bits_to_read as usize;
         self.num_bits -= bits_to_read;
         return Ok(retval);
+    }
+
+    #[inline(always)]
+    pub fn peek(&self) -> (u8, u8) {
+        return ((self.bits >> 56) as u8, self.num_bits);
+    }
+
+    #[inline(always)]
+    pub fn advance(&mut self, bits: u8) {
+        self.num_bits -= bits;
+        self.bits <<= bits;
     }
 
     fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {

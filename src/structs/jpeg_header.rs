@@ -65,12 +65,14 @@ impl HuffCodes {
 #[derive(Copy, Clone, Debug)]
 pub struct HuffTree {
     pub node: [[u16; 2]; 256],
+    pub peek_code: [(u8, u8); 256],
 }
 
 impl HuffTree {
     pub fn new() -> Self {
         HuffTree {
             node: [[0; 2]; 256],
+            peek_code: [(0, 0); 256],
         }
     }
 }
@@ -810,6 +812,25 @@ impl JPegHeader {
             }
             if x[1] == 0 {
                 x[1] = 0xffff;
+            }
+        }
+
+        // precalculate decoding peeking into the stream. This lets us quickly decode
+        // small code without jumping through the node table
+        for peekbyte in 0..256 {
+            let mut node = 0;
+            let mut len: u8 = 0;
+
+            while node < 256 && len <= 7 {
+                node = ht.node[usize::from(node)][((peekbyte >> (7 - len)) & 0x1)];
+
+                len += 1;
+            }
+
+            if node == 0xffff || len >= 7 {
+                ht.peek_code[peekbyte as usize] = (0, 0xff); // invalid code
+            } else {
+                ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
             }
         }
 
