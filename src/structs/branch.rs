@@ -48,7 +48,7 @@ const fn problookup() -> [u8; 65536] {
     return retval;
 }
 
-const PROB_LOOKUP: [u8; 65536] = problookup();
+static PROB_LOOKUP: [u8; 65536] = problookup();
 
 const fn truelookup() -> [u16; 256] {
     let mut retval = [0; 256];
@@ -66,7 +66,7 @@ const fn truelookup() -> [u16; 256] {
     retval
 }
 
-const NORMALIZE_TRUE: [u16; 256] = truelookup();
+static NORMALIZE_TRUE: [u16; 256] = truelookup();
 
 const fn falselookup() -> [u16; 256] {
     let mut retval = [0; 256];
@@ -88,7 +88,7 @@ const fn falselookup() -> [u16; 256] {
     retval
 }
 
-const NORMALIZE_FALSE: [u16; 256] = falselookup();
+static NORMALIZE_FALSE: [u16; 256] = falselookup();
 
 impl Branch {
     pub fn new() -> Self {
@@ -137,7 +137,6 @@ impl Branch {
             // non-overflow case is easy
             self.counts = self.counts.wrapping_add(0x100);
         } else {
-            // special case where it is all falses
             self.counts = NORMALIZE_FALSE[(self.counts & 0xff) as usize];
         }
     }
