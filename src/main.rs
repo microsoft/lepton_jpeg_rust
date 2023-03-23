@@ -177,7 +177,7 @@ fn main_with_result() -> anyhow::Result<()> {
             let comp_metrics;
             {
                 println!("encoding...");
-                let mut input_cursor = Cursor::new(&input);
+                let mut input_cursor = Cursor::new(&input[..]);
                 let mut output_cursor = Cursor::new(&mut output);
 
                 comp_metrics = encode_lepton_wrapper(
@@ -197,7 +197,7 @@ fn main_with_result() -> anyhow::Result<()> {
             let decomp_metrics;
             {
                 println!("decoding...");
-                let mut input_cursor = Cursor::new(&output);
+                let mut input_cursor = Cursor::new(&output[..]);
                 let mut output_cursor = Cursor::new(&mut verify);
 
                 decomp_metrics = decode_lepton_wrapper(

@@ -63,11 +63,75 @@ impl<R: Read> BitReader<R> {
         self.bits <<= bits;
     }
 
-    fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
+    #[inline(always)]
+    pub fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
         while self.num_bits < bits_to_read {
-            // Fill with zero bits if we have reached the end.
             let mut buffer = [0u8];
             if self.inner.read(&mut buffer)? == 0 {
+                return self.fill_register_slow(None, bits_to_read);
+            } else if buffer[0] == 0xff {
+                return self.fill_register_slow(Some(buffer[0]), bits_to_read);
+            } else {
+                self.prev_offset = self.offset;
+                self.offset += 1;
+                self.bits |= (buffer[0] as u64) << (56 - self.num_bits);
+                self.num_bits += 8;
+                self.last_byte_read = buffer[0];
+            }
+        }
+        return Ok(());
+    }
+
+    #[cold]
+    fn fill_register_slow(
+        &mut self,
+        mut byte_read: Option<u8>,
+        bits_to_read: u8,
+    ) -> Result<(), std::io::Error> {
+        loop {
+            if let Some(b) = byte_read {
+                // 0xff is an escape code, if the next by is zero, then it is just a normal 0
+                // otherwise it is a reset code, which should also be skipped
+                if b == 0xff {
+                    let mut buffer = [0u8];
+
+                    if self.inner.read(&mut buffer)? == 0 {
+                        // Handle case of truncation: Since we assume that everything passed the end
+                        // is a 0, if the file ends with 0xFF, then we have to assume that this was
+                        // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
+                        self.prev_offset = self.offset;
+                        self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
+                        self.bits |= (0xff as u64) << (56 - self.num_bits);
+                        self.num_bits += 8;
+                        self.last_byte_read = 0xff;
+
+                        // continue since we still might need to read more 0 bits
+                    } else if buffer[0] == 0 {
+                        // this was an escaped FF
+                        self.prev_offset = self.offset;
+                        self.offset += 2;
+                        self.bits |= (0xff as u64) << (56 - self.num_bits);
+                        self.num_bits += 8;
+                        self.last_byte_read = 0xff;
+                    } else {
+                        // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
+                        // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "invalid reset {0:x} {1:x} code found in stream at offset {2}",
+                                0xff, buffer[0], self.offset
+                            ),
+                        ));
+                    }
+                } else {
+                    self.prev_offset = self.offset;
+                    self.offset += 1;
+                    self.bits |= (b as u64) << (56 - self.num_bits);
+                    self.num_bits += 8;
+                    self.last_byte_read = b;
+                }
+            } else {
                 // in case of a truncated file, we treat the rest of the file as zeros, but the
                 // bits that were ok still get returned so that we get the partial last byte right
                 // the caller periodically checks for EOF to see if it should stop encoding
@@ -77,50 +141,17 @@ impl<R: Read> BitReader<R> {
                 self.last_byte_read = 0;
 
                 // continue since we still might need to read more 0 bits
-                continue;
             }
 
-            // 0xff is an escape code, if the next by is zero, then it is just a normal 0
-            // otherwise it is a reset code, which should also be skipped
-            if buffer[0] == 0xff {
-                if self.inner.read(&mut buffer)? == 0 {
-                    // Handle case of truncation: Since we assume that everything passed the end
-                    // is a 0, if the file ends with 0xFF, then we have to assume that this was
-                    // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
-                    self.prev_offset = self.offset;
-                    self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
-                    self.bits |= (0xff as u64) << (56 - self.num_bits);
-                    self.num_bits += 8;
-                    self.last_byte_read = 0xff;
+            if self.num_bits >= bits_to_read {
+                break;
+            }
 
-                    // continue since we still might need to read more 0 bits
-                    continue;
-                }
-
-                if buffer[0] == 0 {
-                    // this was an escaped FF
-                    self.prev_offset = self.offset;
-                    self.offset += 2;
-                    self.bits |= (0xff as u64) << (56 - self.num_bits);
-                    self.num_bits += 8;
-                    self.last_byte_read = 0xff;
-                } else {
-                    // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
-                    // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "invalid reset {0:x} {1:x} code found in stream at offset {2}",
-                            0xff, buffer[0], self.offset
-                        ),
-                    ));
-                }
+            let mut buffer = [0u8];
+            if self.inner.read(&mut buffer)? == 0 {
+                byte_read = None;
             } else {
-                self.prev_offset = self.offset;
-                self.offset += 1;
-                self.bits |= (buffer[0] as u64) << (56 - self.num_bits);
-                self.num_bits += 8;
-                self.last_byte_read = buffer[0];
+                byte_read = Some(buffer[0]);
             }
         }
         Ok(())

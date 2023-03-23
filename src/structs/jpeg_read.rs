@@ -541,19 +541,31 @@ fn read_coef<R: Read>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,
 ) -> Result<Option<(usize, i16)>> {
-    // peek ahead to see if we can decode the symbol immediately
-    // given what has already been read into the bitreader
-    let (peek_value, peek_len) = bit_reader.peek();
-
-    let (code, code_len) = tree.peek_code[peek_value as usize];
-
     // if the code we found is smaller or equal to the number of bits left, take the shortcut
     let hc;
-    if code_len <= peek_len {
-        hc = code;
-        bit_reader.advance(code_len);
-    } else {
-        hc = next_huff_code(bit_reader, tree)?;
+
+    loop {
+        // peek ahead to see if we can decode the symbol immediately
+        // given what has already been read into the bitreader
+        let (peek_value, peek_len) = bit_reader.peek();
+
+        // use lookup table to figure out the first code in this byte and how long it is
+        let (code, code_len) = tree.peek_code[peek_value as usize];
+
+        if code_len <= peek_len {
+            // found code directly, so advance by the number of bits immediately
+            hc = code;
+            bit_reader.advance(code_len);
+            break;
+        } else if peek_len < 8 {
+            // peek code works with up to 8 bits at a time. If we had less
+            // than this, then we need to read more bits into the bitreader
+            bit_reader.fill_register(8)?;
+        } else {
+            // take slow path since we have a code that is bigger than 8 bits (but pretty rare)
+            hc = next_huff_code(bit_reader, tree)?;
+            break;
+        }
     }
 
     // analyse code
