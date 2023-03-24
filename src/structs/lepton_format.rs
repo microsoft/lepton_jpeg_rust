@@ -90,12 +90,70 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         .write_u32::<LittleEndian>(final_file_size as u32)
         .context(here!())?;
 
-    info!(
-        "original size {0}, compressed size {1} bytes",
-        lp.jpeg_file_size, final_file_size
+    Ok(metrics)
+}
+
+/// Encodes JPEG as compressed Lepton format, verifies roundtrip in buffer. Requires everything to be buffered
+/// since we need to pass through the data multiple times
+pub fn encode_lepton_wrapper_verify(
+    input_data: &[u8],
+    max_threads: usize,
+    enabled_features: &EnabledFeatures,
+) -> Result<(Vec<u8>, Metrics)> {
+    let mut output_data = Vec::with_capacity(input_data.len());
+
+    if input_data.len() < 2 {
+        return err_exit_code(ExitCode::BadLeptonFile, "ERROR input file too small");
+    }
+
+    let mut metrics;
+
+    info!("compressing to Lepton format");
+
+    let mut reader = Cursor::new(&input_data);
+    let mut writer = Cursor::new(&mut output_data);
+
+    metrics = encode_lepton_wrapper(
+        &mut reader,
+        &mut writer,
+        max_threads as usize,
+        &enabled_features,
+    )
+    .context(here!())?;
+
+    // decode and compare to original in order to enure we encoded correctly
+
+    let mut verify_buffer = Vec::with_capacity(input_data.len());
+    let mut verifyreader = Cursor::new(&output_data);
+    let mut verifywriter = Cursor::new(&mut verify_buffer);
+
+    info!("decompressing to verify contents");
+
+    metrics.merge_from(
+        decode_lepton_wrapper(&mut verifyreader, &mut verifywriter, max_threads)
+            .context(here!())?,
     );
 
-    Ok(metrics)
+    if input_data.len() != verify_buffer.len() {
+        return err_exit_code(
+            ExitCode::VerificationLengthMismatch,
+            format!(
+                "ERROR mismatch input_len = {0}, decoded_len = {1}",
+                input_data.len(),
+                verify_buffer.len()
+            )
+            .as_str(),
+        );
+    }
+
+    if input_data[..] != verify_buffer[..] {
+        return err_exit_code(
+            ExitCode::VerificationContentMismatch,
+            "ERROR mismatching data (but same size)",
+        );
+    }
+
+    Ok((output_data, metrics))
 }
 
 /// reads JPEG and returns corresponding header and image vector. This encapsulate all
@@ -284,6 +342,12 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
         // don't use more threads than we need
         let m = cmp::min(max_threads_to_use, lh.thread_handoff.len());
 
+        info!(
+            "decoding {0} multipexed streams with {1} threads",
+            lh.thread_handoff.len(),
+            m
+        );
+
         // ratio of threads to work items
         let ratio = lh.thread_handoff.len() as f32 / m as f32;
 
@@ -299,8 +363,6 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 channel_to_sender.push(tx);
                 rx_channels.push(Some(rx));
             }
-
-            info!("thread {0} with {1} iterations", t, iter_per_thread);
 
             running_threads.push(s.spawn(move || -> Result<(P, Metrics)> {
                 let cpu_time = ThreadTime::now();
@@ -580,10 +642,10 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     })
     .context(here!())?;
 
-    for i in 0..thread_handoffs.len() {
-        info!("handoff {0} output size = {1}", i, sizes[i]);
-    }
-    info!("total uncompressed size = {0}", sizes.iter().sum::<u64>());
+    info!(
+        "scan portion of JPEG uncompressed size = {0}",
+        sizes.iter().sum::<u64>()
+    );
 
     info!(
         "worker threads {0}ms of CPU time in {1}ms of wall time",

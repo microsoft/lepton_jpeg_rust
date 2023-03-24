@@ -1,6 +1,6 @@
 [package]
 name = "lepton_jpeg"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
@@ -34,6 +34,7 @@ wide = "0.7.5"
 log = "0.4.17"
 simple_logger ="4.0.0"
 cpu-time = "1.0.0"
+atty = "0.2.14"
 
 [dev-dependencies]
 rstest = "0.16.0"

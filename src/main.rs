@@ -17,21 +17,22 @@ use anyhow::Context;
 use cpu_time::ThreadTime;
 use helpers::err_exit_code;
 use lepton_error::{ExitCode, LeptonError};
+use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
 
-use std::io::{Seek, Write};
-use std::time::Duration;
 use std::{
     env,
     fs::File,
-    io::{BufReader, BufWriter, Cursor, Read},
-    time::Instant,
+    io::{BufReader, Cursor, Read, Seek, Write},
+    time::Duration,
 };
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper, LeptonHeader};
+use crate::structs::lepton_format::{
+    decode_lepton_wrapper, encode_lepton_wrapper_verify, LeptonHeader,
+};
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     if arg.starts_with(name) {
@@ -48,12 +49,14 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut filenames = Vec::new();
     let mut num_threads = 8;
     let mut iterations = 1;
-    let mut verify = false;
     let mut dump = false;
     let mut all = false;
     let mut enabled_features = EnabledFeatures::default();
 
-    SimpleLogger::new().init().unwrap();
+    // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
+    if atty::is(atty::Stream::Stdout) {
+        SimpleLogger::new().init().unwrap();
+    }
 
     for i in 1..args.len() {
         if args[i].starts_with("-") {
@@ -65,8 +68,6 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
-            } else if args[i] == "-verify" {
-                verify = true;
             } else if args[i] == "-noprogressive" {
                 enabled_features.progressive = false;
             } else {
@@ -148,13 +149,19 @@ fn main_with_result() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // this does a roundtrip verification of a single file and compares the output
-    if verify {
-        if filenames.len() != 1 {
-            println!("requires one filename for verification");
-            std::process::exit(100);
+    let mut input_data = Vec::new();
+    if filenames.len() != 2 {
+        if atty::is(atty::Stream::Stdin) || atty::is(atty::Stream::Stdout) {
+            return err_exit_code(
+                ExitCode::SyntaxError,
+                "source and destination filename are needed or input needs to be redirected",
+            );
         }
 
+        std::io::stdin()
+            .read_to_end(&mut input_data)
+            .context(here!())?;
+    } else {
         let mut file_in = File::open(filenames[0])
             .map_err(|e| LeptonError {
                 exit_code: ExitCode::FileNotFound,
@@ -162,132 +169,79 @@ fn main_with_result() -> anyhow::Result<()> {
             })
             .context(here!())?;
 
-        // read the entire file into a buffer so we can compare it afterwards
-        let mut input = Vec::new();
-        file_in.read_to_end(&mut input).context(here!())?;
-
-        let mut overall_cpu = Duration::ZERO;
-
-        for i in 0..iterations {
-            let mut output = Vec::new();
-            let now = Instant::now();
-
-            let thread_cpu = ThreadTime::now();
-
-            let comp_metrics;
-            {
-                println!("encoding...");
-                let mut input_cursor = Cursor::new(&input);
-                let mut output_cursor = Cursor::new(&mut output);
-
-                comp_metrics = encode_lepton_wrapper(
-                    &mut input_cursor,
-                    &mut output_cursor,
-                    num_threads as usize,
-                    &enabled_features,
-                )
-                .context(here!())?;
-            }
-
-            #[cfg(feature = "compression_stats")]
-            comp_metrics.print_metrics();
-
-            let mut verify = Vec::new();
-
-            let decomp_metrics;
-            {
-                println!("decoding...");
-                let mut input_cursor = Cursor::new(&output);
-                let mut output_cursor = Cursor::new(&mut verify);
-
-                decomp_metrics = decode_lepton_wrapper(
-                    &mut input_cursor,
-                    &mut output_cursor,
-                    num_threads as usize,
-                )
-                .context(here!())?;
-            }
-
-            let iter_duration = thread_cpu.elapsed()
-                + comp_metrics.get_cpu_time_worker_time()
-                + decomp_metrics.get_cpu_time_worker_time();
-
-            println!("Total CPU time consumed:{0}ms", iter_duration.as_millis());
-
-            overall_cpu += iter_duration;
-
-            if verify.len() != input.len() {
-                return err_exit_code(
-                    ExitCode::VerificationLengthMismatch,
-                    format!(
-                        "ERROR input_len = {0}, output_len = {1}",
-                        input.len(),
-                        output.len()
-                    )
-                    .as_str(),
-                );
-            }
-            if input[..] != verify[..] {
-                return err_exit_code(
-                    ExitCode::VerificationContentMismatch,
-                    "ERROR mismatching data (but same size)",
-                );
-            }
-
-            println!("OK! itr {0} - {1}ms elapsed", i, now.elapsed().as_millis());
-        }
-
-        println!(
-            "Overall average CPU consumed per iteration {0}ms ",
-            overall_cpu.as_millis() / (iterations as u128)
-        );
-
-        return Ok(());
+        file_in.read_to_end(&mut input_data).context(here!())?;
     }
 
-    if filenames.len() != 2 {
-        return err_exit_code(
-            ExitCode::SyntaxError,
-            "source and destination filename are needed",
-        );
+    if input_data.len() < 2 {
+        return err_exit_code(ExitCode::BadLeptonFile, "ERROR input file too small");
     }
 
-    for i in 0..iterations {
-        let file_in = File::open(filenames[0])
-            .map_err(|e| LeptonError {
-                exit_code: ExitCode::FileNotFound,
-                message: e.to_string(),
-            })
-            .context(here!())?;
-        let mut reader = BufReader::new(file_in);
+    let mut metrics;
+    let mut output_data;
 
-        let output_file: String = filenames[1].to_owned();
-        //output_file.push_str("output");
+    let mut overall_cpu = Duration::ZERO;
 
-        let fileout = File::create(output_file.as_str()).context(here!())?;
-        let mut writer = BufWriter::new(fileout);
-        //let mut writer = VerifyWriter::new( BufWriter::new(fileout), File::open("C:\\temp\\tgood.jpg")? );
-
+    let mut current_iteration = 0;
+    loop {
         let thread_cpu = ThreadTime::now();
-        let metrics;
 
-        if filenames[0].to_lowercase().ends_with(".jpg") {
-            metrics = encode_lepton_wrapper(
-                &mut reader,
-                &mut writer,
+        if input_data[0] == 0xff && input_data[1] == 0xd8 {
+            // the source is a JPEG file, so run the encoder and verify the results
+            (output_data, metrics) = encode_lepton_wrapper_verify(
+                &input_data[..],
                 num_threads as usize,
                 &enabled_features,
             )
             .context(here!())?;
-        } else {
-            metrics = decode_lepton_wrapper(&mut reader, &mut writer, num_threads as usize)
+
+            info!(
+                "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
+                input_data.len(),
+                output_data.len(),
+                ((input_data.len() as f64) / (output_data.len() as f64) - 1.0) * 100.0
+            );
+        } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
+            // the source is a lepton file, so run the decoder
+            let mut reader = Cursor::new(&input_data);
+
+            output_data = Vec::with_capacity(input_data.len());
+
+            metrics = decode_lepton_wrapper(&mut reader, &mut output_data, num_threads as usize)
                 .context(here!())?;
+        } else {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                "ERROR input file is not a valid JPEG or Lepton file",
+            );
         }
 
-        println!(
-            "Itr {0} Total CPU time consumed:{1}ms",
-            i,
-            (thread_cpu.elapsed() + metrics.get_cpu_time_worker_time()).as_millis()
+        let iter_duration = thread_cpu.elapsed() + metrics.get_cpu_time_worker_time();
+
+        info!("Total CPU time consumed:{0}ms", iter_duration.as_millis());
+
+        overall_cpu += iter_duration;
+
+        current_iteration += 1;
+        if current_iteration >= iterations {
+            break;
+        }
+    }
+
+    if filenames.len() != 2 {
+        std::io::stdout()
+            .write_all(&output_data[..])
+            .context(here!())?
+    } else {
+        let output_file: String = filenames[1].to_owned();
+        let mut fileout = File::create(output_file.as_str()).context(here!())?;
+
+        fileout.write_all(&output_data[..]).context(here!())?
+    }
+
+    if iterations > 1 {
+        info!(
+            "Overall average CPU consumed per iteration {0}ms ",
+            overall_cpu.as_millis() / (iterations as u128)
         );
     }
 
@@ -327,7 +281,7 @@ impl<W: Write + Seek> Write for VerifyWriter<W> {
         if goodslice[..] != buf[..] {
             for i in 0..goodslice.len() {
                 if goodslice[i] != buf[i] {
-                    println!("at position {0}", self.output.stream_position()? + i as u64);
+                    eprintln!("at position {0}", self.output.stream_position()? + i as u64);
 
                     self.output.write_all(buf)?;
                     self.output.flush()?;
@@ -352,14 +306,14 @@ fn main() {
         Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
             // try to extract the exit code if it was a well known error
             Some(x) => {
-                println!(
+                eprintln!(
                     "error code: {0} {1} {2}",
                     x.exit_code, x.exit_code as i32, x.message
                 );
                 std::process::exit(x.exit_code as i32);
             }
             None => {
-                println!("unknown error {0:?}", e);
+                eprintln!("unknown error {0:?}", e);
                 std::process::exit(ExitCode::GeneralFailure as i32);
             }
         },
