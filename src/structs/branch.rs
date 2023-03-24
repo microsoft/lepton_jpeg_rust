@@ -22,6 +22,13 @@
  we make sure that we immediately transition back to (255,1) before
  executing any further logic.
 
+ Always have to be careful with lookup tables, since the cache hit can
+ be worse than the calculations it is saving. However, in the case
+ of the probability calculation, it is saving a divide or table based
+ multiply by the reciprocal, which is also a lookup table of similar size.
+
+ The normalization is a 256 byte lookup table, so it shouldn't have any
+ horrible cache implications.
 */
 pub struct Branch {
     counts: u16,
@@ -138,6 +145,90 @@ impl Branch {
             self.counts = self.counts.wrapping_add(0x100);
         } else {
             self.counts = NORMALIZE_FALSE[(self.counts & 0xff) as usize];
+        }
+    }
+}
+
+/// This is copied from the C++ implementation to ensure that the behavior is the same
+#[cfg(test)]
+struct CppBranchImplForTest {
+    counts_: [u8; 2],
+    probability_: u8,
+}
+
+#[cfg(test)]
+impl CppBranchImplForTest {
+    fn true_count(&self) -> u32 {
+        return self.counts_[1] as u32;
+    }
+    fn false_count(&self) -> u32 {
+        return self.counts_[0] as u32;
+    }
+
+    fn record_obs_and_update(&mut self, obs: bool) {
+        let fcount = self.counts_[0] as u32;
+        let tcount = self.counts_[1] as u32;
+
+        let overflow = self.counts_[obs as usize] == 0xff;
+
+        if overflow {
+            // check less than 512
+            let neverseen = self.counts_[!obs as usize] == 1;
+            if neverseen {
+                self.counts_[obs as usize] = 0xff;
+                self.probability_ = if obs { 0 } else { 255 };
+            } else {
+                self.counts_[0] = ((1 + fcount) >> 1) as u8;
+                self.counts_[1] = ((1 + tcount) >> 1) as u8;
+                self.counts_[obs as usize] = 129;
+                self.probability_ = self.optimize(self.counts_[0] as u32 + self.counts_[1] as u32);
+            }
+        } else {
+            self.counts_[obs as usize] += 1;
+            self.probability_ = self.optimize(fcount + tcount + 1);
+        }
+    }
+
+    fn optimize(&self, sum: u32) -> u8 {
+        let prob = (self.false_count() << 8) / sum;
+
+        prob as u8
+    }
+}
+
+/// run through all the possible combinations of counts and ensure that the probability is the same
+#[test]
+fn test_all_probabilities() {
+    for i in 0..65536 {
+        let mut old_f = CppBranchImplForTest {
+            counts_: [(i >> 8) as u8, i as u8],
+            probability_: 0,
+        };
+
+        if old_f.true_count() == 0 || old_f.false_count() == 0 {
+            // ignore the special case where counts is zero which is invalid
+            continue;
+        }
+
+        let mut new_f = Branch { counts: i as u16 };
+
+        for _k in 0..10 {
+            old_f.record_obs_and_update(false);
+            new_f.record_and_update_false_obs();
+            assert_eq!(old_f.probability_, new_f.get_probability());
+        }
+
+        let mut old_t = CppBranchImplForTest {
+            counts_: [(i >> 8) as u8, i as u8],
+            probability_: 0,
+        };
+        let mut new_t = Branch { counts: i as u16 };
+
+        for _k in 0..10 {
+            old_t.record_obs_and_update(true);
+            new_t.record_and_update_true_obs();
+
+            assert_eq!(old_t.probability_, new_t.get_probability());
         }
     }
 }
