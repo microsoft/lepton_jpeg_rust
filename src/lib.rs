@@ -22,7 +22,9 @@ use std::panic::catch_unwind;
 
 use std::io::{Cursor, Read, Seek, Write};
 
-use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper};
+use crate::structs::lepton_format::{
+    decode_lepton_wrapper, encode_lepton_wrapper, encode_lepton_wrapper_verify,
+};
 
 /// translates internal anyhow based exception into externally visible exception
 fn translate_error(e: anyhow::Error) -> LeptonError {
@@ -57,28 +59,18 @@ pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     max_threads: usize,
-    no_progressive: bool,
-) -> Result<Metrics, LeptonError> {
-    encode_lepton_wrapper(
-        reader,
-        writer,
-        max_threads,
-        &EnabledFeatures {
-            progressive: !no_progressive,
-            ..Default::default()
-        },
-    )
-    .map_err(translate_error)
-}
-
-/// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton_feat<R: Read + Seek, W: Write + Seek>(
-    reader: &mut R,
-    writer: &mut W,
-    max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
     encode_lepton_wrapper(reader, writer, max_threads, enabled_features).map_err(translate_error)
+}
+
+/// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
+pub fn encode_lepton_verify(
+    input_data: &[u8],
+    max_threads: usize,
+    enabled_features: &EnabledFeatures,
+) -> Result<(Vec<u8>, Metrics), LeptonError> {
+    encode_lepton_wrapper_verify(input_data, max_threads, enabled_features).map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
