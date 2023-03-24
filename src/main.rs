@@ -23,7 +23,7 @@ use structs::lepton_format::read_jpeg;
 
 use std::{
     env,
-    fs::File,
+    fs::{File, OpenOptions},
     io::{BufReader, Cursor, Read, Seek, Write},
     time::Duration,
 };
@@ -51,6 +51,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut iterations = 1;
     let mut dump = false;
     let mut all = false;
+    let mut overwrite = false;
     let mut enabled_features = EnabledFeatures::default();
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
@@ -68,6 +69,8 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-overwrite" {
+                overwrite = true;
             } else if args[i] == "-noprogressive" {
                 enabled_features.progressive = false;
             } else {
@@ -233,7 +236,12 @@ fn main_with_result() -> anyhow::Result<()> {
             .context(here!())?
     } else {
         let output_file: String = filenames[1].to_owned();
-        let mut fileout = File::create(output_file.as_str()).context(here!())?;
+        let mut fileout = OpenOptions::new()
+            .write(true)
+            .create(overwrite)
+            .create_new(!overwrite)
+            .open(output_file.as_str())
+            .context(here!())?;
 
         fileout.write_all(&output_data[..]).context(here!())?
     }
