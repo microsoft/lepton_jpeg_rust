@@ -206,7 +206,7 @@ fn test_all_probabilities() {
         };
 
         if old_f.true_count() == 0 || old_f.false_count() == 0 {
-            // ignore the special case where counts is zero which is invalid
+            // counts can't be zero (we use 0 as an internal special value for the new implementation for the edge case of many trues in a row)
             continue;
         }
 
