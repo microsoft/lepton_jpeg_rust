@@ -12,8 +12,9 @@ use std::io::Read;
 
 use lepton_jpeg::metrics::Metrics;
 use lepton_jpeg::{
-    decode_lepton, encode_lepton,
+    decode_lepton, encode_lepton, encode_lepton_verify,
     lepton_error::{ExitCode, LeptonError},
+    EnabledFeatures,
 };
 use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage};
 
@@ -104,7 +105,7 @@ fn verify_encode(
             "iphonecrop2",
             "iphoneprogressive",
             "iphoneprogressive2",
-            "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
+            "progressive_late_dht", // image has huffman tables that come very late which caused a verification failure 
             "out_of_order_dqt",
             //"narrowrst",
             //"nofsync",
@@ -127,12 +128,22 @@ fn verify_encode(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
         8,
-        false,
+        &EnabledFeatures::all(),
     )
     .unwrap();
+
     decode_lepton(&mut Cursor::new(lepton), &mut output, 8).unwrap();
 
     assert!(input[..] == output[..]);
+}
+
+/// encodes as LEP and codes back to JPG to mostly test the encoder. Can't check against
+/// the original LEP file since there's no guarantee they are binary identical (especially the zlib encoded part)
+#[rstest]
+fn verify_encode_verify(#[values("slrcity")] file: &str) {
+    let input = read_file(file, ".jpg");
+
+    encode_lepton_verify(&input[..], 8, &EnabledFeatures::all()).unwrap();
 }
 
 fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
@@ -157,7 +168,10 @@ fn verify_encode_progressive_false(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            true,
+            &EnabledFeatures {
+                progressive: false,
+                ..Default::default()
+            },
         ),
     );
 }
@@ -174,7 +188,7 @@ fn verify_nonoptimal() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            false,
+            &EnabledFeatures::all(),
         ),
     );
 }
