@@ -102,18 +102,12 @@ pub fn encode_lepton_wrapper_verify(
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
-    if input_data.len() < 2 {
-        return err_exit_code(ExitCode::BadLeptonFile, "ERROR input file too small");
-    }
-
-    let mut metrics;
-
     info!("compressing to Lepton format");
 
     let mut reader = Cursor::new(&input_data);
     let mut writer = Cursor::new(&mut output_data);
 
-    metrics = encode_lepton_wrapper(
+    let mut metrics = encode_lepton_wrapper(
         &mut reader,
         &mut writer,
         max_threads as usize,
@@ -124,13 +118,12 @@ pub fn encode_lepton_wrapper_verify(
     // decode and compare to original in order to enure we encoded correctly
 
     let mut verify_buffer = Vec::with_capacity(input_data.len());
-    let mut verifyreader = Cursor::new(&output_data);
-    let mut verifywriter = Cursor::new(&mut verify_buffer);
+    let mut verifyreader = Cursor::new(&output_data[..]);
 
     info!("decompressing to verify contents");
 
     metrics.merge_from(
-        decode_lepton_wrapper(&mut verifyreader, &mut verifywriter, max_threads)
+        decode_lepton_wrapper(&mut verifyreader, &mut verify_buffer, max_threads)
             .context(here!())?,
     );
 
