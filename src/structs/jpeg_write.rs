@@ -42,7 +42,7 @@ use crate::{
     lepton_error::ExitCode,
 };
 
-use std::io::Write;
+use std::{io::Write, num::NonZeroI16};
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
@@ -589,18 +589,19 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
 fn envli(v: i16) -> (u16, u8) {
-    // Roundabout way of doing abs() that only works on two's complement (but Rust integers are guaranteed to be), it helps since it avoid branches.
-    // We also use the mask to remove the leading ones to make v fit into s bits.
+    // since this is inlined, in the main case the compiler figures out that v cannot be zero
+    if let Some(nz) = NonZeroI16::new(v) {
+        let s = 16 - nz.unsigned_abs().leading_zeros();
+        let mask = nz.get() >> 15; // -1 if tmp is negative and all 1
 
-    let mask = v >> 15; // -1 if tmp is negative and all 1
-    let abs = ((v ^ mask) - mask) as u16;
-    let s = u16_bit_length(abs);
+        let n = (nz.get() + (((1 << s) - 1) & mask)) as u16; // turn v into a 2s complement of s bits (avoids BitWriter from having to zero out the unused top bits indiscriminately)
 
-    let n = (v + (((1 << s) - 1) & mask)) as u16; // turn v into a 2s complement of s bits (avoids BitWriter from having to zero out the unused top bits indiscriminately)
-
-    // make sure that calculating the old way is the same
-    debug_assert_eq!(n, if v > 0 { v } else { v - 1 + (1 << s) } as u16);
-    return (n, s);
+        // make sure that calculating the old way is the same
+        debug_assert_eq!(n, if v > 0 { v } else { v - 1 + (1 << s) } as u16);
+        return (n, s as u8);
+    } else {
+        return (0, 0);
+    }
 }
 
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.

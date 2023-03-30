@@ -24,6 +24,7 @@ pub const fn u32_bit_length(v: u32) -> u8 {
     return 32 - v.leading_zeros() as u8;
 }
 
+#[cold]
 pub fn err_exit_code<T>(_error_code: ExitCode, message: &str) -> anyhow::Result<T> {
     return Err(anyhow::Error::new(LeptonError {
         exit_code: _error_code,
