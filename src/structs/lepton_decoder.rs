@@ -20,12 +20,10 @@ use crate::lepton_error::ExitCode;
 use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
-    neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
+    model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
-
-use super::model::ModelPerColor;
 
 // reads stream from reader and populates image_data with the decoded data
 

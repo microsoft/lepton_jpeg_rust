@@ -16,14 +16,12 @@ use crate::lepton_error::ExitCode;
 use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
-    neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
+    model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_writer::VPXBoolWriter,
 };
 
 use default_boxed::DefaultBoxed;
-
-use super::model::ModelPerColor;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
