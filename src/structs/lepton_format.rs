@@ -28,7 +28,6 @@ use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
 use crate::metrics::Metrics;
-use crate::structs::bit_writer::BitWriter;
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegHeader;
 use crate::structs::jpeg_write::jpeg_write_row_range;
@@ -872,8 +871,6 @@ impl LeptonHeader {
                 let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
                 let mut cursor = Cursor::new(&mut result_buffer);
 
-                let mut huffw = BitWriter::new();
-
                 let _start_size = cursor.position();
 
                 let max_coded_heights = lh.truncate_components.get_max_coded_heights();
@@ -884,7 +881,6 @@ impl LeptonHeader {
                     lh.truncate_components.mcu_count_vertical,
                     &thread_handoff,
                     &max_coded_heights[..],
-                    &mut huffw,
                     lh,
                 )
                 .context(here!())?;

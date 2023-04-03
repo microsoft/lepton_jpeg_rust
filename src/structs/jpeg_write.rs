@@ -57,9 +57,9 @@ pub fn jpeg_write_row_range<W: Write>(
     mcuv: i32,
     thread_handoff: &ThreadHandoff,
     max_coded_heights: &[u32],
-    huffw: &mut BitWriter,
     lh: &LeptonHeader,
 ) -> Result<()> {
+    let mut huffw = BitWriter::new();
     huffw.reset_from_overhang_byte_and_num_bits(
         thread_handoff.overhang_byte,
         thread_handoff.num_overhang_bits.into(),
@@ -91,7 +91,7 @@ pub fn jpeg_write_row_range<W: Write>(
 
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
-                huffw,
+                &mut huffw,
                 cur_row.mcu_row_index * lh.jpeg_header.mcuh,
                 writer,
                 &mut last_dc,
@@ -362,31 +362,56 @@ fn encode_block_seq(
     // encode DC
     write_coef(huffw, block[0], 0, dctbl);
 
-    let mut z = 0;
+    let mut z: u8 = 0;
+    let mut bpos = 1;
+    let mut overflow_count = 0;
 
     // encode AC
-    for bpos in 1..64 {
-        // if nonzero is encountered
-        let tmp = block[bpos];
-        if tmp == 0 {
-            z += 1;
-            continue;
+    while bpos < 64 {
+        if overflow_count > 0 {
+            while bpos < 64 {
+                let tmp = block[bpos];
+                bpos += 1;
+
+                if tmp == 0 {
+                    let o;
+                    (z, o) = z.overflowing_add(16u8);
+                    if o {
+                        overflow_count += 1;
+                    }
+                } else {
+                    while overflow_count > 0 {
+                        huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
+                        overflow_count -= 1;
+                    }
+
+                    write_coef(huffw, tmp, z, actbl);
+                    z = 0;
+                    break;
+                }
+            }
+        } else {
+            while bpos < 64 {
+                let tmp = block[bpos];
+                bpos += 1;
+
+                if tmp == 0 {
+                    let o;
+                    (z, o) = z.overflowing_add(16u8);
+                    if o {
+                        overflow_count = 1;
+                        break;
+                    }
+                } else {
+                    write_coef(huffw, tmp, z, actbl);
+                    z = 0;
+                }
+            }
         }
-
-        // if we have 16 or more zero, we need to write them in blocks of 16
-        while z >= 16 {
-            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-            z -= 16;
-        }
-
-        write_coef(huffw, tmp, z, actbl);
-
-        // reset zeroes
-        z = 0;
     }
 
     // write eob if needed
-    if z != 0 {
+    if z != 0 || overflow_count != 0 {
         huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
     }
 }
@@ -397,7 +422,7 @@ fn encode_block_seq(
 fn write_coef(huffw: &mut BitWriter, coef: i16, z: u8, tbl: &HuffCodes) {
     // vli encode
     let (n, s) = envli(coef);
-    let hc = ((z & 0xf) << 4) + s;
+    let hc = z | s;
 
     // write to huffman writer (combine into single write)
     let val = (u32::from(tbl.c_val[usize::from(hc)]) << s) | u32::from(n);
@@ -429,7 +454,7 @@ fn encode_ac_prg_fs(
             }
 
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp, z << 4, actbl);
 
             // reset zeroes
             z = 0;
@@ -509,7 +534,7 @@ fn encode_ac_prg_sa(
         // if nonzero is encountered
         else if (tmp == 1) || (tmp == -1) {
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp, z << 4, actbl);
 
             // write correction bits
             encode_crbits(huffw, correction_bits);
