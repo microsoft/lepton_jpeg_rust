@@ -184,3 +184,53 @@ fn roundtrip_bits() {
         r.read_and_verify_fill_bits(&mut pad).unwrap();
     }
 }
+
+/// verify the the bits roundtrip correctly with random bits
+#[test]
+fn roundtrip_randombits() {
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    let mut buf = Vec::new();
+
+    const ITERATIONS: usize = 10000;
+
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut test_data = Vec::with_capacity(ITERATIONS);
+
+    for _ in 0..ITERATIONS {
+        let bits = rng.gen_range(0..=16);
+        let v = rng.gen_range(0..=65535) & ((1 << bits) - 1);
+        test_data.push((v as u16, bits as u8));
+    }
+
+    {
+        let mut writer = Cursor::new(&mut buf);
+
+        let mut b = BitWriter::new();
+        for i in &test_data {
+            b.write(i.0 as u32, i.1 as u32);
+
+            // randomly flush the buffer
+            if rng.gen_range(0..50) == 0 {
+                b.flush_with_escape(&mut writer).unwrap();
+            }
+        }
+
+        b.pad(0xff);
+
+        b.flush_with_escape(&mut writer).unwrap();
+    }
+
+    {
+        let mut r = BitReader::new(Cursor::new(&buf));
+
+        for i in &test_data {
+            assert_eq!(i.0, r.read(i.1).unwrap());
+        }
+
+        let mut pad = Some(0xff);
+        r.read_and_verify_fill_bits(&mut pad).unwrap();
+    }
+}
