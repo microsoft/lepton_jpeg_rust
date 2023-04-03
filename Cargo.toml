@@ -38,6 +38,7 @@ atty = "0.2.14"
 
 [dev-dependencies]
 rstest = "0.16.0"
+rand = "0.8.5"
 
 [[bin]]
 name = "lepton_jpeg_util"
