@@ -55,7 +55,7 @@ impl<R: Read> VPXBoolReader<R> {
             hash: SimpleHash::new(),
         };
 
-        r.vpx_reader_fill()?;
+        vpx_reader_fill(&mut r.value, &mut r.count, &mut r.upstream_reader)?;
 
         let mut dummy_branch = Branch::new();
         r.get(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
@@ -103,14 +103,29 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> Result<usize> {
         let mut value = 0;
 
+        let mut tmp_range = self.range;
+        let mut tmp_value = self.value;
+        let mut tmp_count = self.count;
+
         while value != A {
-            let cur_bit = self.get(&mut branches[value], cmp)?;
+            let cur_bit = vpx_reader_get(
+                &mut branches[value],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+                &mut self.upstream_reader,
+                cmp,
+            )?;
             if !cur_bit {
                 break;
             }
 
             value += 1;
         }
+
+        self.value = tmp_value;
+        self.count = tmp_count;
+        self.range = tmp_range;
 
         return Ok(value);
     }
@@ -125,44 +140,48 @@ impl<R: Read> VPXBoolReader<R> {
         assert!(n <= branches.len());
 
         let mut coef = 0;
+
+        let mut tmp_range = self.range;
+        let mut tmp_value = self.value;
+        let mut tmp_count = self.count;
+
         for i in (0..n).rev() {
-            coef |= (self.get(&mut branches[i], cmp)? as usize) << i;
+            coef |= (vpx_reader_get(
+                &mut branches[i],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+                &mut self.upstream_reader,
+                cmp,
+            )? as usize)
+                << i;
         }
+
+        self.value = tmp_value;
+        self.count = tmp_count;
+        self.range = tmp_range;
 
         return Ok(coef);
     }
 
     #[inline(always)]
-    pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
-        if self.count < 0 {
-            self.vpx_reader_fill()?;
-        }
-
-        let prob = branch.get_probability() as u32;
-
+    pub fn get(&mut self, branch: &mut Branch, cmp: ModelComponent) -> Result<bool> {
         let mut tmp_range = self.range;
         let mut tmp_value = self.value;
+        let mut tmp_count = self.count;
 
-        let split = ((tmp_range * prob) + (256 - prob)) >> BITS_IN_BYTE;
-        let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
-        let bit = tmp_value >= big_split;
+        let r = vpx_reader_get(
+            branch,
+            &mut tmp_value,
+            &mut tmp_range,
+            &mut tmp_count,
+            &mut self.upstream_reader,
+            cmp,
+        );
 
-        if bit {
-            branch.record_and_update_true_obs();
-            tmp_range = tmp_range - split;
-            tmp_value -= big_split;
-        } else {
-            branch.record_and_update_false_obs();
-            tmp_range = split;
-        }
-
-        //lookup tables are best avoided in modern CPUs
-        //let shift = VPX_NORM[tmp_range as usize] as i32;
-        let shift = (tmp_range as u8).leading_zeros() as i32;
-
-        self.value = tmp_value << shift;
-        self.count -= shift;
-        self.range = tmp_range << shift;
+        self.value = tmp_value;
+        self.count = tmp_count;
+        self.range = tmp_range;
 
         #[cfg(feature = "compression_stats")]
         {
@@ -188,30 +207,69 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
-        return Ok(bit);
+        return r;
+    }
+}
+
+#[inline(always)]
+fn vpx_reader_get<R: Read>(
+    branch: &mut Branch,
+    tmp_value: &mut u64,
+    tmp_range: &mut u32,
+    tmp_count: &mut i32,
+    upstream_reader: &mut R,
+    _cmp: ModelComponent,
+) -> Result<bool> {
+    if *tmp_count < 0 {
+        vpx_reader_fill(tmp_value, tmp_count, upstream_reader)?;
     }
 
-    fn vpx_reader_fill(&mut self) -> Result<()> {
-        let mut tmp_value = self.value;
-        let mut tmp_count = self.count;
-        let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (tmp_count + BITS_IN_BYTE);
+    let prob = branch.get_probability() as u32;
 
-        while shift >= 0 {
-            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
-            let mut v = [0u8; 1];
-            let bytes_read = self.upstream_reader.read(&mut v[..])?;
-            if bytes_read == 0 {
-                break;
-            }
+    let split = ((*tmp_range * prob) + (256 - prob)) >> BITS_IN_BYTE;
+    let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
+    let bit = *tmp_value >= big_split;
 
-            tmp_value |= (v[0] as u64) << shift;
-            shift -= BITS_IN_BYTE;
-            tmp_count += BITS_IN_BYTE;
+    if bit {
+        branch.record_and_update_true_obs();
+        *tmp_range = *tmp_range - split;
+        *tmp_value -= big_split;
+    } else {
+        branch.record_and_update_false_obs();
+        *tmp_range = split;
+    }
+
+    //lookup tables are best avoided in modern CPUs
+    //let shift = VPX_NORM[tmp_range as usize] as i32;
+    let shift = (*tmp_range as u8).leading_zeros() as i32;
+
+    *tmp_value <<= shift;
+    *tmp_count -= shift;
+    *tmp_range <<= shift;
+
+    return Ok(bit);
+}
+
+#[inline(always)]
+fn vpx_reader_fill<R: Read>(
+    tmp_value: &mut u64,
+    tmp_count: &mut i32,
+    upstream_reader: &mut R,
+) -> Result<()> {
+    let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+
+    while shift >= 0 {
+        // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
+        let mut v = [0u8; 1];
+        let bytes_read = upstream_reader.read(&mut v[..])?;
+        if bytes_read == 0 {
+            break;
         }
 
-        self.value = tmp_value;
-        self.count = tmp_count;
-
-        return Ok(());
+        *tmp_value |= (v[0] as u64) << shift;
+        shift -= BITS_IN_BYTE;
+        *tmp_count += BITS_IN_BYTE;
     }
+
+    return Ok(());
 }
