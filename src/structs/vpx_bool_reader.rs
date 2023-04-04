@@ -37,7 +37,7 @@ const BITS_IN_LONG_MINUS_LAST_BYTE: i32 = BITS_IN_LONG - BITS_IN_BYTE;
 
 pub struct VPXBoolReader<R> {
     value: u64,
-    range: u32,
+    range: u8,
     count: i32,
     upstream_reader: R,
     model_statistics: Metrics,
@@ -116,7 +116,7 @@ impl<R: Read> VPXBoolReader<R> {
                 vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let split = 1 + ((((tmp_range - 1) as u32) * (probability as u32)) >> 8);
+            let split = 1 + ((((tmp_range - 1) as u32) * (probability as u32)) >> 8) as u8;
             let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
             let bit = tmp_value >= big_split;
 
@@ -247,7 +247,7 @@ impl<R: Read> VPXBoolReader<R> {
 fn vpx_reader_get<R: Read>(
     branch: &mut Branch,
     tmp_value: &mut u64,
-    tmp_range: &mut u32,
+    tmp_range: &mut u8,
     tmp_count: &mut i32,
     upstream_reader: &mut R,
     _cmp: ModelComponent,
@@ -258,7 +258,7 @@ fn vpx_reader_get<R: Read>(
         vpx_reader_fill(tmp_value, tmp_count, upstream_reader)?;
     }
 
-    let split = 1 + ((((*tmp_range - 1) as u32) * (probability as u32)) >> 8);
+    let split = 1 + ((((*tmp_range - 1) as u32) * (probability as u32)) >> 8) as u8;
     let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
     let bit = *tmp_value >= big_split;
 
@@ -303,4 +303,21 @@ fn vpx_reader_fill<R: Read>(
     }
 
     return Ok(());
+}
+
+#[test]
+fn run() {
+    for a in 1..=255 {
+        for b in 1..=255 {
+            let prob = a * 256 / (a + b);
+
+            let recip = (65536i64 * 65536) / (a + b);
+
+            let prob2 = ((a * recip) + 32768) / (65536 * 256);
+
+            if prob != prob2 {
+                println!("diff={} a={}  b={}", prob - prob2, a, b);
+            }
+        }
+    }
 }
