@@ -95,32 +95,64 @@ impl<R: Read> VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(never)]
+    /// this is one of the most expensive functions since it is called for every exponent value,
+    /// hence the amount of optimization.
+    #[inline(always)]
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
-        cmp: ModelComponent,
+        _cmp: ModelComponent,
     ) -> Result<usize> {
         let mut value = 0;
+
+        let mut probability = branches[0].get_probability();
 
         let mut tmp_range = self.range;
         let mut tmp_value = self.value;
         let mut tmp_count = self.count;
 
-        while value != A {
-            let cur_bit = vpx_reader_get(
-                &mut branches[value],
-                &mut tmp_value,
-                &mut tmp_range,
-                &mut tmp_count,
-                &mut self.upstream_reader,
-                cmp,
-            )?;
-            if !cur_bit {
-                break;
+        loop {
+            if tmp_count < 0 {
+                vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            value += 1;
+            let split = 1 + ((((tmp_range - 1) as u32) * (probability as u32)) >> 8);
+            let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
+            let bit = tmp_value >= big_split;
+
+            let shift;
+            if bit {
+                value += 1;
+                if value < A {
+                    // fetch next probability as soon as we know we will need it
+                    // allows CPU significantly more parallelism when executing instructions
+                    probability = branches[value].get_probability();
+
+                    branches[value - 1].record_and_update_true_obs();
+                    tmp_range -= split;
+                    tmp_value -= big_split;
+                    shift = tmp_range.leading_zeros();
+
+                    tmp_value <<= shift;
+                    tmp_count -= shift as i32;
+                    tmp_range <<= shift;
+                    continue;
+                } else {
+                    branches[value - 1].record_and_update_true_obs();
+
+                    tmp_range -= split;
+                    tmp_value -= big_split;
+                }
+            } else {
+                branches[value].record_and_update_false_obs();
+                tmp_range = split;
+            }
+
+            shift = tmp_range.leading_zeros();
+            tmp_value <<= shift;
+            tmp_count -= shift as i32;
+            tmp_range <<= shift;
+            break;
         }
 
         self.value = tmp_value;
@@ -220,31 +252,30 @@ fn vpx_reader_get<R: Read>(
     upstream_reader: &mut R,
     _cmp: ModelComponent,
 ) -> Result<bool> {
+    let probability = branch.get_probability() as u32;
+
     if *tmp_count < 0 {
         vpx_reader_fill(tmp_value, tmp_count, upstream_reader)?;
     }
 
-    let prob = branch.get_probability() as u32;
-
-    let split = ((*tmp_range * prob) + (256 - prob)) >> BITS_IN_BYTE;
+    let split = 1 + ((((*tmp_range - 1) as u32) * (probability as u32)) >> 8);
     let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
     let bit = *tmp_value >= big_split;
 
+    let shift;
     if bit {
         branch.record_and_update_true_obs();
-        *tmp_range = *tmp_range - split;
+        *tmp_range -= split;
         *tmp_value -= big_split;
+        shift = tmp_range.leading_zeros();
     } else {
         branch.record_and_update_false_obs();
         *tmp_range = split;
+        shift = split.leading_zeros();
     }
 
-    //lookup tables are best avoided in modern CPUs
-    //let shift = VPX_NORM[tmp_range as usize] as i32;
-    let shift = (*tmp_range as u8).leading_zeros() as i32;
-
     *tmp_value <<= shift;
-    *tmp_count -= shift;
+    *tmp_count -= shift as i32;
     *tmp_range <<= shift;
 
     return Ok(bit);
