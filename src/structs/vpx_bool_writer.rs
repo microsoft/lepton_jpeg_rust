@@ -159,18 +159,21 @@ impl<W: Write> VPXBoolWriter<W> {
         let split = 1 + (((tmp_range - 1) * probability) >> 8);
 
         let mut tmp_low_value = self.low_value;
+
+        let mut shift;
         if value {
             branch.record_and_update_true_obs();
             tmp_low_value += split;
             tmp_range -= split;
+
+            shift = (tmp_range as u8).leading_zeros() as i32;
         } else {
             branch.record_and_update_false_obs();
             tmp_range = split;
-        }
 
-        //lookup tables are best avoided in modern CPUs
-        //let mut shift = VPX_NORM[tmp_range as usize] as i32;
-        let mut shift = tmp_range.leading_zeros() as i32 - 24;
+            // optimizer understands that split > 0, so it can optimize this
+            shift = (split as u8).leading_zeros() as i32;
+        }
 
         #[cfg(feature = "compression_stats")]
         {
