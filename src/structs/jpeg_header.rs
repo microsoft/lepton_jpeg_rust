@@ -822,7 +822,7 @@ impl JPegHeader {
             let mut len: u8 = 0;
 
             while node < 256 && len <= 7 {
-                node = ht.node[usize::from(node)][((peekbyte >> (7 - len)) & 0x1)];
+                node = ht.node[usize::from(node)][(peekbyte >> (7 - len)) & 0x1];
 
                 len += 1;
             }
