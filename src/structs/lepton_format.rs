@@ -400,7 +400,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                     let rx = rx_channels[thread_id - start].take().context(here!())?;
                     let mut reader = MessageReceiver {
                         thread_id: thread_id as u8,
-                        current_buffer: None,
+                        current_buffer: Cursor::new(Vec::new()),
                         receiver: rx,
                         end_of_file: false,
                     };
@@ -1480,36 +1480,48 @@ impl Write for MessageSender {
     }
 }
 
+/// used by the worker thread to read data for the given thread from the
+/// receiver. The thread_id is used only to assert that we are only
+/// getting the data that we are expecting
 struct MessageReceiver {
+    /// the multiplexed thread stream we are processing
     thread_id: u8,
+
+    /// the receiver part of the channel to get more buffers
     receiver: Receiver<Message>,
-    current_buffer: Option<Cursor<Vec<u8>>>,
+
+    /// what we are reading. When this returns zero, we try to
+    /// refill the buffer if we haven't reached the end of the stream
+    current_buffer: Cursor<Vec<u8>>,
+
+    /// once we get told we are at the end of the stream, we just
+    /// always return 0 bytes
     end_of_file: bool,
 }
 
 impl Read for MessageReceiver {
+    /// fast path for reads. If we get zero bytes, take the slow path
     #[inline(always)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if let Some(x) = &mut self.current_buffer {
-            let amount_read = x.read(buf)?;
-            if amount_read > 0 {
-                return Ok(amount_read);
-            }
+        let amount_read = self.current_buffer.read(buf)?;
+        if amount_read > 0 {
+            return Ok(amount_read);
         }
 
         self.read_slow(buf)
     }
 }
+
 impl MessageReceiver {
+    /// slow path for reads, try to get a new buffer or
+    /// return zero if at the end of the stream
     #[cold]
     #[inline(never)]
     fn read_slow(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         while !self.end_of_file {
-            if let Some(x) = &mut self.current_buffer {
-                let amount_read = x.read(buf)?;
-                if amount_read > 0 {
-                    return Ok(amount_read);
-                }
+            let amount_read = self.current_buffer.read(buf)?;
+            if amount_read > 0 {
+                return Ok(amount_read);
             }
 
             match self.receiver.recv() {
@@ -1522,7 +1534,7 @@ impl MessageReceiver {
                             tid, self.thread_id,
                             "incoming thread must be equal to processing thread"
                         );
-                        self.current_buffer = Some(Cursor::new(block));
+                        self.current_buffer = Cursor::new(block);
                     }
                 },
                 Err(e) => {
