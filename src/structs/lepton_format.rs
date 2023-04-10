@@ -402,7 +402,6 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                         thread_id: thread_id as u8,
                         current_buffer: None,
                         receiver: rx,
-                        offset_read: 0,
                         end_of_file: false,
                     };
 
@@ -1484,20 +1483,32 @@ impl Write for MessageSender {
 struct MessageReceiver {
     thread_id: u8,
     receiver: Receiver<Message>,
-    current_buffer: Option<Vec<u8>>,
-    offset_read: usize,
+    current_buffer: Option<Cursor<Vec<u8>>>,
     end_of_file: bool,
 }
 
 impl Read for MessageReceiver {
+    #[inline(always)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(x) = &mut self.current_buffer {
+            let amount_read = x.read(buf)?;
+            if amount_read > 0 {
+                return Ok(amount_read);
+            }
+        }
+
+        self.read_slow(buf)
+    }
+}
+impl MessageReceiver {
+    #[cold]
+    #[inline(never)]
+    fn read_slow(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         while !self.end_of_file {
-            if let Some(x) = &self.current_buffer {
-                let amount_to_read = cmp::min(buf.len(), x.len() - self.offset_read);
-                if amount_to_read > 0 {
-                    buf.copy_from_slice(&x[self.offset_read..self.offset_read + amount_to_read]);
-                    self.offset_read += amount_to_read;
-                    return Ok(amount_to_read);
+            if let Some(x) = &mut self.current_buffer {
+                let amount_read = x.read(buf)?;
+                if amount_read > 0 {
+                    return Ok(amount_read);
                 }
             }
 
@@ -1511,8 +1522,7 @@ impl Read for MessageReceiver {
                             tid, self.thread_id,
                             "incoming thread must be equal to processing thread"
                         );
-                        self.current_buffer = Some(block);
-                        self.offset_read = 0;
+                        self.current_buffer = Some(Cursor::new(block));
                     }
                 },
                 Err(e) => {
