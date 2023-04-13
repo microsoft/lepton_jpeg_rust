@@ -400,8 +400,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                     let rx = rx_channels[thread_id - start].take().context(here!())?;
                     let mut reader = MessageReceiver {
                         thread_id: thread_id as u8,
-                        current_buffer: Vec::new(),
-                        offset_read: 0,
+                        current_buffer: Cursor::new(Vec::new()),
                         receiver: rx,
                         end_of_file: false,
                     };
@@ -1493,10 +1492,7 @@ struct MessageReceiver {
 
     /// what we are reading. When this returns zero, we try to
     /// refill the buffer if we haven't reached the end of the stream
-    current_buffer: Vec<u8>,
-
-    /// offset in buffer we are reading from
-    offset_read: usize,
+    current_buffer: Cursor<Vec<u8>>,
 
     /// once we get told we are at the end of the stream, we just
     /// always return 0 bytes
@@ -1507,17 +1503,9 @@ impl Read for MessageReceiver {
     /// fast path for reads. If we get zero bytes, take the slow path
     #[inline(always)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // opimizer removes this, but for safety's sake
-        if buf.len() == 0 {
-            return Ok(0);
-        }
-
-        // read only one byte since thats what the reader only ever asks for
-        // this is legal behavior according to the contract
-        if self.offset_read < self.current_buffer.len() {
-            buf[0] = self.current_buffer[self.offset_read];
-            self.offset_read += 1;
-            return Ok(1);
+        let amount_read = self.current_buffer.read(buf)?;
+        if amount_read > 0 {
+            return Ok(amount_read);
         }
 
         self.read_slow(buf)
@@ -1530,14 +1518,10 @@ impl MessageReceiver {
     #[cold]
     #[inline(never)]
     fn read_slow(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if buf.len() == 0 {
-            return Ok(0);
-        }
         while !self.end_of_file {
-            if self.offset_read < self.current_buffer.len() {
-                buf[0] = self.current_buffer[self.offset_read];
-                self.offset_read += 1;
-                return Ok(1);
+            let amount_read = self.current_buffer.read(buf)?;
+            if amount_read > 0 {
+                return Ok(amount_read);
             }
 
             match self.receiver.recv() {
@@ -1550,8 +1534,7 @@ impl MessageReceiver {
                             tid, self.thread_id,
                             "incoming thread must be equal to processing thread"
                         );
-                        self.current_buffer = block;
-                        self.offset_read = 0;
+                        self.current_buffer = Cursor::new(block);
                     }
                 },
                 Err(e) => {

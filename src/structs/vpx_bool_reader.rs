@@ -201,7 +201,7 @@ impl<R: Read> VPXBoolReader<R> {
         while shift >= 0 {
             // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
             let mut v = [0u8; 1];
-            let bytes_read = self.upstream_reader.read(&mut v)?;
+            let bytes_read = self.upstream_reader.read(&mut v[..])?;
             if bytes_read == 0 {
                 break;
             }
