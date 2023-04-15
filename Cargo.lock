@@ -281,7 +281,6 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "atty",
- "bytemuck",
  "byteorder",
  "cpu-time",
  "default-boxed",

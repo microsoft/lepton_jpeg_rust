@@ -27,7 +27,6 @@ compression_stats = []
 
 [dependencies]
 byteorder = "1.4.3"
-bytemuck = "1.13.0"
 flate2 = "1.0.25"
 default-boxed = "0.2.0"
 anyhow = { version="1.0.68", features = ["backtrace"]}
