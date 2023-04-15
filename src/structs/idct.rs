@@ -6,7 +6,7 @@
 
 use super::block_based_image::AlignedBlock;
 
-use wide::{i32x8, i16x8};
+use wide::i32x8;
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -61,79 +61,75 @@ pub fn get_q(offset: usize, stride: usize, q: &[u16; 64]) -> i32x8 {
 }
 
 #[inline(always)]
-fn narrow(row: i32x8) -> i16x8 {
-    
-    i16x8::new([
-            row.as_array_ref()[0] as i16,
-            row.as_array_ref()[1] as i16,
-            row.as_array_ref()[2] as i16,
-            row.as_array_ref()[3] as i16,
-            row.as_array_ref()[4] as i16,
-            row.as_array_ref()[5] as i16,
-            row.as_array_ref()[6] as i16,
-            row.as_array_ref()[7] as i16,
-        ]
-    )
+fn copy_to_output(row: i32x8, offset: usize, outp: &mut [i16; 64]) {
+    outp[offset] = row.as_array_ref()[0] as i16;
+    outp[offset + 1] = row.as_array_ref()[1] as i16;
+    outp[offset + 2] = row.as_array_ref()[2] as i16;
+    outp[offset + 3] = row.as_array_ref()[3] as i16;
+    outp[offset + 4] = row.as_array_ref()[4] as i16;
+    outp[offset + 5] = row.as_array_ref()[5] as i16;
+    outp[offset + 6] = row.as_array_ref()[6] as i16;
+    outp[offset + 7] = row.as_array_ref()[7] as i16;
 }
 
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64]) {
     // horizontal
     let mut xv0 = get_raster::<IGNORE_DC>(0, 8, block);
-    let mut xv1 = get_raster::<IGNORE_DC>(4, 8, block);
-    let mut xv2 = get_raster::<IGNORE_DC>(6, 8, block);
-    let mut xv3 = get_raster::<IGNORE_DC>(2, 8, block);
-    let mut xv4 = get_raster::<IGNORE_DC>(1, 8, block);
-    let mut xv5 = get_raster::<IGNORE_DC>(7, 8, block);
-    let mut xv6 = get_raster::<IGNORE_DC>(5, 8, block);
-    let mut xv7 = get_raster::<IGNORE_DC>(3, 8, block);
+    let mut xv1 = get_raster::<IGNORE_DC>(1, 8, block);
+    let mut xv2 = get_raster::<IGNORE_DC>(2, 8, block);
+    let mut xv3 = get_raster::<IGNORE_DC>(3, 8, block);
+    let mut xv4 = get_raster::<IGNORE_DC>(4, 8, block);
+    let mut xv5 = get_raster::<IGNORE_DC>(5, 8, block);
+    let mut xv6 = get_raster::<IGNORE_DC>(6, 8, block);
+    let mut xv7 = get_raster::<IGNORE_DC>(7, 8, block);
 
     xv0 = ((xv0 * get_q(0, 8, q)) << 11) + 128;
-    xv1 = (xv1 * get_q(4, 8, q)) << 11;
-    xv2 *= get_q(6, 8, q);
-    xv3 *= get_q(2, 8, q);
-    xv4 *= get_q(1, 8, q);
-    xv5 *= get_q(7, 8, q);
-    xv6 *= get_q(5, 8, q);
-    xv7 *= get_q(3, 8, q);
+    xv1 *= get_q(1, 8, q);
+    xv2 *= get_q(2, 8, q);
+    xv3 *= get_q(3, 8, q);
+    xv4 = (xv4 * get_q(4, 8, q)) << 11;
+    xv5 *= get_q(5, 8, q);
+    xv6 *= get_q(6, 8, q);
+    xv7 *= get_q(7, 8, q);
 
     // Stage 1.
-    let mut xv8 = _W7 * (xv4 + xv5);
-    xv4 = xv8 + (W1MW7 * xv4);
-    xv5 = xv8 - (W1PW7 * xv5);
-    xv8 = _W3 * (xv6 + xv7);
-    xv6 = xv8 - (W3MW5 * xv6);
-    xv7 = xv8 - (W3PW5 * xv7);
+    let mut xv8 = _W7 * (xv1 + xv7);
+    xv1 = xv8 + (W1MW7 * xv1);
+    xv7 = xv8 - (W1PW7 * xv7);
+    xv8 = _W3 * (xv5 + xv3);
+    xv5 = xv8 - (W3MW5 * xv5);
+    xv3 = xv8 - (W3PW5 * xv3);
 
     // Stage 2.
-    xv8 = xv0 + xv1;
-    xv0 -= xv1;
-    xv1 = W6 * (xv3 + xv2);
-    xv2 = xv1 - (W2PW6 * xv2);
-    xv3 = xv1 + (W2MW6 * xv3);
-    xv1 = xv4 + xv6;
-    xv4 -= xv6;
-    xv6 = xv5 + xv7;
-    xv5 -= xv7;
+    xv8 = xv0 + xv4;
+    xv0 -= xv4;
+    xv4 = W6 * (xv2 + xv6);
+    xv6 = xv4 - (W2PW6 * xv6);
+    xv2 = xv4 + (W2MW6 * xv2);
+    xv4 = xv1 + xv5;
+    xv1 -= xv5;
+    xv5 = xv7 + xv3;
+    xv7 -= xv3;
 
     // Stage 3.
-    xv7 = xv8 + xv3;
-    xv8 -= xv3;
-    xv3 = xv0 + xv2;
-    xv0 -= xv2;
-    xv2 = ((R2 * (xv4 + xv5)) + 128) >> 8;
-    xv4 = ((R2 * (xv4 - xv5)) + 128) >> 8;
+    xv3 = xv8 + xv2;
+    xv8 -= xv2;
+    xv2 = xv0 + xv6;
+    xv0 -= xv6;
+    xv6 = ((R2 * (xv1 + xv7)) + 128) >> 8;
+    xv1 = ((R2 * (xv1 - xv7)) + 128) >> 8;
 
     // Stage 4.
     let row = [
-        (xv7 + xv1) >> 8,
-        (xv3 + xv2) >> 8,
-        (xv0 + xv4) >> 8,
-        (xv8 + xv6) >> 8,
-        (xv8 - xv6) >> 8,
-        (xv0 - xv4) >> 8,
-        (xv3 - xv2) >> 8,
-        (xv7 - xv1) >> 8,
+        (xv3 + xv4) >> 8,
+        (xv2 + xv6) >> 8,
+        (xv0 + xv1) >> 8,
+        (xv8 + xv5) >> 8,
+        (xv8 - xv5) >> 8,
+        (xv0 - xv1) >> 8,
+        (xv2 - xv6) >> 8,
+        (xv3 - xv4) >> 8,
     ];
 
     // transpose and now do vertical
@@ -171,18 +167,14 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     yv6 = ((R2 * (yv6 - yv0)) + 128) >> 8;
 
     // Stage 4.
-    let output = [
-        narrow((yv4 + yv3) >> 11),
-        narrow((yv5 + yv1) >> 11),
-        narrow((yv7 + yv6) >> 11),
-        narrow((yv8 + yv2) >> 11),
-        narrow((yv8 - yv2) >> 11),
-        narrow((yv7 - yv6) >> 11),
-        narrow((yv5 - yv1) >> 11),
-        narrow((yv4 - yv3) >> 11),
-    ];
-
-    *outp = bytemuck::cast(output);
+    copy_to_output((yv4 + yv3) >> 11, 0, outp);
+    copy_to_output((yv5 + yv1) >> 11, 8, outp);
+    copy_to_output((yv7 + yv6) >> 11, 2 * 8, outp);
+    copy_to_output((yv8 + yv2) >> 11, 3 * 8, outp);
+    copy_to_output((yv8 - yv2) >> 11, 4 * 8, outp);
+    copy_to_output((yv7 - yv6) >> 11, 5 * 8, outp);
+    copy_to_output((yv5 - yv1) >> 11, 6 * 8, outp);
+    copy_to_output((yv4 - yv3) >> 11, 7 * 8, outp);
 }
 
 /// test with random permutations to verify that the current implementation matches the legacy
