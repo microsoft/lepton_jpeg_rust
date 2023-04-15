@@ -55,7 +55,7 @@ impl<R: Read> VPXBoolReader<R> {
             hash: SimpleHash::new(),
         };
 
-        Self::vpx_reader_fill(&mut r.value, &mut r.count, &mut r.upstream_reader)?;
+        r.vpx_reader_fill()?;
 
         let mut dummy_branch = Branch::new();
         r.get(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
@@ -134,17 +134,14 @@ impl<R: Read> VPXBoolReader<R> {
 
     #[inline(always)]
     pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
-
-        let mut tmp_count = self.count;
-        let mut tmp_value = self.value;
-
         if self.count < 0 {
-            Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            self.vpx_reader_fill()?;
         }
 
         let probability = branch.get_probability() as u32;
 
         let mut tmp_range = self.range;
+        let mut tmp_value = self.value;
 
         let split = 1 + (((tmp_range - 1) * probability) >> BITS_IN_BYTE);
         let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
@@ -166,7 +163,7 @@ impl<R: Read> VPXBoolReader<R> {
         }
 
         self.value = tmp_value << shift;
-        self.count = tmp_count - shift;
+        self.count -= shift;
         self.range = tmp_range << shift;
 
         #[cfg(feature = "compression_stats")]
@@ -196,21 +193,26 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(bit);
     }
 
-    fn vpx_reader_fill(tmp_value : &mut u64, tmp_count : &mut i32, upstream_reader : &mut R) -> Result<()> {
-        let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+    fn vpx_reader_fill(&mut self) -> Result<()> {
+        let mut tmp_value = self.value;
+        let mut tmp_count = self.count;
+        let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (tmp_count + BITS_IN_BYTE);
 
         while shift >= 0 {
             // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
             let mut v = [0u8; 1];
-            let bytes_read = upstream_reader.read(&mut v[..])?;
+            let bytes_read = self.upstream_reader.read(&mut v[..])?;
             if bytes_read == 0 {
                 break;
             }
 
-            *tmp_value |= (v[0] as u64) << shift;
+            tmp_value |= (v[0] as u64) << shift;
             shift -= BITS_IN_BYTE;
-            *tmp_count += BITS_IN_BYTE;
+            tmp_count += BITS_IN_BYTE;
         }
+
+        self.value = tmp_value;
+        self.count = tmp_count;
 
         return Ok(());
     }
