@@ -1,5 +1,7 @@
 # Lepton JPEG compression Rust port
 
+The Lepton compression library is designed for lossless compressION baseline and progressive JPEGs up to 22%, with exact bit-by-bit recovery of the original JPEG. The primary use case is for storing JPEGs in a cloud-storage system. Metadata headers, and even invalid content is preserved as-is.
+
 This is a port of the C++ Lepton JPEG compression tool that was released by DropBox in this location: [dropbox/lepton: Lepton is a tool and file format for losslessly compressing JPEGs by an average of 22%. (github.com)](https://github.com/dropbox/lepton)
 
 Due to the work involved in doing a complete security audit on the C++ code, and the fact that DropBox has deprecated the codebase, we created a port of the library to Rust, which has almost identical performance characteristics with the advantage of all the safety features the Rust offers.
