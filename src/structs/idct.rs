@@ -202,160 +202,191 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     copy_to_output((yv0 - yv4) >> 11, 5 * 8, outp);
     copy_to_output((yv3 - yv2) >> 11, 6 * 8, outp);
     copy_to_output((yv7 - yv1) >> 11, 7 * 8, outp);
-
-    #[cfg(feature = "verify_old_dct")]
-    debug_assert!(verify_behavior(block, q, outp));
 }
 
-#[cfg(feature = "verify_old_dct")]
-use std::num::Wrapping;
+/// test with random permutations to verify that the current implementation matches the legacy
+/// implemenation from the original scalar C++ code
+#[test]
+pub fn test_idct_with_existing_behavior() {
+    use std::num::Wrapping;
 
-#[cfg(feature = "verify_old_dct")]
-fn verify_behavior(block: &AlignedBlock, q: &[u16; 64], new_outp: &[i16; 64]) -> bool {
-    let mut outp_orig = [0; 64];
-    run_idct_old(block, q, &mut outp_orig, true);
-
-    return outp_orig[..] == new_outp[..];
-}
-
-#[cfg(feature = "verify_old_dct")]
-fn mul(a: i16, b: u16) -> Wrapping<i32> {
-    return Wrapping(a as i32) * Wrapping(b as i32);
-}
-
-#[cfg(feature = "verify_old_dct")]
-pub fn run_idct_old(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64], ignore_dc: bool) {
-    let mut intermed = [Wrapping(0i32); 64];
-
-    // Horizontal 1-D IDCT.
-    for y in 0..8 {
-        let y8: usize = y * 8;
-
-        let mut x0 = if ignore_dc && y == 0 {
-            Wrapping(0)
-        } else {
-            mul(block.get_coefficient_raster(y8 + 0), q[y8 + 0]) << 11
-        } + Wrapping(128);
-        let mut x1 = mul(block.get_coefficient_raster(y8 + 4), q[y8 + 4]) << 11;
-        let mut x2 = mul(block.get_coefficient_raster(y8 + 6), q[y8 + 6]);
-        let mut x3 = mul(block.get_coefficient_raster(y8 + 2), q[y8 + 2]);
-        let mut x4 = mul(block.get_coefficient_raster(y8 + 1), q[y8 + 1]);
-        let mut x5 = mul(block.get_coefficient_raster(y8 + 7), q[y8 + 7]);
-        let mut x6 = mul(block.get_coefficient_raster(y8 + 5), q[y8 + 5]);
-        let mut x7 = mul(block.get_coefficient_raster(y8 + 3), q[y8 + 3]);
-
-        // If all the AC components are zero, then the IDCT is trivial.
-        if x1 == Wrapping(0)
-            && x2 == Wrapping(0)
-            && x3 == Wrapping(0)
-            && x4 == Wrapping(0)
-            && x5 == Wrapping(0)
-            && x6 == Wrapping(0)
-            && x7 == Wrapping(0)
-        {
-            let dc = (x0 - Wrapping(128)) >> 8;
-            intermed[y8 + 0] = dc;
-            intermed[y8 + 1] = dc;
-            intermed[y8 + 2] = dc;
-            intermed[y8 + 3] = dc;
-            intermed[y8 + 4] = dc;
-            intermed[y8 + 5] = dc;
-            intermed[y8 + 6] = dc;
-            intermed[y8 + 7] = dc;
-            continue;
-        }
-
-        // Prescale.
-
-        // Stage 1.
-        let mut x8 = Wrapping(W7) * (x4 + x5);
-        x4 = x8 + (Wrapping(W1MW7) * x4);
-        x5 = x8 - (Wrapping(W1PW7) * x5);
-        x8 = Wrapping(W3) * (x6 + x7);
-        x6 = x8 - (Wrapping(W3MW5) * x6);
-        x7 = x8 - (Wrapping(W3PW5) * x7);
-
-        // Stage 2.
-        x8 = x0 + x1;
-        x0 -= x1;
-        x1 = Wrapping(W6) * (x3 + x2);
-        x2 = x1 - (Wrapping(W2PW6) * x2);
-        x3 = x1 + (Wrapping(W2MW6) * x3);
-        x1 = x4 + x6;
-        x4 -= x6;
-        x6 = x5 + x7;
-        x5 -= x7;
-
-        // Stage 3.
-        x7 = x8 + x3;
-        x8 -= x3;
-        x3 = x0 + x2;
-        x0 -= x2;
-        x2 = ((Wrapping(R2) * (x4 + x5)) + Wrapping(128)) >> 8;
-        x4 = ((Wrapping(R2) * (x4 - x5)) + Wrapping(128)) >> 8;
-
-        // Stage 4.
-        intermed[y8 + 0] = (x7 + x1) >> 8;
-        intermed[y8 + 1] = (x3 + x2) >> 8;
-        intermed[y8 + 2] = (x0 + x4) >> 8;
-        intermed[y8 + 3] = (x8 + x6) >> 8;
-        intermed[y8 + 4] = (x8 - x6) >> 8;
-        intermed[y8 + 5] = (x0 - x4) >> 8;
-        intermed[y8 + 6] = (x3 - x2) >> 8;
-        intermed[y8 + 7] = (x7 - x1) >> 8;
+    fn mul(a: i16, b: u16) -> Wrapping<i32> {
+        return Wrapping(a as i32) * Wrapping(b as i32);
     }
 
-    // Vertical 1-D IDCT.
-    for x in 0..8 {
-        // Similar to the horizontal 1-D IDCT case, if all the AC components are zero, then the IDCT is trivial.
-        // However, after performing the horizontal 1-D IDCT, there are typically non-zero AC components, so
-        // we do not bother to check for the all-zero case.
+    pub fn run_idct_old(
+        block: &AlignedBlock,
+        q: &[u16; 64],
+        outp: &mut [i16; 64],
+        ignore_dc: bool,
+    ) {
+        let mut intermed = [Wrapping(0i32); 64];
 
-        // Prescale.
-        let mut y0 = (intermed[(8 * 0) + x] << 8) + Wrapping(8192);
-        let mut y1 = intermed[(8 * 4) + x] << 8;
-        let mut y2 = intermed[(8 * 6) + x];
-        let mut y3 = intermed[(8 * 2) + x];
-        let mut y4 = intermed[(8 * 1) + x];
-        let mut y5 = intermed[(8 * 7) + x];
-        let mut y6 = intermed[(8 * 5) + x];
-        let mut y7 = intermed[(8 * 3) + x];
+        // Horizontal 1-D IDCT.
+        for y in 0..8 {
+            let y8: usize = y * 8;
 
-        // Stage 1.
-        let mut y8 = (Wrapping(W7) * (y4 + y5)) + Wrapping(4);
-        y4 = (y8 + (Wrapping(W1MW7) * y4)) >> 3;
-        y5 = (y8 - (Wrapping(W1PW7) * y5)) >> 3;
-        y8 = (Wrapping(W3) * (y6 + y7)) + Wrapping(4);
-        y6 = (y8 - (Wrapping(W3MW5) * y6)) >> 3;
-        y7 = (y8 - (Wrapping(W3PW5) * y7)) >> 3;
+            let mut x0 = if ignore_dc && y == 0 {
+                Wrapping(0)
+            } else {
+                mul(block.get_coefficient_raster(y8 + 0), q[y8 + 0]) << 11
+            } + Wrapping(128);
+            let mut x1 = mul(block.get_coefficient_raster(y8 + 4), q[y8 + 4]) << 11;
+            let mut x2 = mul(block.get_coefficient_raster(y8 + 6), q[y8 + 6]);
+            let mut x3 = mul(block.get_coefficient_raster(y8 + 2), q[y8 + 2]);
+            let mut x4 = mul(block.get_coefficient_raster(y8 + 1), q[y8 + 1]);
+            let mut x5 = mul(block.get_coefficient_raster(y8 + 7), q[y8 + 7]);
+            let mut x6 = mul(block.get_coefficient_raster(y8 + 5), q[y8 + 5]);
+            let mut x7 = mul(block.get_coefficient_raster(y8 + 3), q[y8 + 3]);
 
-        // Stage 2.
-        y8 = y0 + y1;
-        y0 -= y1;
-        y1 = (Wrapping(W6) * (y3 + y2)) + Wrapping(4);
-        y2 = (y1 - (Wrapping(W2PW6) * y2)) >> 3;
-        y3 = (y1 + (Wrapping(W2MW6) * y3)) >> 3;
-        y1 = y4 + y6;
-        y4 -= y6;
-        y6 = y5 + y7;
-        y5 -= y7;
+            // If all the AC components are zero, then the IDCT is trivial.
+            if x1 == Wrapping(0)
+                && x2 == Wrapping(0)
+                && x3 == Wrapping(0)
+                && x4 == Wrapping(0)
+                && x5 == Wrapping(0)
+                && x6 == Wrapping(0)
+                && x7 == Wrapping(0)
+            {
+                let dc = (x0 - Wrapping(128)) >> 8;
+                intermed[y8 + 0] = dc;
+                intermed[y8 + 1] = dc;
+                intermed[y8 + 2] = dc;
+                intermed[y8 + 3] = dc;
+                intermed[y8 + 4] = dc;
+                intermed[y8 + 5] = dc;
+                intermed[y8 + 6] = dc;
+                intermed[y8 + 7] = dc;
+                continue;
+            }
 
-        // Stage 3.
-        y7 = y8 + y3;
-        y8 -= y3;
-        y3 = y0 + y2;
-        y0 -= y2;
-        y2 = ((Wrapping(R2) * (y4 + y5)) + Wrapping(128)) >> 8;
-        y4 = ((Wrapping(R2) * (y4 - y5)) + Wrapping(128)) >> 8;
+            // Prescale.
 
-        // Stage 4.
-        outp[(8 * 0) + x] = ((y7 + y1) >> 11).0 as i16;
-        outp[(8 * 1) + x] = ((y3 + y2) >> 11).0 as i16;
-        outp[(8 * 2) + x] = ((y0 + y4) >> 11).0 as i16;
-        outp[(8 * 3) + x] = ((y8 + y6) >> 11).0 as i16;
-        outp[(8 * 4) + x] = ((y8 - y6) >> 11).0 as i16;
-        outp[(8 * 5) + x] = ((y0 - y4) >> 11).0 as i16;
-        outp[(8 * 6) + x] = ((y3 - y2) >> 11).0 as i16;
-        outp[(8 * 7) + x] = ((y7 - y1) >> 11).0 as i16;
+            // Stage 1.
+            let mut x8 = Wrapping(W7) * (x4 + x5);
+            x4 = x8 + (Wrapping(W1MW7) * x4);
+            x5 = x8 - (Wrapping(W1PW7) * x5);
+            x8 = Wrapping(W3) * (x6 + x7);
+            x6 = x8 - (Wrapping(W3MW5) * x6);
+            x7 = x8 - (Wrapping(W3PW5) * x7);
+
+            // Stage 2.
+            x8 = x0 + x1;
+            x0 -= x1;
+            x1 = Wrapping(W6) * (x3 + x2);
+            x2 = x1 - (Wrapping(W2PW6) * x2);
+            x3 = x1 + (Wrapping(W2MW6) * x3);
+            x1 = x4 + x6;
+            x4 -= x6;
+            x6 = x5 + x7;
+            x5 -= x7;
+
+            // Stage 3.
+            x7 = x8 + x3;
+            x8 -= x3;
+            x3 = x0 + x2;
+            x0 -= x2;
+            x2 = ((Wrapping(R2) * (x4 + x5)) + Wrapping(128)) >> 8;
+            x4 = ((Wrapping(R2) * (x4 - x5)) + Wrapping(128)) >> 8;
+
+            // Stage 4.
+            intermed[y8 + 0] = (x7 + x1) >> 8;
+            intermed[y8 + 1] = (x3 + x2) >> 8;
+            intermed[y8 + 2] = (x0 + x4) >> 8;
+            intermed[y8 + 3] = (x8 + x6) >> 8;
+            intermed[y8 + 4] = (x8 - x6) >> 8;
+            intermed[y8 + 5] = (x0 - x4) >> 8;
+            intermed[y8 + 6] = (x3 - x2) >> 8;
+            intermed[y8 + 7] = (x7 - x1) >> 8;
+        }
+
+        // Vertical 1-D IDCT.
+        for x in 0..8 {
+            // Similar to the horizontal 1-D IDCT case, if all the AC components are zero, then the IDCT is trivial.
+            // However, after performing the horizontal 1-D IDCT, there are typically non-zero AC components, so
+            // we do not bother to check for the all-zero case.
+
+            // Prescale.
+            let mut y0 = (intermed[(8 * 0) + x] << 8) + Wrapping(8192);
+            let mut y1 = intermed[(8 * 4) + x] << 8;
+            let mut y2 = intermed[(8 * 6) + x];
+            let mut y3 = intermed[(8 * 2) + x];
+            let mut y4 = intermed[(8 * 1) + x];
+            let mut y5 = intermed[(8 * 7) + x];
+            let mut y6 = intermed[(8 * 5) + x];
+            let mut y7 = intermed[(8 * 3) + x];
+
+            // Stage 1.
+            let mut y8 = (Wrapping(W7) * (y4 + y5)) + Wrapping(4);
+            y4 = (y8 + (Wrapping(W1MW7) * y4)) >> 3;
+            y5 = (y8 - (Wrapping(W1PW7) * y5)) >> 3;
+            y8 = (Wrapping(W3) * (y6 + y7)) + Wrapping(4);
+            y6 = (y8 - (Wrapping(W3MW5) * y6)) >> 3;
+            y7 = (y8 - (Wrapping(W3PW5) * y7)) >> 3;
+
+            // Stage 2.
+            y8 = y0 + y1;
+            y0 -= y1;
+            y1 = (Wrapping(W6) * (y3 + y2)) + Wrapping(4);
+            y2 = (y1 - (Wrapping(W2PW6) * y2)) >> 3;
+            y3 = (y1 + (Wrapping(W2MW6) * y3)) >> 3;
+            y1 = y4 + y6;
+            y4 -= y6;
+            y6 = y5 + y7;
+            y5 -= y7;
+
+            // Stage 3.
+            y7 = y8 + y3;
+            y8 -= y3;
+            y3 = y0 + y2;
+            y0 -= y2;
+            y2 = ((Wrapping(R2) * (y4 + y5)) + Wrapping(128)) >> 8;
+            y4 = ((Wrapping(R2) * (y4 - y5)) + Wrapping(128)) >> 8;
+
+            // Stage 4.
+            outp[(8 * 0) + x] = ((y7 + y1) >> 11).0 as i16;
+            outp[(8 * 1) + x] = ((y3 + y2) >> 11).0 as i16;
+            outp[(8 * 2) + x] = ((y0 + y4) >> 11).0 as i16;
+            outp[(8 * 3) + x] = ((y8 + y6) >> 11).0 as i16;
+            outp[(8 * 4) + x] = ((y8 - y6) >> 11).0 as i16;
+            outp[(8 * 5) + x] = ((y0 - y4) >> 11).0 as i16;
+            outp[(8 * 6) + x] = ((y3 - y2) >> 11).0 as i16;
+            outp[(8 * 7) + x] = ((y7 - y1) >> 11).0 as i16;
+        }
+    }
+
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut test_data = AlignedBlock::default();
+    let mut test_q = [0u16; 64];
+
+    for _ in 0..16 {
+        for i in 0..64 {
+            test_data.get_block_mut()[i] = rng.gen_range(i16::MIN..=i16::MAX);
+            test_q[i] = rng.gen_range(0..=u16::MAX);
+        }
+
+        {
+            let mut outp = [0; 64];
+            run_idct::<true>(&test_data, &test_q, &mut outp);
+
+            let mut outp2 = [0; 64];
+            run_idct_old(&test_data, &test_q, &mut outp2, true);
+
+            assert_eq!(outp, outp2);
+        }
+
+        {
+            let mut outp = [0; 64];
+            run_idct::<false>(&test_data, &test_q, &mut outp);
+
+            let mut outp2 = [0; 64];
+            run_idct_old(&test_data, &test_q, &mut outp2, false);
+
+            assert_eq!(outp, outp2);
+        }
     }
 }

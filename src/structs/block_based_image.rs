@@ -173,6 +173,12 @@ pub struct AlignedBlock {
     raw_data: [i16; 64],
 }
 
+impl Default for AlignedBlock {
+    fn default() -> Self {
+        AlignedBlock { raw_data: [0; 64] }
+    }
+}
+
 impl AlignedBlock {
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[ALIGNED_BLOCK_INDEX_DC_INDEX];
