@@ -116,3 +116,85 @@ impl Branch {
         }
     }
 }
+
+/// run through all the possible combinations of counts and ensure that the probability is the same
+#[test]
+fn test_all_probabilities() {
+    /// This is copied from the C++ implementation to ensure that the behavior is the same
+    struct OriginalImplForTest {
+        counts: [u8; 2],
+        probability: u8,
+    }
+
+    impl OriginalImplForTest {
+        fn true_count(&self) -> u32 {
+            return self.counts[1] as u32;
+        }
+        fn false_count(&self) -> u32 {
+            return self.counts[0] as u32;
+        }
+
+        fn record_obs_and_update(&mut self, obs: bool) {
+            let fcount = self.counts[0] as u32;
+            let tcount = self.counts[1] as u32;
+
+            let overflow = self.counts[obs as usize] == 0xff;
+
+            if overflow {
+                // check less than 512
+                let neverseen = self.counts[!obs as usize] == 1;
+                if neverseen {
+                    self.counts[obs as usize] = 0xff;
+                    self.probability = if obs { 0 } else { 255 };
+                } else {
+                    self.counts[0] = ((1 + fcount) >> 1) as u8;
+                    self.counts[1] = ((1 + tcount) >> 1) as u8;
+                    self.counts[obs as usize] = 129;
+                    self.probability = self.optimize(self.counts[0] as u32 + self.counts[1] as u32);
+                }
+            } else {
+                self.counts[obs as usize] += 1;
+                self.probability = self.optimize(fcount + tcount + 1);
+            }
+        }
+
+        fn optimize(&self, sum: u32) -> u8 {
+            let prob = (self.false_count() << 8) / sum;
+
+            prob as u8
+        }
+    }
+
+    for i in 0u16..=65535 {
+        let mut old_f = OriginalImplForTest {
+            counts: [(i >> 8) as u8, i as u8],
+            probability: 0,
+        };
+
+        if old_f.true_count() == 0 || old_f.false_count() == 0 {
+            // starting counts can't be zero (we use 0 as an internal special value for the new implementation for the edge case of many trues in a row)
+            continue;
+        }
+
+        let mut new_f = Branch { counts: i as u16 };
+
+        for _k in 0..10 {
+            old_f.record_obs_and_update(false);
+            new_f.record_and_update_false_obs();
+            assert_eq!(old_f.probability, new_f.get_probability());
+        }
+
+        let mut old_t = OriginalImplForTest {
+            counts: [(i >> 8) as u8, i as u8],
+            probability: 0,
+        };
+        let mut new_t = Branch { counts: i as u16 };
+
+        for _k in 0..10 {
+            old_t.record_obs_and_update(true);
+            new_t.record_and_update_true_obs();
+
+            assert_eq!(old_t.probability, new_t.get_probability());
+        }
+    }
+}
