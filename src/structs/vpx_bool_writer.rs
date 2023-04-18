@@ -254,3 +254,136 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+use super::vpx_bool_reader::VPXBoolReader;
+
+#[test]
+fn test_roundtrip_vpxboolwriter_n_bits() {
+    const MAX_N: usize = 8;
+
+    #[derive(Default)]
+    struct BranchData {
+        branches: [Branch; MAX_N],
+    }
+
+    let mut buffer = Vec::new();
+    let mut writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let mut branches = BranchData::default();
+
+    for i in 0..1024 {
+        writer
+            .put_n_bits(
+                i as usize % 256,
+                MAX_N,
+                &mut branches.branches,
+                ModelComponent::Dummy,
+            )
+            .unwrap();
+    }
+
+    writer.finish().unwrap();
+
+    let mut branches = BranchData::default();
+
+    let mut reader = VPXBoolReader::new(&buffer[..]).unwrap();
+    for i in 0..1024 {
+        let read_value = reader
+            .get_n_bits(MAX_N, &mut branches.branches, ModelComponent::Dummy)
+            .unwrap();
+        assert_eq!(read_value, i as usize % 256);
+    }
+}
+
+#[test]
+fn test_roundtrip_vpxboolwriter_unary() {
+    const MAX_UNARY: usize = 8;
+
+    #[derive(Default)]
+    struct BranchData {
+        branches: [Branch; MAX_UNARY],
+    }
+
+    let mut buffer = Vec::new();
+    let mut writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let mut branches = BranchData::default();
+
+    for i in 0..1024 {
+        writer
+            .put_unary_encoded(
+                i as usize % (MAX_UNARY + 1),
+                &mut branches.branches,
+                ModelComponent::Dummy,
+            )
+            .unwrap();
+    }
+
+    writer.finish().unwrap();
+
+    let mut branches = BranchData::default();
+
+    let mut reader = VPXBoolReader::new(&buffer[..]).unwrap();
+    for i in 0..1024 {
+        let read_value = reader
+            .get_unary_encoded(&mut branches.branches, ModelComponent::Dummy)
+            .unwrap();
+        assert_eq!(read_value, i as usize % (MAX_UNARY + 1));
+    }
+}
+
+#[test]
+fn test_roundtrip_vpxboolwriter_grid() {
+    #[derive(Default)]
+    struct BranchData {
+        branches: [[Branch; 8]; 4],
+    }
+
+    let mut buffer = Vec::new();
+    let mut writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let mut branches = BranchData::default();
+
+    for i in 0..1024 {
+        writer
+            .put_grid(i as u8 % 8, &mut branches.branches, ModelComponent::Dummy)
+            .unwrap();
+    }
+
+    writer.finish().unwrap();
+
+    let mut branches = BranchData::default();
+
+    let mut reader = VPXBoolReader::new(&buffer[..]).unwrap();
+    for i in 0..1024 {
+        let read_value = reader
+            .get_grid(&mut branches.branches, ModelComponent::Dummy)
+            .unwrap();
+        assert_eq!(read_value, i as usize % 8);
+    }
+}
+
+#[test]
+fn test_roundtrip_vpxboolwriter_single_bit() {
+    let mut buffer = Vec::new();
+    let mut writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let mut branch = Branch::default();
+
+    for i in 0..1024 {
+        writer
+            .put(i % 10 == 0, &mut branch, ModelComponent::Dummy)
+            .unwrap();
+    }
+
+    writer.finish().unwrap();
+
+    let mut branch = Branch::default();
+
+    let mut reader = VPXBoolReader::new(&buffer[..]).unwrap();
+    for i in 0..1024 {
+        let read_value = reader.get(&mut branch, ModelComponent::Dummy).unwrap();
+        assert_eq!(read_value, i % 10 == 0);
+    }
+}
