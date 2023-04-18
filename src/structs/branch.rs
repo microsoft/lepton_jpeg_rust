@@ -100,9 +100,9 @@ impl Branch {
             return;
         }
 
-        if (self.counts & 0xff00) != 0xff00 {
-            // non-overflow case is easy
-            self.counts += 0x100;
+        let (result, overflow) = self.counts.overflowing_add(0x100);
+        if !overflow {
+            self.counts = result;
         } else {
             // special case where it is all falses
             if self.counts != 0xff01 {
