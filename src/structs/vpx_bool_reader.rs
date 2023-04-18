@@ -154,7 +154,14 @@ impl<R: Read> VPXBoolReader<R> {
             tmp_range -= split;
             tmp_value -= big_split;
 
-            // so optimizer understands that 0 should never happen and avoids unnecessary jump
+            // so optimizer understands that 0 should never happen and uses a cold jump
+            // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
+            // This is better since the branch prediction figures quickly this never happens and can run
+            // the code sequentially.
+            #[cfg(all(
+                not(target_feature = "lzcnt"),
+                any(target_arch = "x86", target_arch = "x86_64")
+            ))]
             assert!(tmp_range > 0);
 
             shift = tmp_range.leading_zeros() as i32 - 24;
