@@ -14,7 +14,7 @@ steps:
 - task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
   displayName: 'Install Rust '
   inputs:
-    rustVersion: 'ms-1.65'
+    rustVersion: 'ms-1.68'
     authenticationToken: $(RustInstallerToken)
     additionalTargets: 'i686-pc-windows-msvc'
 
