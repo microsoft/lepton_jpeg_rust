@@ -592,9 +592,9 @@ fn envli(v: i16) -> (u16, u8) {
     // since this is inlined, in the main case the compiler figures out that v cannot be zero
     if let Some(nz) = NonZeroI16::new(v) {
         let leading_zeros = nz.unsigned_abs().leading_zeros() as u8;
-        let mask = ((nz.get() >> 15) as u16) >> leading_zeros; // -1 if tmp is negative and all 1
+        let mask = ((nz.get() >> 15) as u16) >> leading_zeros; // we want all the lower bits set to 1 if v is negative
 
-        let n = (nz.get() as u16).wrapping_add(mask); // turn v into a 2s complement of s bits (avoids BitWriter from having to zero out the unused top bits indiscriminately)
+        let n = (nz.get() as u16).wrapping_add(mask); // turn v into a 2s complement of s bits
         let s = 16 - leading_zeros;
 
         return (n, s);
