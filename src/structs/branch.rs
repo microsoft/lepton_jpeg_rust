@@ -68,28 +68,24 @@ impl Branch {
 
     #[inline(always)]
     pub fn get_probability(&self) -> u8 {
-        // 0 is a special corner case which should return probability 0
-        // since 0 is impossible to happen since the counts always start at 1
+        // 0x00ff is a special corner case which should return probability 0
+        // since 0x00ff is impossible to happen since the counts always start at 1
         PROB_LOOKUP[self.counts as usize]
     }
 
     #[inline(always)]
     pub fn record_and_update_true_obs(&mut self) {
-        if self.counts == 0 {
-            return; // no need to do anything since we are already as baised towards all trues as possible
-        }
-
         if (self.counts & 0xff) != 0xff {
             // non-overflow case is easy
             self.counts += 1;
         } else {
             // special case where it is all trues
-            if self.counts == 0x01ff {
+            if self.counts <= 0x01ff {
                 // corner case since the original implementation
                 // insists on setting the probabily to zero,
                 // although the probability calculation would
                 // return 1.
-                self.counts = 0;
+                self.counts = 0x00ff;
             } else {
                 self.counts = (((self.counts as u32 + 0x100) >> 1) & 0xff00) as u16 | 129;
             }
@@ -98,19 +94,18 @@ impl Branch {
 
     #[inline(always)]
     pub fn record_and_update_false_obs(&mut self) {
-        if self.counts == 0 {
-            // handle corner case where prob was set badly
+        if self.counts == 0x00ff {
+            // handle corner case where prob was set to zero (purely for compatibility, remove this if there is a breaking change in the format)
             self.counts = 0x02ff;
             return;
         }
 
-        if (self.counts & 0xff00) != 0xff00 {
-            // non-overflow case is easy
-            self.counts += 0x100;
+        let (result, overflow) = self.counts.overflowing_add(0x100);
+        if !overflow {
+            self.counts = result;
         } else {
             // special case where it is all falses
-            if self.counts == 0xff01 {
-            } else {
+            if self.counts != 0xff01 {
                 self.counts = ((1 + (self.counts & 0xff) as u32) >> 1) as u16 | 0x8100;
             }
         }
