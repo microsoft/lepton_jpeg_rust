@@ -1,19 +1,23 @@
-# Lepton JPEG compression Rust port
+# Lepton JPEG Compression in Rust 
+[![Rust Community](https://img.shields.io/badge/Rust_Community%20-Join_us-brightgreen?style=plastic&logo=rust)](https://www.rust-lang.org/community)
 
-The Lepton compression library is designed for lossless compression of baseline and progressive JPEGs up to 22%, with exact bit-by-bit recovery of the original JPEG. The primary use case is for storing JPEGs in a cloud-storage system. Metadata headers, and even invalid content is preserved as-is.
+This is a port of the C++ Lepton JPEG compression tool that was released by DropBox [dropbox/lepton](https://github.com/dropbox/lepton). We developed a port of the library to Rust, which has basically the same performance characteristics with the advantage of all the safety features that Rust has to offer, due to the work involved in performing an exhaustive security check on the C++ code and the fact that DropBox has deprecated the codebase.
 
-This is a port of the C++ Lepton JPEG compression tool that was released by DropBox in this location: [dropbox/lepton: Lepton is a tool and file format for losslessly compressing JPEGs by an average of 22%. (github.com)](https://github.com/dropbox/lepton)
+With precise bit-by-bit recovery of the original JPEG, the Lepton compression library is designed for lossless compression of baseline and progressive JPEGs up to 22%. JPEG storage in a cloud storage system is the main application case. Even metadata headers and invalid content are kept in good condition.
 
-Due to the work involved in doing a complete security audit on the C++ code, and the fact that DropBox has deprecated the codebase, we created a port of the library to Rust, which has almost identical performance characteristics with the advantage of all the safety features the Rust offers.
 
-## Lepton Compression Library
-The source of the library itself is under the src directory, with integration tests in the test directory. There are various test images under the images folder.
+## How to Use This Library
+Some operations of this library are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
 
-#### Building
+#### Building From Source
 
-Building the project is fairly straightforward if you have **Rust 1.65 or later** installed (older version will warn about unstable features such as scoped threads). `cargo build` and `cargo test` do what you would expect, and `cargo build --release` creates the optimized release version.
+- [Rust 1.65 or Above](https://www.rust-lang.org/tools/install)
 
-Some operations are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
+`git clone https://github.com/microsoft/lepton_jpeg_rust
+cd lepton_jpeg_rust
+cargo build
+cargo test
+cargo build --release`
 
 #### Running
 
@@ -30,10 +34,6 @@ It supports the following options:
 | `-noprogressive` | Will cause an error if we encounter a progressive file rather than trying to encode it |
 | `-verify`        | Reads, encodes and unencodes verifying that there is an exact match. No output file is specified. |
 | `-iter:n`        | Runs N iterations of the operation. Useful when we are running inside a profiler. |
-
-## Design
-
-[Link to overall design of library](DESIGN.md)
 
 ## Contributing
 
