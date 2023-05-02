@@ -591,14 +591,16 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 fn envli(v: i16) -> (u16, u8) {
     // since this is inlined, in the main case the compiler figures out that v cannot be zero
     if let Some(nz) = NonZeroI16::new(v) {
-        let s = 16 - nz.unsigned_abs().leading_zeros();
-        let mask = nz.get() >> 15; // -1 if tmp is negative and all 1
+        let leading_zeros = nz.unsigned_abs().leading_zeros() as u8;
 
-        let n = (nz.get() + (((1 << s) - 1) & mask)) as u16; // turn v into a 2s complement of s bits (avoids BitWriter from having to zero out the unused top bits indiscriminately)
+        // first shift right signed by 15 to make everything 1 if negative,
+        // then shift right unsigned to make the leading bits 0
+        let adjustment = ((nz.get() >> 15) as u16) >> leading_zeros;
 
-        // make sure that calculating the old way is the same
-        debug_assert_eq!(n, if v > 0 { v } else { v - 1 + (1 << s) } as u16);
-        return (n, s as u8);
+        let n = (nz.get() as u16).wrapping_add(adjustment); // turn v into a 2s complement of s bits
+        let s = 16 - leading_zeros;
+
+        return (n, s);
     } else {
         return (0, 0);
     }
@@ -607,4 +609,16 @@ fn envli(v: i16) -> (u16, u8) {
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
 fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
+}
+
+#[test]
+fn test_envli() {
+    for i in -16383..=16385 {
+        let (n, s) = envli(i);
+
+        assert_eq!(s, u16_bit_length(i.unsigned_abs()));
+
+        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
+        assert_eq!(n, n2, "s={0}", s);
+    }
 }
