@@ -362,32 +362,40 @@ fn encode_block_seq(
     // encode DC
     write_coef(huffw, block[0], 0, dctbl);
 
-    let mut z = 0;
-
+    let mut bpos = 1;
     // encode AC
-    for bpos in 1..64 {
+    while bpos < 64 {
         // if nonzero is encountered
-        let tmp = block[bpos];
+        let mut tmp = block[bpos];
+        bpos += 1;
+
         if tmp == 0 {
-            z += 1;
-            continue;
+            let mut z = 1;
+
+            loop {
+                if bpos == 64 {
+                    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
+                    return;
+                }
+
+                tmp = block[bpos];
+                bpos += 1;
+
+                if tmp != 0 {
+                    // if we have 16 or more zero, we need to write them in blocks of 16
+                    while z >= 16 {
+                        huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
+                        z -= 16;
+                    }
+                    write_coef(huffw, tmp, z, actbl);
+                    break;
+                }
+
+                z += 1;
+            }
+        } else {
+            write_coef(huffw, tmp, 0, actbl);
         }
-
-        // if we have 16 or more zero, we need to write them in blocks of 16
-        while z >= 16 {
-            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-            z -= 16;
-        }
-
-        write_coef(huffw, tmp, z, actbl);
-
-        // reset zeroes
-        z = 0;
-    }
-
-    // write eob if needed
-    if z != 0 {
-        huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
     }
 }
 
