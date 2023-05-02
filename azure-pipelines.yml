@@ -3,7 +3,8 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 
-trigger: none
+trigger:
+- main
 
 pool:
   name: Azure Pipelines
@@ -16,7 +17,7 @@ steps:
     rustVersion: 'ms-1.68'
     additionalTargets: 'i686-pc-windows-msvc'
     toolchainFeed: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustTools/nuget/v3/index.json
-    cratesIoFeedOverride: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/nuget/v3/index.json
+    cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
 
 - script: |
    cargo build --locked 2>&1
