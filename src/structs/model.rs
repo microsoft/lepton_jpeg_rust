@@ -59,50 +59,45 @@ pub const RESIDUAL_NOISE_COUNTS_D3: usize = COEF_BITS;
 
 #[derive(DefaultBoxed)]
 pub struct Model {
-    num_non_zeros_counts7x7: [NumNonZerosCounts7x7T; BLOCK_TYPES],
-
-    num_non_zeros_counts1x8: [NumNonZerosCountsT; BLOCK_TYPES],
-
-    num_non_zeros_counts8x1: [NumNonZerosCountsT; BLOCK_TYPES],
-
-    residual_noise_counts: [[[[Branch; RESIDUAL_NOISE_COUNTS_D3]; RESIDUAL_NOISE_COUNTS_D2];
-        RESIDUAL_NOISE_COUNTS_D1]; BLOCK_TYPES],
-
-    residual_threshold_counts: [[[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
-        RESIDUAL_THRESHOLD_COUNTS_D2];
-        RESIDUAL_THRESHOLD_COUNTS_D1]; BLOCK_TYPES],
-
-    exponent_counts:
-        [[[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
-
-    exponent_counts_x:
-        [[[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 15]; NUM_NON_ZERO_BINS]; BLOCK_TYPES],
-
-    sign_counts: [[[Branch; NUMERIC_LENGTH_MAX]; 4]; BLOCK_TYPES],
+    per_color: [ModelPerColor; BLOCK_TYPES],
 
     exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
 
     residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
 }
 
-impl Model {
+#[derive(DefaultBoxed)]
+pub struct ModelPerColor {
+    num_non_zeros_counts7x7: NumNonZerosCounts7x7T,
+
+    num_non_zeros_counts1x8: NumNonZerosCountsT,
+
+    num_non_zeros_counts8x1: NumNonZerosCountsT,
+
+    residual_noise_counts:
+        [[[Branch; RESIDUAL_NOISE_COUNTS_D3]; RESIDUAL_NOISE_COUNTS_D2]; RESIDUAL_NOISE_COUNTS_D1],
+
+    residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
+        RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
+
+    exponent_counts: [[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS],
+
+    exponent_counts_x: [[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 15]; NUM_NON_ZERO_BINS],
+
+    sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 4],
+}
+
+impl ModelPerColor {
     #[inline(never)]
     pub fn read_coef<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
-        coord: usize,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<i16> {
-        let (exp, sign, bits) = self.get_coef_branches(
-            coord,
-            num_non_zeros_bin,
-            color_index,
-            zig49,
-            best_prior_bit_len,
-        );
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
         return Model::read_length_sign_coef(
             bool_reader,
@@ -120,20 +115,13 @@ impl Model {
     pub fn write_coef<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
         coef: i16,
-        coord: usize,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
     ) -> Result<()> {
-        let (exp, sign, bits) = self.get_coef_branches(
-            coord,
-            num_non_zeros_bin,
-            color_index,
-            zig49,
-            best_prior_bit_len,
-        );
+        let (exp, sign, bits) =
+            self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
         return Model::write_length_sign_coef(
             bool_writer,
@@ -150,9 +138,7 @@ impl Model {
 
     fn get_coef_branches(
         &mut self,
-        coord: usize,
         num_non_zeros_bin: usize,
-        color_index: usize,
         zig49: usize,
         best_prior_bit_len: usize,
     ) -> (
@@ -161,22 +147,289 @@ impl Model {
         &mut [Branch; MAX_EXPONENT - 1],
     ) {
         debug_assert!(
-            coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-            "coord {0} too high",
-            coord
-        );
-        debug_assert!(
             num_non_zeros_bin < RESIDUAL_NOISE_COUNTS_D2,
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
         );
 
-        let exp =
-            &mut self.exponent_counts[color_index][num_non_zeros_bin][zig49][best_prior_bit_len];
-        let sign = &mut self.sign_counts[color_index][0][0];
-        let bits =
-            &mut self.residual_noise_counts[color_index][coord / BAND_DIVISOR][num_non_zeros_bin];
+        let exp = &mut self.exponent_counts[num_non_zeros_bin][zig49][best_prior_bit_len];
+        let sign = &mut self.sign_counts[0][0];
+        let bits = &mut self.residual_noise_counts[zig49][num_non_zeros_bin];
         (exp, sign, bits)
+    }
+
+    pub fn write_non_zero_7x7_count<W: Write>(
+        &mut self,
+        bool_writer: &mut VPXBoolWriter<W>,
+        num_non_zeros_context: u8,
+        num_non_zeros_7x7: u8,
+    ) -> Result<()> {
+        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
+            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+
+        return bool_writer
+            .put_grid(
+                num_non_zeros_7x7,
+                num_non_zeros_prob,
+                ModelComponent::NonZero7x7Count,
+            )
+            .context(here!());
+    }
+
+    pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
+        &mut self,
+        bool_writer: &mut VPXBoolWriter<W>,
+        est_eob: u8,
+        num_non_zeros_7x7: u8,
+        num_non_zeros_edge: u8,
+    ) -> Result<()> {
+        let prob_edge_eob =
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
+
+        return bool_writer
+            .put_grid(
+                num_non_zeros_edge,
+                prob_edge_eob,
+                ModelComponent::NonZeroEdgeCount,
+            )
+            .context(here!());
+    }
+
+    pub fn read_non_zero_7x7_count<R: Read>(
+        &mut self,
+        bool_reader: &mut VPXBoolReader<R>,
+        num_non_zeros_context: u8,
+    ) -> Result<u8> {
+        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
+            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+
+        return Ok(bool_reader
+            .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
+            .context(here!())? as u8);
+    }
+
+    pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
+        &mut self,
+        bool_reader: &mut VPXBoolReader<R>,
+        est_eob: u8,
+        num_non_zeros_7x7: u8,
+    ) -> Result<u8> {
+        let prob_edge_eob =
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
+
+        return Ok(bool_reader
+            .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
+            .context(here!())? as u8);
+    }
+
+    pub fn read_edge_coefficient<R: Read>(
+        &mut self,
+        bool_reader: &mut VPXBoolReader<R>,
+        qt: &QuantizationTables,
+        coord: usize,
+        zig15offset: usize,
+        ptcc8: &ProbabilityTablesCoefficientContext,
+    ) -> Result<i16> {
+        let length_branches = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize]
+            [zig15offset][ptcc8.best_prior_bit_len as usize];
+
+        let length = bool_reader
+            .get_unary_encoded(
+                length_branches,
+                ModelComponent::Edge(ModelSubComponent::Exp),
+            )
+            .context(here!())? as i32;
+
+        let mut coef = 0;
+        if length != 0 {
+            let sign = self.get_sign_counts_mut(ptcc8);
+
+            let neg = !bool_reader
+                .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
+                .context(here!())?;
+
+            coef = 1 << (length - 1);
+
+            if length > 1 {
+                let min_threshold: i32 = qt.get_min_noise_threshold(coord).into();
+                let mut i: i32 = length - 2;
+
+                if i >= min_threshold {
+                    let thresh_prob =
+                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length);
+
+                    let mut decoded_so_far = 1;
+                    while i >= min_threshold {
+                        let cur_bit = bool_reader.get(
+                            &mut thresh_prob[decoded_so_far],
+                            ModelComponent::Edge(ModelSubComponent::Residual),
+                        )? as i16;
+
+                        coef |= cur_bit << i;
+                        decoded_so_far <<= 1;
+
+                        if cur_bit != 0 {
+                            decoded_so_far |= 1;
+                        }
+
+                        // since we are not strict about rejecting jpegs with out of range coefs
+                        // we just make those less efficient by reusing the same probability bucket
+                        decoded_so_far = cmp::min(decoded_so_far, thresh_prob.len() - 1);
+
+                        i -= 1;
+                    }
+                }
+
+                if i >= 0 {
+                    debug_assert!(
+                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
+                        "d1 {0} too high",
+                        ptcc8.num_non_zeros_bin
+                    );
+
+                    let res_prob = &mut self.residual_noise_counts[zig15offset + 49]
+                        [ptcc8.num_non_zeros_bin as usize];
+
+                    coef |= bool_reader.get_n_bits(
+                        i as usize + 1,
+                        res_prob,
+                        ModelComponent::Edge(ModelSubComponent::Noise),
+                    )? as i16;
+                }
+            }
+
+            if neg {
+                coef = -coef;
+            }
+        }
+        Ok(coef)
+    }
+
+    pub fn write_edge_coefficient<W: Write>(
+        &mut self,
+        bool_writer: &mut VPXBoolWriter<W>,
+        qt: &QuantizationTables,
+        coef: i16,
+        coord: usize,
+        zig15offset: usize,
+        ptcc8: &ProbabilityTablesCoefficientContext,
+    ) -> Result<()> {
+        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
+            [ptcc8.best_prior_bit_len as usize];
+
+        let abs_coef = coef.unsigned_abs();
+        let length = u16_bit_length(abs_coef) as usize;
+
+        if length > MAX_EXPONENT {
+            return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
+        }
+
+        bool_writer.put_unary_encoded(
+            length,
+            exp_array,
+            ModelComponent::Edge(ModelSubComponent::Exp),
+        )?;
+
+        if coef != 0 {
+            let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
+            let sign = self.get_sign_counts_mut(ptcc8);
+
+            bool_writer.put(
+                coef >= 0,
+                sign,
+                ModelComponent::Edge(ModelSubComponent::Sign),
+            )?;
+
+            if length > 1 {
+                let mut i: i32 = length as i32 - 2;
+                if i >= min_threshold {
+                    let thresh_prob =
+                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length as i32);
+
+                    let mut encoded_so_far = 1;
+                    while i >= min_threshold {
+                        let cur_bit = (abs_coef & (1 << i)) != 0;
+                        bool_writer.put(
+                            cur_bit,
+                            &mut thresh_prob[encoded_so_far],
+                            ModelComponent::Edge(ModelSubComponent::Residual),
+                        )?;
+
+                        encoded_so_far <<= 1;
+                        if cur_bit {
+                            encoded_so_far |= 1;
+                        }
+
+                        // since we are not strict about rejecting jpegs with out of range coefs
+                        // we just make those less efficient by reusing the same probability bucket
+                        encoded_so_far = cmp::min(encoded_so_far, thresh_prob.len() - 1);
+
+                        i -= 1;
+                    }
+                }
+
+                if i >= 0 {
+                    debug_assert!(
+                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
+                        "d1 {0} too high",
+                        ptcc8.num_non_zeros_bin
+                    );
+
+                    let res_prob = &mut self.residual_noise_counts[zig15offset + 49]
+                        [ptcc8.num_non_zeros_bin as usize];
+
+                    bool_writer
+                        .put_n_bits(
+                            abs_coef as usize,
+                            (i + 1) as usize,
+                            res_prob,
+                            ModelComponent::Edge(ModelSubComponent::Noise),
+                        )
+                        .context(here!())?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_residual_threshold_counts_mut(
+        &mut self,
+        ptcc8: &ProbabilityTablesCoefficientContext,
+        min_threshold: i32,
+        length: i32,
+    ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
+        return &mut self.residual_threshold_counts[cmp::min(
+            (ptcc8.best_prior.abs() >> min_threshold) as usize,
+            self.residual_threshold_counts.len() - 1,
+        )][cmp::min(
+            (length - min_threshold) as usize,
+            self.residual_threshold_counts[0].len() - 1,
+        )];
+    }
+
+    fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
+        &mut self,
+        est_eob: u8,
+        num_nonzeros: u8,
+    ) -> &mut [[Branch; 4]; 3] {
+        if HORIZONTAL {
+            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
+                [(num_nonzeros as usize + 3) / 7];
+        } else {
+            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
+                [(num_nonzeros as usize + 3) / 7];
+        }
+    }
+
+    fn get_sign_counts_mut(&mut self, ptcc8: &ProbabilityTablesCoefficientContext) -> &mut Branch {
+        &mut self.sign_counts[calc_sign_index(ptcc8.best_prior)][ptcc8.best_prior_bit_len as usize]
+    }
+}
+
+impl Model {
+    pub fn get_per_color(&mut self, pt: &ProbabilityTables) -> &mut ModelPerColor {
+        &mut self.per_color[pt.get_color_index()]
     }
 
     pub fn read_dc<R: Read>(
@@ -238,7 +491,7 @@ impl Model {
             self.exponent_counts_dc[0].len() - 1,
         )];
 
-        let sign = &mut self.sign_counts[color_index][0][if uncertainty2 >= 0 {
+        let sign = &mut self.per_color[color_index].sign_counts[0][if uncertainty2 >= 0 {
             if uncertainty2 == 0 {
                 3
             } else {
@@ -253,80 +506,6 @@ impl Model {
             len_abs_mxm as usize,
         )];
         (exp, sign, bits)
-    }
-
-    pub fn write_non_zero_7x7_count<W: Write>(
-        &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
-        num_non_zeros_context: u8,
-        num_non_zeros_7x7: u8,
-    ) -> Result<()> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7[color_index]
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
-
-        return bool_writer
-            .put_grid(
-                num_non_zeros_7x7,
-                num_non_zeros_prob,
-                ModelComponent::NonZero7x7Count,
-            )
-            .context(here!());
-    }
-
-    pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
-        &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
-        color_index: usize,
-        est_eob: u8,
-        num_non_zeros_7x7: u8,
-        num_non_zeros_edge: u8,
-    ) -> Result<()> {
-        let prob_edge_eob = self.get_non_zero_counts_edge_mut::<HORIZONTAL>(
-            color_index,
-            est_eob,
-            num_non_zeros_7x7,
-        );
-
-        return bool_writer
-            .put_grid(
-                num_non_zeros_edge,
-                prob_edge_eob,
-                ModelComponent::NonZeroEdgeCount,
-            )
-            .context(here!());
-    }
-
-    pub fn read_non_zero_7x7_count<R: Read>(
-        &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
-        num_non_zeros_context: u8,
-    ) -> Result<u8> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7[color_index]
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
-
-        return Ok(bool_reader
-            .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
-            .context(here!())? as u8);
-    }
-
-    pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
-        &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
-        color_index: usize,
-        est_eob: u8,
-        num_non_zeros_7x7: u8,
-    ) -> Result<u8> {
-        let prob_edge_eob = self.get_non_zero_counts_edge_mut::<HORIZONTAL>(
-            color_index,
-            est_eob,
-            num_non_zeros_7x7,
-        );
-
-        return Ok(bool_reader
-            .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
-            .context(here!())? as u8);
     }
 
     fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
@@ -421,230 +600,5 @@ impl Model {
         }
 
         Ok(())
-    }
-
-    pub fn read_edge_coefficient<R: Read>(
-        &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
-        pt: &ProbabilityTables,
-        qt: &QuantizationTables,
-        coord: usize,
-        zig15offset: usize,
-        ptcc8: &ProbabilityTablesCoefficientContext,
-    ) -> Result<i16> {
-        let length_branches = &mut self.exponent_counts_x[pt.get_color_index()]
-            [ptcc8.num_non_zeros_bin as usize][zig15offset][ptcc8.best_prior_bit_len as usize];
-
-        let length = bool_reader
-            .get_unary_encoded(
-                length_branches,
-                ModelComponent::Edge(ModelSubComponent::Exp),
-            )
-            .context(here!())? as i32;
-
-        let mut coef = 0;
-        if length != 0 {
-            let sign = self.get_sign_counts_mut(pt, ptcc8);
-
-            let neg = !bool_reader
-                .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
-                .context(here!())?;
-
-            coef = 1 << (length - 1);
-
-            if length > 1 {
-                let min_threshold: i32 = qt.get_min_noise_threshold(coord).into();
-                let mut i: i32 = length - 2;
-
-                if i >= min_threshold {
-                    let thresh_prob =
-                        self.get_residual_threshold_counts_mut(pt, ptcc8, min_threshold, length);
-
-                    let mut decoded_so_far = 1;
-                    while i >= min_threshold {
-                        let cur_bit = bool_reader.get(
-                            &mut thresh_prob[decoded_so_far],
-                            ModelComponent::Edge(ModelSubComponent::Residual),
-                        )? as i16;
-
-                        coef |= cur_bit << i;
-                        decoded_so_far <<= 1;
-
-                        if cur_bit != 0 {
-                            decoded_so_far |= 1;
-                        }
-
-                        // since we are not strict about rejecting jpegs with out of range coefs
-                        // we just make those less efficient by reusing the same probability bucket
-                        decoded_so_far = cmp::min(decoded_so_far, thresh_prob.len() - 1);
-
-                        i -= 1;
-                    }
-                }
-
-                if i >= 0 {
-                    debug_assert!(
-                        coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-                        "d1 too high"
-                    );
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
-                        [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
-
-                    coef |= bool_reader.get_n_bits(
-                        i as usize + 1,
-                        res_prob,
-                        ModelComponent::Edge(ModelSubComponent::Noise),
-                    )? as i16;
-                }
-            }
-
-            if neg {
-                coef = -coef;
-            }
-        }
-        Ok(coef)
-    }
-
-    pub fn write_edge_coefficient<W: Write>(
-        &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
-        qt: &QuantizationTables,
-        pt: &ProbabilityTables,
-        coef: i16,
-        coord: usize,
-        zig15offset: usize,
-        ptcc8: &ProbabilityTablesCoefficientContext,
-    ) -> Result<()> {
-        let exp_array = &mut self.exponent_counts_x[pt.get_color_index()]
-            [ptcc8.num_non_zeros_bin as usize][zig15offset][ptcc8.best_prior_bit_len as usize];
-
-        let abs_coef = coef.unsigned_abs();
-        let length = u16_bit_length(abs_coef) as usize;
-
-        if length > MAX_EXPONENT {
-            return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
-        }
-
-        bool_writer.put_unary_encoded(
-            length,
-            exp_array,
-            ModelComponent::Edge(ModelSubComponent::Exp),
-        )?;
-
-        if coef != 0 {
-            let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
-            let sign = self.get_sign_counts_mut(pt, ptcc8);
-
-            bool_writer.put(
-                coef >= 0,
-                sign,
-                ModelComponent::Edge(ModelSubComponent::Sign),
-            )?;
-
-            if length > 1 {
-                let mut i: i32 = length as i32 - 2;
-                if i >= min_threshold {
-                    let thresh_prob = self.get_residual_threshold_counts_mut(
-                        pt,
-                        ptcc8,
-                        min_threshold,
-                        length as i32,
-                    );
-
-                    let mut encoded_so_far = 1;
-                    while i >= min_threshold {
-                        let cur_bit = (abs_coef & (1 << i)) != 0;
-                        bool_writer.put(
-                            cur_bit,
-                            &mut thresh_prob[encoded_so_far],
-                            ModelComponent::Edge(ModelSubComponent::Residual),
-                        )?;
-
-                        encoded_so_far <<= 1;
-                        if cur_bit {
-                            encoded_so_far |= 1;
-                        }
-
-                        // since we are not strict about rejecting jpegs with out of range coefs
-                        // we just make those less efficient by reusing the same probability bucket
-                        encoded_so_far = cmp::min(encoded_so_far, thresh_prob.len() - 1);
-
-                        i -= 1;
-                    }
-                }
-
-                if i >= 0 {
-                    debug_assert!(
-                        coord / BAND_DIVISOR < RESIDUAL_NOISE_COUNTS_D1,
-                        "d1 too high"
-                    );
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.residual_noise_counts[pt.get_color_index()]
-                        [coord / BAND_DIVISOR][ptcc8.num_non_zeros_bin as usize];
-
-                    bool_writer
-                        .put_n_bits(
-                            abs_coef as usize,
-                            (i + 1) as usize,
-                            res_prob,
-                            ModelComponent::Edge(ModelSubComponent::Noise),
-                        )
-                        .context(here!())?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn get_residual_threshold_counts_mut(
-        &mut self,
-        pt: &ProbabilityTables,
-        ptcc8: &ProbabilityTablesCoefficientContext,
-        min_threshold: i32,
-        length: i32,
-    ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
-        return &mut self.residual_threshold_counts[pt.get_color_index()][cmp::min(
-            (ptcc8.best_prior.abs() >> min_threshold) as usize,
-            self.residual_threshold_counts[0].len() - 1,
-        )][cmp::min(
-            (length - min_threshold) as usize,
-            self.residual_threshold_counts[0][0].len() - 1,
-        )];
-    }
-
-    fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
-        &mut self,
-        color_index: usize,
-        est_eob: u8,
-        num_nonzeros: u8,
-    ) -> &mut [[Branch; 4]; 3] {
-        if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[color_index][est_eob as usize]
-                [(num_nonzeros as usize + 3) / 7];
-        } else {
-            return &mut self.num_non_zeros_counts1x8[color_index][est_eob as usize]
-                [(num_nonzeros as usize + 3) / 7];
-        }
-    }
-
-    fn get_sign_counts_mut(
-        &mut self,
-        pt: &ProbabilityTables,
-        ptcc8: &ProbabilityTablesCoefficientContext,
-    ) -> &mut Branch {
-        &mut self.sign_counts[pt.get_color_index()][calc_sign_index(ptcc8.best_prior)]
-            [ptcc8.best_prior_bit_len as usize]
     }
 }

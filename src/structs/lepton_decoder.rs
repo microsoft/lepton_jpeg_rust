@@ -20,7 +20,7 @@ use crate::lepton_error::ExitCode;
 use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
-    neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
+    model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
@@ -275,10 +275,11 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
-    let num_non_zeros_7x7 = model
+    let model_per_color = model.get_per_color(pt);
+
+    let num_non_zeros_7x7 = model_per_color
         .read_non_zero_7x7_count(
             bool_reader,
-            pt.get_color_index(),
             pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
         )
         .context(here!())?;
@@ -302,17 +303,9 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 
         let best_prior_bit_length = u16_bit_length(best_priors[zz] as u16);
 
-        let coord = UNZIGZAG_49[zz];
-        assert!(
-            (coord & 7) > 0 && (coord >> 3) > 0,
-            "this does the DC and the lower 7x7 AC"
-        );
-
-        let coef = model
+        let coef = model_per_color
             .read_coef(
                 bool_reader,
-                pt.get_color_index(),
-                coord.into(),
                 zz.into(),
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
@@ -320,6 +313,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             .context(here!())?;
 
         if coef != 0 {
+            let coord = UNZIGZAG_49[zz];
+            debug_assert!(
+                (coord & 7) > 0 && (coord >> 3) > 0,
+                "this does the DC and the lower 7x7 AC"
+            );
+
             let b_x = coord & 7;
             let b_y = coord >> 3;
 
@@ -332,7 +331,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     }
 
     decode_edge::<R, ALL_PRESENT>(
-        model,
+        model_per_color,
         bool_reader,
         image_data,
         context,
@@ -381,7 +380,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
-    model: &mut Model,
+    model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &BlockContext,
@@ -392,7 +391,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     eob_y: u8,
 ) -> Result<()> {
     decode_one_edge::<R, ALL_PRESENT, true>(
-        model,
+        model_per_color,
         bool_reader,
         image_data,
         context,
@@ -402,7 +401,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         eob_x,
     )?;
     decode_one_edge::<R, ALL_PRESENT, false>(
-        model,
+        model_per_color,
         bool_reader,
         image_data,
         context,
@@ -415,7 +414,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 }
 
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
-    model: &mut Model,
+    model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     block_context: &BlockContext,
@@ -424,13 +423,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     num_non_zeros_7x7: u8,
     est_eob: u8,
 ) -> Result<()> {
-    let mut num_non_zeros_edge = model
-        .read_non_zero_edge_count::<R, HORIZONTAL>(
-            bool_reader,
-            pt.get_color_index(),
-            est_eob,
-            num_non_zeros_7x7,
-        )
+    let mut num_non_zeros_edge = model_per_color
+        .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_7x7)
         .context(here!())?;
 
     if num_non_zeros_edge > 7 {
@@ -485,7 +479,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge,
         );
 
-        let coef = model.read_edge_coefficient(bool_reader, pt, qt, coord, zig15offset, &ptcc8)?;
+        let coef =
+            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
