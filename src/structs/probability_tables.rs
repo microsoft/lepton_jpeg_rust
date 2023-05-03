@@ -13,7 +13,7 @@ use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 use std::cmp::{max, min};
 
-use super::block_based_image::BlockBasedImage;
+use super::block_based_image::AlignedBlock;
 use super::block_context::BlockContext;
 use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
@@ -244,7 +244,7 @@ impl ProbabilityTables {
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
-        image_data: &BlockBasedImage,
+        here: &AlignedBlock,
         qt: &QuantizationTables,
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
@@ -257,7 +257,7 @@ impl ProbabilityTables {
 
         let mut avgmed = 0;
 
-        run_idct::<true>(block_context.here(image_data), q, &mut pixels_sans_dc);
+        run_idct::<true>(here, q, &mut pixels_sans_dc);
 
         if ALL_PRESENT || self.left_present || self.above_present {
             let mut min_dc = i16::MAX;

@@ -20,7 +20,6 @@ pub enum JPegType {
 
 pub const COLOR_CHANNEL_NUM_BLOCK_TYPES: usize = 3;
 
-pub const ALIGNED_BLOCK_INDEX_AC_7X7_INDEX: usize = 0;
 pub const ALIGNED_BLOCK_INDEX_DC_INDEX: usize = 49;
 
 pub const ZIGZAG_TO_ALIGNED: [u8; 64] = [
