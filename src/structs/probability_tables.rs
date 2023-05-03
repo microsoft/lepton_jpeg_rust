@@ -119,9 +119,9 @@ impl ProbabilityTables {
     #[inline(never)]
     pub fn calc_coefficient_context_7x7_aavg_block<const ALL_PRESENT: bool>(
         &self,
-        left: &[i16; 64],
-        above: &[i16; 64],
-        above_left: &[i16; 64],
+        left: &AlignedBlock,
+        above: &AlignedBlock,
+        above_left: &AlignedBlock,
     ) -> [i16; 49] {
         let mut best_prior = [0; 49];
 
@@ -129,8 +129,10 @@ impl ProbabilityTables {
             // compiler does a pretty amazing job with SSE/AVX2 here
             for i in 0..49 {
                 // approximate average of 3 without a divide with double the weight for left/top vs diagonal
-                best_prior[i] = (((left[i].abs() as u32 + above[i].abs() as u32) * 13
-                    + 6 * above_left[i].abs() as u32)
+                best_prior[i] = (((left.get_coefficient(i).abs() as u32
+                    + above.get_coefficient(i).abs() as u32)
+                    * 13
+                    + 6 * above_left.get_coefficient(i).abs() as u32)
                     >> 5) as i16;
             }
         } else {
@@ -138,11 +140,11 @@ impl ProbabilityTables {
 
             if self.left_present {
                 for i in 0..49 {
-                    best_prior[i] = left[i].abs();
+                    best_prior[i] = left.get_coefficient(i).abs();
                 }
             } else if self.above_present {
                 for i in 0..49 {
-                    best_prior[i] = above[i].abs();
+                    best_prior[i] = above.get_coefficient(i).abs();
                 }
             }
         }
@@ -155,9 +157,9 @@ impl ProbabilityTables {
         &self,
         qt: &QuantizationTables,
         coefficient: usize,
-        here: &[i16; 64],
-        above: &[i16; 64],
-        left: &[i16; 64],
+        here: &AlignedBlock,
+        above: &AlignedBlock,
+        left: &AlignedBlock,
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
@@ -178,8 +180,12 @@ impl ProbabilityTables {
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
-                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
-                compute_lak_coeffs_a[i] = (sign * above[cur_coef]).into();
+                compute_lak_coeffs_x[i] = if i != 0 {
+                    here.get_coefficient(cur_coef).into()
+                } else {
+                    0
+                };
+                compute_lak_coeffs_a[i] = (sign * above.get_coefficient(cur_coef)).into();
             }
 
             coef_idct =
@@ -197,8 +203,12 @@ impl ProbabilityTables {
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
-                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
-                compute_lak_coeffs_a[i] = (sign * left[cur_coef]).into();
+                compute_lak_coeffs_x[i] = if i != 0 {
+                    here.get_coefficient(cur_coef).into()
+                } else {
+                    0
+                };
+                compute_lak_coeffs_a[i] = (sign * left.get_coefficient(cur_coef)).into();
             }
 
             coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];

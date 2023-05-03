@@ -161,6 +161,15 @@ impl BlockBasedImage {
         }
     }
 
+    #[inline(always)]
+    pub fn append_block(&mut self, block: AlignedBlock) {
+        assert!(
+            self.image.len() < self.image.capacity(),
+            "capacity should be set correctly"
+        );
+        self.image.push(block);
+    }
+
     pub fn get_block_mut(&mut self, dpos: i32) -> &mut AlignedBlock {
         self.fill_up_to_dpos(dpos);
         return &mut self.image[(dpos - self.dpos_offset) as usize];
@@ -169,9 +178,12 @@ impl BlockBasedImage {
 
 /// block of 64 coefficients in the aligned order, which is similar to zigzag except that the 7x7 lower right square comes first,
 /// followed by the DC, followed by the edges
+#[repr(C, align(32))]
 pub struct AlignedBlock {
     raw_data: [i16; 64],
 }
+
+pub static EMPTY_BLOCK: AlignedBlock = AlignedBlock { raw_data: [0; 64] };
 
 impl Default for AlignedBlock {
     fn default() -> Self {
@@ -192,10 +204,14 @@ impl AlignedBlock {
         block_data[usize::from(crate::consts::ZIGZAG_TO_ALIGNED[usize::from(index)])] = value;
     }
 
+    // used for debugging
+    #[allow(dead_code)]
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }
 
+    // used for debugging
+    #[allow(dead_code)]
     pub fn get_block_mut(&mut self) -> &mut [i16; 64] {
         return &mut self.raw_data;
     }

@@ -71,11 +71,6 @@ impl BlockContext {
         return retval;
     }
 
-    pub fn here_mut<'a>(&self, image_data: &'a mut BlockBasedImage) -> &'a mut AlignedBlock {
-        let retval = image_data.get_block_mut(self.cur_block_index);
-        return retval;
-    }
-
     pub fn left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
         let retval = image_data.get_block(self.cur_block_index - 1);
         return retval;
