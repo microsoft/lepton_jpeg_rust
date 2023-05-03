@@ -119,16 +119,13 @@ impl ProbabilityTables {
     #[inline(never)]
     pub fn calc_coefficient_context_7x7_aavg_block<const ALL_PRESENT: bool>(
         &self,
-        image_data: &BlockBasedImage,
-        block_context: &BlockContext,
+        left: &[i16; 64],
+        above: &[i16; 64],
+        above_left: &[i16; 64],
     ) -> [i16; 49] {
         let mut best_prior = [0; 49];
 
         if ALL_PRESENT {
-            let left = block_context.left(image_data).get_block();
-            let above = block_context.above(image_data).get_block();
-            let above_left = block_context.above_left(image_data).get_block();
-
             // compiler does a pretty amazing job with SSE/AVX2 here
             for i in 0..49 {
                 // approximate average of 3 without a divide with double the weight for left/top vs diagonal
@@ -140,12 +137,10 @@ impl ProbabilityTables {
             // handle edge case :) where we are on the top or left edge
 
             if self.left_present {
-                let left = block_context.left(image_data).get_block();
                 for i in 0..49 {
                     best_prior[i] = left[i].abs();
                 }
             } else if self.above_present {
-                let above = block_context.above(image_data).get_block();
                 for i in 0..49 {
                     best_prior[i] = above[i].abs();
                 }

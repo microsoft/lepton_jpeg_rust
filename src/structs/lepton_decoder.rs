@@ -288,12 +288,28 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
+    let above = if ALL_PRESENT || pt.is_above_present() {
+        context.above(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let left = if ALL_PRESENT || pt.is_left_present() {
+        context.left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let above_left = if ALL_PRESENT {
+        context.above_left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
     let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
 
     let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
+        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
     let block = context.here_mut(image_data).get_block_mut();
     for zz in 0..49 {
@@ -335,6 +351,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         image_data,
         context,
+        &left,
+        &above,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -384,6 +402,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &BlockContext,
+    left: &[i16; 64],
+    above: &[i16; 64],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -395,6 +415,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         image_data,
         context,
+        left,
+        above,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -405,6 +427,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         image_data,
         context,
+        left,
+        above,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -418,6 +442,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     block_context: &BlockContext,
+    left: &[i16; 64],
+    above: &[i16; 64],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -450,19 +476,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord = delta;
 
-    let above = if pt.is_above_present() {
-        block_context.above(image_data).get_block().clone()
-    } else {
-        [0; 64]
-    };
-    let left = if pt.is_left_present() {
-        block_context.left(image_data).get_block().clone()
-    } else {
-        [0; 64]
-    };
-
-    let here = block_context.here(image_data).get_block().clone();
-
     let here_mut = block_context.here_mut(image_data);
 
     for lane in 0..7 {
@@ -473,9 +486,9 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
             coord,
-            &here,
-            &above,
-            &left,
+            here_mut.get_block(),
+            above,
+            left,
             num_non_zeros_edge,
         );
 

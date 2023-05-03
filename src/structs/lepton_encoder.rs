@@ -305,6 +305,22 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
     let block = context.here(image_data);
 
+    let above = if ALL_PRESENT || pt.is_above_present() {
+        context.above(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let left = if ALL_PRESENT || pt.is_left_present() {
+        context.left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+    let above_left = if ALL_PRESENT {
+        context.above_left(image_data).get_block().clone()
+    } else {
+        [0; 64]
+    };
+
     #[cfg(feature = "detailed_tracing")]
     trace!(
         "block {0}:{1:x}",
@@ -313,7 +329,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     );
 
     let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
+        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
