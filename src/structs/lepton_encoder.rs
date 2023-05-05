@@ -16,8 +16,8 @@ use crate::lepton_error::ExitCode;
 use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::AlignedBlock, block_based_image::BlockBasedImage,
-    block_based_image::EMPTY_BLOCK, block_context::BlockContext, model::Model,
-    model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
+    block_context::BlockContext, model::Model, model::ModelPerColor,
+    neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_writer::VPXBoolWriter,
 };
@@ -306,21 +306,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
     let block = context.here(image_data);
 
-    let above_left = if ALL_PRESENT {
-        context.above_left(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
-    let above = if ALL_PRESENT || pt.is_above_present() {
-        context.above(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
-    let left = if ALL_PRESENT || pt.is_left_present() {
-        context.left(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
+    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
 
     #[cfg(feature = "detailed_tracing")]
     trace!(

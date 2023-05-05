@@ -17,12 +17,13 @@ use crate::lepton_error::ExitCode;
 
 use crate::metrics::Metrics;
 use crate::structs::{
-    block_based_image::AlignedBlock, block_based_image::BlockBasedImage,
-    block_based_image::EMPTY_BLOCK, block_context::BlockContext, model::Model,
+    block_based_image::AlignedBlock, block_based_image::BlockBasedImage, model::Model,
     model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
+
+use super::block_context::BlockContext;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -287,23 +288,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
-    // if we only read this once, we avoid polluting the L1 cache with the image
-    // data, and instead keep more of the model and bool_reader lookup tables
-    let above_left = if ALL_PRESENT {
-        context.above_left(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
-    let above = if ALL_PRESENT || pt.is_above_present() {
-        context.above(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
-    let left = if ALL_PRESENT || pt.is_left_present() {
-        context.left(image_data).clone()
-    } else {
-        &EMPTY_BLOCK
-    };
+    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
 
     let mut output = AlignedBlock::default();
 
