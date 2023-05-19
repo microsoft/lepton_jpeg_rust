@@ -66,7 +66,8 @@ fn verify_decode(
         "tiny",
         "trailingrst",
         "trailingrst2",
-        "trunc"
+        "trunc",
+        "eof_and_trailingrst"   // the lepton format has a wrongly set unexpected eof and trailing rst
     )]
     file: &str,
 ) {

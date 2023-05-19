@@ -912,19 +912,18 @@ impl LeptonHeader {
             writer.write_all(&r[..]).context(here!())?;
         }
 
-        if !self.early_eof_encountered {
-            // Injection of restart codes for RST errors supports JPEGs with trailing RSTs
-            if self.rst_err.len() > 0 {
-                let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
-                    ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
-                } else {
-                    0
-                } as u8;
-                for i in 0..self.rst_err[0] as u8 {
-                    let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
-                    writer.write_u8(0xFF)?;
-                    writer.write_u8(rst)?;
-                }
+        // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
+        // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        if self.rst_err.len() > 0 {
+            let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
+                ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
+            } else {
+                0
+            } as u8;
+            for i in 0..self.rst_err[0] as u8 {
+                let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
+                writer.write_u8(0xFF)?;
+                writer.write_u8(rst)?;
             }
         }
 
