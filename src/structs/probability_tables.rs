@@ -13,7 +13,7 @@ use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 use std::cmp::{max, min};
 
-use super::block_based_image::BlockBasedImage;
+use super::block_based_image::AlignedBlock;
 use super::block_context::BlockContext;
 use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
@@ -119,35 +119,32 @@ impl ProbabilityTables {
     #[inline(never)]
     pub fn calc_coefficient_context_7x7_aavg_block<const ALL_PRESENT: bool>(
         &self,
-        image_data: &BlockBasedImage,
-        block_context: &BlockContext,
+        left: &AlignedBlock,
+        above: &AlignedBlock,
+        above_left: &AlignedBlock,
     ) -> [i16; 49] {
         let mut best_prior = [0; 49];
 
         if ALL_PRESENT {
-            let left = block_context.left(image_data).get_block();
-            let above = block_context.above(image_data).get_block();
-            let above_left = block_context.above_left(image_data).get_block();
-
             // compiler does a pretty amazing job with SSE/AVX2 here
             for i in 0..49 {
                 // approximate average of 3 without a divide with double the weight for left/top vs diagonal
-                best_prior[i] = (((left[i].abs() as u32 + above[i].abs() as u32) * 13
-                    + 6 * above_left[i].abs() as u32)
+                best_prior[i] = (((left.get_coefficient(i).abs() as u32
+                    + above.get_coefficient(i).abs() as u32)
+                    * 13
+                    + 6 * above_left.get_coefficient(i).abs() as u32)
                     >> 5) as i16;
             }
         } else {
             // handle edge case :) where we are on the top or left edge
 
             if self.left_present {
-                let left = block_context.left(image_data).get_block();
                 for i in 0..49 {
-                    best_prior[i] = left[i].abs();
+                    best_prior[i] = left.get_coefficient(i).abs();
                 }
             } else if self.above_present {
-                let above = block_context.above(image_data).get_block();
                 for i in 0..49 {
-                    best_prior[i] = above[i].abs();
+                    best_prior[i] = above.get_coefficient(i).abs();
                 }
             }
         }
@@ -160,9 +157,9 @@ impl ProbabilityTables {
         &self,
         qt: &QuantizationTables,
         coefficient: usize,
-        here: &[i16; 64],
-        above: &[i16; 64],
-        left: &[i16; 64],
+        here: &AlignedBlock,
+        above: &AlignedBlock,
+        left: &AlignedBlock,
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
@@ -183,8 +180,12 @@ impl ProbabilityTables {
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
-                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
-                compute_lak_coeffs_a[i] = (sign * above[cur_coef]).into();
+                compute_lak_coeffs_x[i] = if i != 0 {
+                    here.get_coefficient(cur_coef).into()
+                } else {
+                    0
+                };
+                compute_lak_coeffs_a[i] = (sign * above.get_coefficient(cur_coef)).into();
             }
 
             coef_idct =
@@ -202,8 +203,12 @@ impl ProbabilityTables {
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
-                compute_lak_coeffs_x[i] = if i != 0 { here[cur_coef].into() } else { 0 };
-                compute_lak_coeffs_a[i] = (sign * left[cur_coef]).into();
+                compute_lak_coeffs_x[i] = if i != 0 {
+                    here.get_coefficient(cur_coef).into()
+                } else {
+                    0
+                };
+                compute_lak_coeffs_a[i] = (sign * left.get_coefficient(cur_coef)).into();
             }
 
             coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
@@ -249,7 +254,7 @@ impl ProbabilityTables {
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
-        image_data: &BlockBasedImage,
+        here: &AlignedBlock,
         qt: &QuantizationTables,
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
@@ -262,7 +267,7 @@ impl ProbabilityTables {
 
         let mut avgmed = 0;
 
-        run_idct::<true>(block_context.here(image_data), q, &mut pixels_sans_dc);
+        run_idct::<true>(here, q, &mut pixels_sans_dc);
 
         if ALL_PRESENT || self.left_present || self.above_present {
             let mut min_dc = i16::MAX;

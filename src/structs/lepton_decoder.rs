@@ -11,19 +11,19 @@ use default_boxed::DefaultBoxed;
 use std::cmp;
 use std::io::Read;
 
-use crate::consts::{
-    ALIGNED_BLOCK_INDEX_AC_7X7_INDEX, LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49,
-};
+use crate::consts::{LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49};
 use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 
 use crate::metrics::Metrics;
 use crate::structs::{
-    block_based_image::BlockBasedImage, block_context::BlockContext, model::Model,
+    block_based_image::AlignedBlock, block_based_image::BlockBasedImage, model::Model,
     model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
     probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
+
+use super::block_context::BlockContext;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -288,14 +288,17 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
+    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
+
+    let mut output = AlignedBlock::default();
+
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
     let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
 
     let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(image_data, context);
+        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    let block = context.here_mut(image_data).get_block_mut();
     for zz in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -325,16 +328,17 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             eob_x = cmp::max(eob_x, b_x);
             eob_y = cmp::max(eob_y, b_y);
             num_non_zeros_left_7x7 -= 1;
-        }
 
-        block[zz as usize + ALIGNED_BLOCK_INDEX_AC_7X7_INDEX] = coef;
+            output.set_coefficient(zz, coef);
+        }
     }
 
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        image_data,
-        context,
+        &left,
+        &above,
+        &mut output,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -342,8 +346,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         eob_y,
     )?;
 
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(image_data, qt, context, num_non_zeros);
-    let block = context.here_mut(image_data);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros);
 
     let coef = model
         .read_dc(
@@ -354,7 +357,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         )
         .context(here!())?;
 
-    block.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
+    output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
         predicted_dc.predicted_dc,
@@ -366,14 +369,16 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     here.set_horizontal(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
-        block.get_dc(),
+        output.get_dc(),
     );
 
     here.set_vertical(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
-        block.get_dc(),
+        output.get_dc(),
     );
+
+    image_data.append_block(output);
 
     Ok(())
 }
@@ -382,8 +387,9 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    image_data: &mut BlockBasedImage,
-    context: &BlockContext,
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -393,8 +399,9 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        image_data,
-        context,
+        left,
+        above,
+        here_mut,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -403,8 +410,9 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        image_data,
-        context,
+        left,
+        above,
+        here_mut,
         qt,
         pt,
         num_non_zeros_7x7,
@@ -416,8 +424,9 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    image_data: &mut BlockBasedImage,
-    block_context: &BlockContext,
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -450,21 +459,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord = delta;
 
-    let above = if pt.is_above_present() {
-        block_context.above(image_data).get_block().clone()
-    } else {
-        [0; 64]
-    };
-    let left = if pt.is_left_present() {
-        block_context.left(image_data).get_block().clone()
-    } else {
-        [0; 64]
-    };
-
-    let here = block_context.here(image_data).get_block().clone();
-
-    let here_mut = block_context.here_mut(image_data);
-
     for lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
@@ -473,9 +467,9 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
             coord,
-            &here,
-            &above,
-            &left,
+            here_mut,
+            above,
+            left,
             num_non_zeros_edge,
         );
 

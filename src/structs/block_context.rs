@@ -4,8 +4,9 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::block_based_image::{AlignedBlock, BlockBasedImage};
+use super::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
 use super::neighbor_summary::NeighborSummary;
+use super::probability_tables::ProbabilityTables;
 
 pub struct BlockContext {
     block_width: i32,
@@ -71,24 +72,28 @@ impl BlockContext {
         return retval;
     }
 
-    pub fn here_mut<'a>(&self, image_data: &'a mut BlockBasedImage) -> &'a mut AlignedBlock {
-        let retval = image_data.get_block_mut(self.cur_block_index);
-        return retval;
-    }
-
-    pub fn left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
-        let retval = image_data.get_block(self.cur_block_index - 1);
-        return retval;
-    }
-
-    pub fn above<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
-        let retval = image_data.get_block(self.above_block_index);
-        return retval;
-    }
-
-    pub fn above_left<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
-        let retval = image_data.get_block(self.above_block_index - 1);
-        return retval;
+    pub fn get_neighbors<'a, const ALL_PRESENT: bool>(
+        &self,
+        image_data: &'a BlockBasedImage,
+        pt: &ProbabilityTables,
+    ) -> (&'a AlignedBlock, &'a AlignedBlock, &'a AlignedBlock) {
+        (
+            if ALL_PRESENT {
+                image_data.get_block(self.above_block_index - 1)
+            } else {
+                &EMPTY_BLOCK
+            },
+            if ALL_PRESENT || pt.is_above_present() {
+                image_data.get_block(self.above_block_index)
+            } else {
+                &EMPTY_BLOCK
+            },
+            if ALL_PRESENT || pt.is_left_present() {
+                image_data.get_block(self.cur_block_index - 1)
+            } else {
+                &EMPTY_BLOCK
+            },
+        )
     }
 
     pub fn non_zeros_here(&self, num_non_zeros: &[NeighborSummary]) -> u8 {

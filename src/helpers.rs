@@ -16,7 +16,7 @@ pub(crate) use here;
 
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {
-    return (32 - (v as u32).leading_zeros()) as u8;
+    return 16 - v.leading_zeros() as u8;
 }
 
 #[inline(always)]
