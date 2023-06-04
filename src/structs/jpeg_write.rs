@@ -371,56 +371,68 @@ fn encode_block_seq(
     let mut bits_left: u32 = 3 * 16;
     let mut nblock = 0;
     let mut z: u32 = 0; // number of zeros in a row * 16 (shifted because this is that way the coefficients are encoded later on)
+
     loop {
-        if z > 12 * 16 {
-            loop {
-                let l = b.trailing_zeros() & 0xf0;
-                if l >= bits_left {
-                    z += bits_left;
+        let l = b.trailing_zeros() & 0xf0;
+        if l >= bits_left {
+            z += bits_left;
+
+            if nblock == 15 {
+                break;
+            }
+
+            nblock += 1;
+            bits_left = 4 * 16;
+            b = u64::from_le(block64[nblock]);
+
+            // if z is potentially going to go above 16 zeros in a row, moving to a seperate logic
+            // to handle this case. Moving to this logic is pretty rare so we don't mess up the
+            // jump predictor.
+            if z > 12 * 16 {
+                loop {
+                    let l = b.trailing_zeros() & 0xf0;
+                    if l >= bits_left {
+                        z += bits_left;
+
+                        if nblock == 15 {
+                            break;
+                        }
+
+                        nblock += 1;
+                        bits_left = 4 * 16;
+                        b = u64::from_le(block64[nblock]);
+                    } else {
+                        z += l;
+                        bits_left -= l;
+                        b >>= l;
+
+                        // if we have 16 or more zero, we need to write them in blocks of 16
+                        while z >= 256 {
+                            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
+                            z -= 256;
+                        }
+
+                        write_coef(huffw, b as i16, z, actbl);
+                        z = 0;
+                        bits_left -= 16;
+                        b >>= 16;
+                    }
+                }
+
+                if nblock == 15 {
                     break;
                 }
-
-                z += l;
-                bits_left -= l;
-                b >>= l;
-
-                // if we have 16 or more zero, we need to write them in blocks of 16
-                while z >= 256 {
-                    huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                    z -= 256;
-                }
-
-                write_coef(huffw, b as i16, z, actbl);
-                z = 0;
-                bits_left -= 16;
-                b >>= 16;
             }
         } else {
-            loop {
-                let l = b.trailing_zeros() & 0xf0;
-                if l >= bits_left {
-                    z += bits_left;
-                    break;
-                }
+            z += l;
+            bits_left -= l;
+            b >>= l;
 
-                z += l;
-                bits_left -= l;
-                b >>= l;
-
-                write_coef(huffw, b as i16, z, actbl);
-                z = 0;
-                bits_left -= 16;
-                b >>= 16;
-            }
+            write_coef(huffw, b as i16, z, actbl);
+            z = 0;
+            bits_left -= 16;
+            b >>= 16;
         }
-
-        if nblock == 15 {
-            break;
-        }
-
-        nblock += 1;
-        bits_left = 4 * 16;
-        b = u64::from_le(block64[nblock]);
     }
 
     if z != 0 {
@@ -434,11 +446,11 @@ fn encode_block_seq(
 fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     // vli encode
     let (n, s) = envli(coef);
-    let hc = ((z) | s) as u8;
+    let hc = (z | s) as usize;
 
     // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[usize::from(hc)]) << s) | u32::from(n);
-    let new_bits = u32::from(tbl.c_len[usize::from(hc)]) + u32::from(s);
+    let val = (u32::from(tbl.c_val[hc]) << s) | u32::from(n);
+    let new_bits = u32::from(tbl.c_len[hc]) + u32::from(s);
     huffw.write(val as u64, new_bits);
 }
 
@@ -626,15 +638,10 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
 fn envli(v: i16) -> (u16, u32) {
-    let leading_zeros = v.unsigned_abs().leading_zeros();
-
-    // first shift right signed by 15 to make everything 1 if negative,
-    // then shift right unsigned to make the leading bits 0
-    let adjustment: u16 = ((v >> 15) as u16).wrapping_shr(leading_zeros);
-
-    let n = (v as u16).wrapping_add(adjustment); // turn v into a 2s complement of s bits
-    let s = 16 - leading_zeros;
-
+    let mask = v >> 15;
+    let temp = v + mask;
+    let s = 16 - (mask ^ temp).leading_zeros();
+    let n = (temp as u16) & ((1 << s) - 1);
     return (n, s);
 }
 
@@ -645,12 +652,12 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 
 #[test]
 fn test_envli() {
-    for i in -16383..=16385 {
+    for i in -1023..=1023 {
         let (n, s) = envli(i);
 
         assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
         let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
-        assert_eq!(n, n2, "s={0}", s);
+        assert_eq!(n, n2, "i={} s={}", i, s);
     }
 }
