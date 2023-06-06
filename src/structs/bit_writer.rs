@@ -44,6 +44,7 @@ impl BitWriter {
     }
 
     #[inline(never)]
+    #[cold]
     pub fn write_u64_slowly(&mut self, val: u64) {
         let mut tmp_current_bit = 0;
         let mut tmp_fill_register = val;
