@@ -374,10 +374,19 @@ fn encode_block_seq(
 
     loop {
         let l = b.trailing_zeros() & 0xf0;
-        if l >= bits_left {
+        if l < bits_left {
+            z += l;
+            bits_left -= l;
+            b >>= l;
+
+            write_coef(huffw, b as i16, z, actbl);
+            z = 0;
+            bits_left -= 16;
+            b >>= 16;
+        } else {
             z += bits_left;
 
-            if nblock == 15 {
+            if nblock >= 15 {
                 break;
             }
 
@@ -388,50 +397,42 @@ fn encode_block_seq(
             // if z is potentially going to go above 16 zeros in a row, moving to a seperate logic
             // to handle this case. Moving to this logic is pretty rare so we don't mess up the
             // jump predictor.
-            if z > 12 * 16 {
-                loop {
-                    let l = b.trailing_zeros() & 0xf0;
-                    if l >= bits_left {
-                        z += bits_left;
+            if z < 12 * 16 {
+                continue;
+            }
+            loop {
+                let l = b.trailing_zeros() & 0xf0;
+                if l >= bits_left {
+                    z += bits_left;
 
-                        if nblock == 15 {
-                            break;
-                        }
-
-                        nblock += 1;
-                        bits_left = 4 * 16;
-                        b = u64::from_le(block64[nblock]);
-                    } else {
-                        z += l;
-                        bits_left -= l;
-                        b >>= l;
-
-                        // if we have 16 or more zero, we need to write them in blocks of 16
-                        while z >= 256 {
-                            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                            z -= 256;
-                        }
-
-                        write_coef(huffw, b as i16, z, actbl);
-                        z = 0;
-                        bits_left -= 16;
-                        b >>= 16;
+                    if nblock == 15 {
+                        break;
                     }
-                }
 
-                if nblock == 15 {
-                    break;
+                    nblock += 1;
+                    bits_left = 4 * 16;
+                    b = u64::from_le(block64[nblock]);
+                } else {
+                    z += l;
+                    bits_left -= l;
+                    b >>= l;
+
+                    // if we have 16 or more zero, we need to write them in blocks of 16
+                    while z >= 256 {
+                        huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
+                        z -= 256;
+                    }
+
+                    write_coef(huffw, b as i16, z, actbl);
+                    z = 0;
+                    bits_left -= 16;
+                    b >>= 16;
                 }
             }
-        } else {
-            z += l;
-            bits_left -= l;
-            b >>= l;
 
-            write_coef(huffw, b as i16, z, actbl);
-            z = 0;
-            bits_left -= 16;
-            b >>= 16;
+            if nblock >= 15 {
+                break;
+            }
         }
     }
 
