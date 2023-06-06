@@ -449,9 +449,12 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     let (n, s) = envli(coef);
     let hc = (z | s) as usize;
 
-    // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[hc]) << s) | u32::from(n);
+    // combine into single write
+    // c_val_shift is already shifted left by s
+    let val = tbl.c_val_shift[hc] | u32::from(n);
     let new_bits = u32::from(tbl.c_len[hc]) + u32::from(s);
+
+    // write everything to bitwriter
     huffw.write(val as u64, new_bits);
 }
 
@@ -638,12 +641,13 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
-fn envli(v: i16) -> (u16, u32) {
-    let mask = v >> 15;
+fn envli(vs: i16) -> (u32, u32) {
+    let v = i32::from(vs);
+    let mask = v >> 31;
     let temp = v + mask;
-    let s = 16 - (mask ^ temp).leading_zeros();
-    let n = (temp as u16) & ((1 << s) - 1);
-    return (n, s);
+    let s = 32 - (mask ^ temp).leading_zeros();
+    let n = temp & ((1 << s) - 1);
+    return (n as u32, s);
 }
 
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
@@ -658,7 +662,7 @@ fn test_envli() {
 
         assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
-        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
+        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u32;
         assert_eq!(n, n2, "i={} s={}", i, s);
     }
 }

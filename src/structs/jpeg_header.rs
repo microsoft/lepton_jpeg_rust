@@ -48,6 +48,7 @@ use super::component_info::ComponentInfo;
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
     pub c_val: [u16; 256],
+    pub c_val_shift: [u32; 256],
     pub c_len: [u16; 256],
     pub max_eob_run: u16,
 }
@@ -56,6 +57,7 @@ impl HuffCodes {
     pub fn new() -> Self {
         HuffCodes {
             c_val: [0; 256],
+            c_val_shift: [0; 256],
             c_len: [0; 256],
             max_eob_run: 0,
         }
@@ -846,6 +848,11 @@ impl JPegHeader {
             } else {
                 ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
             }
+        }
+
+        // calculated preshifted value for each code since the length is encoded in the bottom 4 bits
+        for i in 0..256 {
+            hc.c_val_shift[i] = (hc.c_val[i] as u32) << (i & 0xf)
         }
 
         return Ok(());
