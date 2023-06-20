@@ -754,12 +754,11 @@ impl LeptonHeader {
                 .context(here!())?
         };
 
-        if !self.early_eof_encountered {
-            /* step 3: blit any trailing header data */
-            writer
-                .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
-                .context(here!())?;
-        }
+        // Blit any trailing header data.
+        // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        writer
+            .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
+            .context(here!())?;
 
         writer.write_all(&self.garbage_data).context(here!())?;
         Ok(metrics)
