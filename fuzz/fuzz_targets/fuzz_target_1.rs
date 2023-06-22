@@ -11,15 +11,16 @@ fuzz_target!(|data: &[u8]| {
 
     let mut output = Vec::new();
 
+    // keep the jpeg dimensions small otherwise the fuzzer gets really slow
+    let features = EnabledFeatures {
+        progressive: true,
+        reject_dqts_with_zeros: true,
+        max_jpeg_height: 1024,
+        max_jpeg_width: 1024,
+    };
+
     {
         let mut writer = Cursor::new(&mut output);
-
-        // keep the jpeg dimensions small otherwise the fuzzer gets really slow
-        let features = EnabledFeatures {
-            progressive: true,
-            max_jpeg_height: 1024,
-            max_jpeg_width: 1024,
-        };
 
         r = encode_lepton(&mut Cursor::new(&data), &mut writer, 8, &features);
     }
@@ -28,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
 
     match r {
         Ok(_) => {
-            let _ = decode_lepton(&mut Cursor::new(&output), &mut original, 8);
+            let _ = decode_lepton(&mut Cursor::new(&output), &mut original, 8, &features);
         }
         Err(_) => {}
     }

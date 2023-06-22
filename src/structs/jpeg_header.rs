@@ -360,7 +360,7 @@ impl JPegHeader {
                     let rval = usize::from(rbits(segment[hpos], 4));
                     if lval >= 2 || rval >= 4
                     {
-                        break;
+                        return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has invalid index");
                     }
 
                     hpos+=1;
@@ -374,7 +374,13 @@ impl JPegHeader {
                             self.q_tables[rval][i] = segment[hpos + i] as u16;
                             if self.q_tables[rval][i] == 0
                             {
-                                break;
+                                if enabled_features.reject_dqts_with_zeros
+                                {
+                                    return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
+                                }
+                                else {
+                                    break;
+                                }
                             }
                         }
 
@@ -390,7 +396,13 @@ impl JPegHeader {
                             self.q_tables[rval][i] = b_short(segment[hpos + (2 * i)], segment[hpos + (2 * i) + 1]);
                             if self.q_tables[rval][i] == 0
                             {
-                                break;
+                                if enabled_features.reject_dqts_with_zeros
+                                {
+                                    return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
+                                }
+                                else {
+                                    break;
+                                }
                             }
                         }
 
