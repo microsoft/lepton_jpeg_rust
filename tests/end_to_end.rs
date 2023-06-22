@@ -79,7 +79,13 @@ fn verify_decode(
 
     let mut output = Vec::new();
 
-    decode_lepton(&mut Cursor::new(input), &mut output, 8, &EnabledFeatures::all()).unwrap();
+    decode_lepton(
+        &mut Cursor::new(input),
+        &mut output,
+        8,
+        &EnabledFeatures::all(),
+    )
+    .unwrap();
 
     assert!(output[..] == expected[..]);
 }
@@ -134,7 +140,13 @@ fn verify_encode(
     )
     .unwrap();
 
-    decode_lepton(&mut Cursor::new(lepton), &mut output, 8, &EnabledFeatures::all()).unwrap();
+    decode_lepton(
+        &mut Cursor::new(lepton),
+        &mut output,
+        8,
+        &EnabledFeatures::all(),
+    )
+    .unwrap();
 
     assert!(input[..] == output[..]);
 }
@@ -256,11 +268,8 @@ fn extern_interface() {
 
 #[rstest]
 fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
-    #[values(
-        "zeros_in_dqt_tables",
-        "nonoptimalprogressive")]
-    file: &str)
-{
+    #[values("zeros_in_dqt_tables", "nonoptimalprogressive")] file: &str,
+) {
     let input = read_file(file, ".jpg");
 
     let mut compressed = Vec::new();
@@ -277,17 +286,16 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             (&mut result_size) as *mut u64,
         );
 
-        assert_eq!(retval, ExitCode::UnsupportedJpeg as i32); 
+        assert_eq!(retval, ExitCode::UnsupportedJpeg as i32);
     }
 }
 
 /// While we prevent compression of images with zeros in DQT tables, since it may lead to divide-by-zero, we support decompression of
 /// previously compressed images with this characteristics for back-compat.
 #[rstest]
-fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(#[values("zeros_in_dqt_tables")] file: &str)
-{
-    println!("decoding {0:?}", file);
-
+fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
+    #[values("zeros_in_dqt_tables")] file: &str,
+) {
     let compressed = read_file(file, ".lep");
     let original = read_file(file, ".jpg");
 

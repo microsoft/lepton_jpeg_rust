@@ -75,7 +75,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 enabled_features.progressive = false;
             } else if args[i] == "-acceptdqtswithzeros" {
                 enabled_features.reject_dqts_with_zeros = false;
-            }else {
+            } else {
                 return err_exit_code(
                     ExitCode::SyntaxError,
                     format!("unknown switch {0}", args[i]).as_str(),
@@ -96,20 +96,17 @@ fn main_with_result() -> anyhow::Result<()> {
         let block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
-            (lh, block_image) = read_jpeg(
-                &mut reader,
-                &enabled_features,
-                num_threads as usize,
-                |jh| {
+            (lh, block_image) =
+                read_jpeg(&mut reader, &enabled_features, num_threads as usize, |jh| {
                     println!("parsed header:");
                     let s = format!("{jh:?}");
                     println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-                },
-            )
-            .context(here!())?;
+                })
+                .context(here!())?;
         } else {
             lh = LeptonHeader::new();
-            lh.read_lepton_header(&mut reader, &enabled_features).context(here!())?;
+            lh.read_lepton_header(&mut reader, &enabled_features)
+                .context(here!())?;
 
             let _metrics;
 
@@ -211,8 +208,13 @@ fn main_with_result() -> anyhow::Result<()> {
 
             output_data = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton_wrapper(&mut reader, &mut output_data, num_threads as usize, &enabled_features)
-                .context(here!())?;
+            metrics = decode_lepton_wrapper(
+                &mut reader,
+                &mut output_data,
+                num_threads as usize,
+                &enabled_features,
+            )
+            .context(here!())?;
         } else {
             return err_exit_code(
                 ExitCode::BadLeptonFile,

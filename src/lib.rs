@@ -145,7 +145,12 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         let mut enabled_features = EnabledFeatures::all();
         enabled_features.reject_dqts_with_zeros = false;
 
-        match decode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize, &enabled_features) {
+        match decode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            &enabled_features,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 return translate_error(e).exit_code as i32;
