@@ -75,12 +75,13 @@ impl BitWriter {
 
         // first see if everything fits in the current register
         if new_bits <= self.current_bit {
-            self.fill_register |= val.wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = self.current_bit - new_bits;
+            let cbit = self.current_bit.wrapping_sub(new_bits);
+            self.fill_register |= val.wrapping_shl(cbit); // support corner case where new_bits is zero, we don't want to panic
+            self.current_bit = cbit;
         } else {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
-            let value_to_write = self.fill_register | val.wrapping_shr(new_bits - self.current_bit);
-            let leftover_bits = new_bits - self.current_bit;
+            let leftover_bits = new_bits.wrapping_sub(self.current_bit);
+            let value_to_write = self.fill_register | val.wrapping_shr(leftover_bits);
 
             self.fill_register = (val as u64).wrapping_shl(64 - leftover_bits); // support corner case where new_bits is zero, we don't want to panic
             self.current_bit = 64 - leftover_bits;
