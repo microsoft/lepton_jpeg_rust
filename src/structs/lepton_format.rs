@@ -47,6 +47,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
+    enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     // figure out how long the input is
     let orig_pos = reader.stream_position()?;
@@ -55,7 +56,8 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
 
     let mut lh = LeptonHeader::new();
 
-    lh.read_lepton_header(reader).context(here!())?;
+    lh.read_lepton_header(reader, enabled_features)
+        .context(here!())?;
 
     let metrics = lh
         .recode_jpeg(writer, reader, size, num_threads)
@@ -123,8 +125,13 @@ pub fn encode_lepton_wrapper_verify(
     info!("decompressing to verify contents");
 
     metrics.merge_from(
-        decode_lepton_wrapper(&mut verifyreader, &mut verify_buffer, max_threads)
-            .context(here!())?,
+        decode_lepton_wrapper(
+            &mut verifyreader,
+            &mut verify_buffer,
+            max_threads,
+            &enabled_features,
+        )
+        .context(here!())?,
     );
 
     if input_data.len() != verify_buffer.len() {
@@ -754,12 +761,11 @@ impl LeptonHeader {
                 .context(here!())?
         };
 
-        if !self.early_eof_encountered {
-            /* step 3: blit any trailing header data */
-            writer
-                .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
-                .context(here!())?;
-        }
+        // Blit any trailing header data.
+        // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        writer
+            .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
+            .context(here!())?;
 
         writer.write_all(&self.garbage_data).context(here!())?;
         Ok(metrics)
@@ -931,7 +937,11 @@ impl LeptonHeader {
     }
 
     /// reads the start of the lepton file and parses the compressed header. Returns the raw JPEG header contents.
-    pub fn read_lepton_header<R: Read>(&mut self, reader: &mut R) -> Result<()> {
+    pub fn read_lepton_header<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<()> {
         let mut header = [0 as u8; LEPTON_FILE_HEADER.len()];
 
         reader.read_exact(&mut header).context(here!())?;
@@ -1007,7 +1017,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor, &EnabledFeatures::all())
+                .parse(&mut header_data_cursor, &enabled_features)
                 .context(here!())?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -1660,5 +1670,7 @@ fn parse_and_write_header() {
 
     let mut other = LeptonHeader::new();
     let mut other_reader = Cursor::new(&serialized);
-    other.read_lepton_header(&mut other_reader).unwrap();
+    other
+        .read_lepton_header(&mut other_reader, &EnabledFeatures::all())
+        .unwrap();
 }

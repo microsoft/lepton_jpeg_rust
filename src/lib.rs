@@ -50,8 +50,9 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
+    enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    decode_lepton_wrapper(reader, writer, num_threads).map_err(translate_error)
+    decode_lepton_wrapper(reader, writer, num_threads, enabled_features).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -140,7 +141,16 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match decode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize) {
+        // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
+        let mut enabled_features = EnabledFeatures::all();
+        enabled_features.reject_dqts_with_zeros = false;
+
+        match decode_lepton_wrapper(
+            &mut reader,
+            &mut writer,
+            number_of_threads as usize,
+            &enabled_features,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 return translate_error(e).exit_code as i32;
