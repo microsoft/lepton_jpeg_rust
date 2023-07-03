@@ -43,6 +43,9 @@ impl BitWriter {
         self.current_bit = tmp_current_bit;
     }
 
+    /// writes the given value to the buffer, escaping 0xff bytes on at a time.
+    /// This is a slow path that is only used when we have 0xff bytes in the data,
+    /// or when we are about to overflow the buffer.
     #[inline(never)]
     #[cold]
     pub fn write_u64_slowly(&mut self, val: u64) {
@@ -100,6 +103,7 @@ impl BitWriter {
             {
                 self.write_u64_slowly(value_to_write);
             } else {
+                // this is the fast path, we can just write the 64 bit value directly to the buffer without escaping 0xff bytes or bounds checks
                 self.data_buffer
                     .extend_from_slice(&value_to_write.to_be_bytes());
             }

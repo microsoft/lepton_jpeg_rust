@@ -360,82 +360,100 @@ fn encode_block_seq(
     actbl: &HuffCodes,
     block: &[i16; 64],
 ) {
-    // encode DC
+    // process the array of coefficients as a 4 x 16 = 64 bit integer
     let block64: &[u64; 16] = cast_ref(block);
 
-    let mut b = u64::from_le(block64[0]);
+    // little endian format since we want to read the 16-bit coefficients from the lowest to the highest in 64 bit chunks
+    let mut current_value = u64::from_le(block64[0]);
 
-    write_coef(huffw, b as i16, 0, dctbl);
+    // write the DC coefficent (which is the first one in the zigzag order)
+    write_coef(huffw, current_value as i16, 0, dctbl);
 
-    b >>= 16;
-    let mut bits_left: u32 = 3 * 16;
-    let mut nblock = 0;
+    // process the AC coefficients, keeping track of the number of bits left in the current 64 bit block
+    // we used up the first 16 bits for the DC coefficient, so start shift right and keep track of the number of bits left
+    current_value >>= 16;
+    let mut bits_remaining: u32 = 3 * 16;
+    let mut block_index = 0;
     let mut z: u32 = 0; // number of zeros in a row * 16 (shifted because this is that way the coefficients are encoded later on)
 
     loop {
-        let l = b.trailing_zeros() & 0xf0;
-        if l < bits_left {
-            z += l;
-            bits_left -= l;
-            b >>= l;
+        // see if there was a non-zero coefficient in the current 64 bit block
+        if current_value != 0 {
+            // scan for trailing zeros to left in the current 64 bit block to figure out which one wasn't zero
+            let nonzero_position = current_value.trailing_zeros() & 0xf0;
 
-            write_coef(huffw, b as i16, z, actbl);
+            // skip the appropriate number of zero coefficents based on what we scanned
+            z += nonzero_position;
+            bits_remaining -= nonzero_position;
+            current_value >>= nonzero_position;
+
+            // write the non-zero coefficient we found
+            write_coef(huffw, current_value as i16, z, actbl);
+
             z = 0;
-            bits_left -= 16;
-            b >>= 16;
+            bits_remaining -= 16;
+            current_value >>= 16;
         } else {
-            z += bits_left;
+            // otherwise everything was zero, so we increment the number of zeros seen in z
+            // and move to the next block
+            z += bits_remaining;
 
-            if nblock >= 15 {
+            if block_index >= 15 {
                 break;
             }
 
-            nblock += 1;
-            bits_left = 4 * 16;
-            b = u64::from_le(block64[nblock]);
+            // get the next block of 4 coefficients
+            block_index += 1;
+            bits_remaining = 4 * 16;
+            current_value = u64::from_le(block64[block_index]);
 
-            // if z is potentially going to go above 16 zeros in a row, moving to a seperate logic
-            // to handle this case. Moving to this logic is pretty rare so we don't mess up the
-            // jump predictor.
-            if z < 12 * 16 {
-                continue;
-            }
-            loop {
-                let l = b.trailing_zeros() & 0xf0;
-                if l >= bits_left {
-                    z += bits_left;
+            // if z is potentially going to go above 16 zeros in a row, moving to a seperate loop
+            // to handle this case, since it requires the extra logic to write extra 0xF0 codes.
+            // This logic is pretty rare to hit unless the block is almost entirely zero, so it's worth it to have a seperate loop to handle this case
+            if z >= 12 * 16 {
+                loop {
+                    if current_value != 0 {
+                        // scan for trailing zeros to left in the current 64 bit block to figure out which one wasn't zero
+                        let nonzero_position = current_value.trailing_zeros() & 0xf0;
 
-                    if nblock == 15 {
-                        break;
+                        z += nonzero_position;
+                        bits_remaining -= nonzero_position;
+                        current_value >>= nonzero_position;
+
+                        // if we have 16 or more zero, we need to write them in blocks of 16
+                        while z >= 256 {
+                            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
+                            z -= 256;
+                        }
+
+                        write_coef(huffw, current_value as i16, z, actbl);
+
+                        z = 0;
+                        bits_remaining -= 16;
+                        current_value >>= 16;
+                    } else {
+                        // everything remaining was zero, so we increment the number of zeros seen in z
+                        z += bits_remaining;
+
+                        if block_index >= 15 {
+                            break;
+                        }
+
+                        // get the next block of 4 coefficients
+                        block_index += 1;
+                        bits_remaining = 4 * 16;
+                        current_value = u64::from_le(block64[block_index]);
                     }
-
-                    nblock += 1;
-                    bits_left = 4 * 16;
-                    b = u64::from_le(block64[nblock]);
-                } else {
-                    z += l;
-                    bits_left -= l;
-                    b >>= l;
-
-                    // if we have 16 or more zero, we need to write them in blocks of 16
-                    while z >= 256 {
-                        huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                        z -= 256;
-                    }
-
-                    write_coef(huffw, b as i16, z, actbl);
-                    z = 0;
-                    bits_left -= 16;
-                    b >>= 16;
                 }
-            }
 
-            if nblock >= 15 {
-                break;
+                if block_index >= 15 {
+                    break;
+                }
             }
         }
     }
 
+    // if there were trailing zeros, then write end-of-block code, otherwise unnecessary since we wrote 64 coefficients
     if z != 0 {
         huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
     }
