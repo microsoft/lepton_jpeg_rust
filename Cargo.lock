@@ -280,7 +280,6 @@ name = "lepton_jpeg"
 version = "0.3.3"
 dependencies = [
  "anyhow",
- "atty",
  "byteorder",
  "cpu-time",
  "default-boxed",

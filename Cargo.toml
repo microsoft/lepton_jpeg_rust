@@ -4,8 +4,8 @@ version = "0.3.3"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
-# requires scoped threads
-rust-version = "1.65"
+# requires scoped threads and IsTerminal
+rust-version = "1.70"
 description = "Rust port of the Lepton JPEG compression library"
 readme = "README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
@@ -34,7 +34,6 @@ wide = "0.7.5"
 log = "0.4.17"
 simple_logger ="4.0.0"
 cpu-time = "1.0.0"
-atty = "0.2.14"
 
 [dev-dependencies]
 rstest = "0.16.0"
