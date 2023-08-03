@@ -24,7 +24,7 @@ use structs::lepton_format::read_jpeg;
 use std::{
     env,
     fs::{File, OpenOptions},
-    io::{BufReader, Cursor, Read, Seek, Write},
+    io::{stdin, stdout, BufReader, Cursor, IsTerminal, Read, Seek, Write},
     time::Duration,
 };
 
@@ -55,7 +55,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut enabled_features = EnabledFeatures::default();
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
-    if atty::is(atty::Stream::Stdout) {
+    if stdout().is_terminal() {
         SimpleLogger::new().init().unwrap();
     }
 
@@ -153,7 +153,7 @@ fn main_with_result() -> anyhow::Result<()> {
 
     let mut input_data = Vec::new();
     if filenames.len() != 2 {
-        if atty::is(atty::Stream::Stdin) || atty::is(atty::Stream::Stdout) {
+        if stdout().is_terminal() || stdin().is_terminal() {
             return err_exit_code(
                 ExitCode::SyntaxError,
                 "source and destination filename are needed or input needs to be redirected",
