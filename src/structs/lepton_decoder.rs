@@ -12,6 +12,7 @@ use std::cmp;
 use std::io::Read;
 
 use crate::consts::{LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49};
+use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 
@@ -38,6 +39,7 @@ pub fn lepton_decode_row_range<R: Read>(
     max_y: i32,
     is_last_thread: bool,
     full_file_compression: bool,
+    features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let component_size_in_blocks = trunc.get_component_sizes_in_blocks();
     let max_coded_heights = trunc.get_max_coded_heights();
@@ -98,6 +100,7 @@ pub fn lepton_decode_row_range<R: Read>(
             &component_size_in_blocks[..],
             cur_row.component,
             cur_row.curr_y,
+            features,
         )
         .context(here!())?;
     }
@@ -116,6 +119,7 @@ fn decode_row_wrapper<R: Read>(
     component_size_in_blocks: &[i32],
     component: usize,
     curr_y: i32,
+    features: &EnabledFeatures,
 ) -> Result<()> {
     let mut context = image_data.off_y(curr_y);
 
@@ -133,6 +137,7 @@ fn decode_row_wrapper<R: Read>(
             &mut context,
             num_non_zeros,
             component_size_in_blocks[component],
+            features,
         )
         .context(here!())?;
     } else if block_width > 1 {
@@ -148,6 +153,7 @@ fn decode_row_wrapper<R: Read>(
             &mut context,
             num_non_zeros,
             component_size_in_blocks[component],
+            features,
         )
         .context(here!())?;
     } else {
@@ -163,6 +169,7 @@ fn decode_row_wrapper<R: Read>(
             &mut context,
             num_non_zeros,
             component_size_in_blocks[component],
+            features,
         )
         .context(here!())?;
     }
@@ -181,6 +188,7 @@ fn decode_row<R: Read>(
     block_context: &mut BlockContext,
     num_non_zeros: &mut [NeighborSummary],
     component_size_in_blocks: i32,
+    features: &EnabledFeatures,
 ) -> Result<()> {
     let block_width = image_data.get_block_width();
     if block_width > 0 {
@@ -192,6 +200,7 @@ fn decode_row<R: Read>(
             num_non_zeros,
             qt,
             left_model,
+            features,
         )
         .context(here!())?;
         let offset = block_context.next(true);
@@ -211,6 +220,7 @@ fn decode_row<R: Read>(
                 num_non_zeros,
                 qt,
                 middle_model,
+                features,
             )
             .context(here!())?;
         } else {
@@ -222,6 +232,7 @@ fn decode_row<R: Read>(
                 num_non_zeros,
                 qt,
                 middle_model,
+                features,
             )
             .context(here!())?;
         }
@@ -243,6 +254,7 @@ fn decode_row<R: Read>(
                 num_non_zeros,
                 qt,
                 right_model,
+                features,
             )
             .context(here!())?;
         } else {
@@ -254,6 +266,7 @@ fn decode_row<R: Read>(
                 num_non_zeros,
                 qt,
                 right_model,
+                features,
             )
             .context(here!())?;
         }
@@ -272,6 +285,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     num_non_zeros: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
+    features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
@@ -370,12 +384,14 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
         output.get_dc(),
+        features,
     );
 
     here.set_vertical(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
         output.get_dc(),
+        features,
     );
 
     image_data.append_block(output);
