@@ -111,12 +111,7 @@ fn main_with_result() -> anyhow::Result<()> {
             let _metrics;
 
             (block_image, _metrics) = lh
-                .decode_as_single_image(
-                    &mut reader,
-                    filelen,
-                    num_threads as usize,
-                    &enabled_features,
-                )
+                .decode_as_single_image(&mut reader, filelen, num_threads as usize)
                 .context(here!())?;
 
             loop {

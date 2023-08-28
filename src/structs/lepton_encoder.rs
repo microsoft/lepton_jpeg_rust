@@ -10,7 +10,6 @@ use std::cmp;
 use std::io::Write;
 
 use crate::consts::*;
-use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
 
@@ -37,7 +36,6 @@ pub fn lepton_encode_row_range<W: Write>(
     max_y: i32,
     is_last_thread: bool,
     full_file_compression: bool,
-    features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let mut model = Model::default_boxed();
     let mut bool_writer = VPXBoolWriter::new(writer)?;
@@ -108,7 +106,6 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut num_non_zeros[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
-                features,
             )
             .context(here!())?;
         } else if block_width > 1 {
@@ -125,7 +122,6 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut num_non_zeros[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
-                features,
             )
             .context(here!())?;
         } else {
@@ -143,7 +139,6 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut num_non_zeros[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
-                features,
             )
             .context(here!())?;
         }
@@ -187,7 +182,6 @@ fn process_row<W: Write>(
     num_non_zeros: &mut [NeighborSummary],
     block_width: i32,
     component_size_in_block: i32,
-    features: &EnabledFeatures,
 ) -> Result<()> {
     if block_width > 0 {
         state
@@ -202,7 +196,6 @@ fn process_row<W: Write>(
             image_data,
             num_non_zeros,
             bool_writer,
-            features,
         )
         .context(here!())?;
         let offset = state.next(true);
@@ -227,7 +220,6 @@ fn process_row<W: Write>(
                 image_data,
                 num_non_zeros,
                 bool_writer,
-                features,
             )
             .context(here!())?;
         } else {
@@ -239,7 +231,6 @@ fn process_row<W: Write>(
                 image_data,
                 num_non_zeros,
                 bool_writer,
-                features,
             )
             .context(here!())?;
         }
@@ -265,7 +256,6 @@ fn process_row<W: Write>(
                 image_data,
                 num_non_zeros,
                 bool_writer,
-                features,
             )
             .context(here!())?;
         } else {
@@ -277,7 +267,6 @@ fn process_row<W: Write>(
                 image_data,
                 num_non_zeros,
                 bool_writer,
-                features,
             )
             .context(here!())?;
         }
@@ -296,7 +285,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     image_data: &BlockBasedImage,
     num_non_zeros: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
-    features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(ALL_PRESENT == pt.is_all_present());
 
@@ -413,14 +401,12 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
         block.get_dc(),
-        features,
     );
 
     here.set_vertical(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         qt.get_quantization_table(),
         block.get_dc(),
-        features,
     );
 
     Ok(())

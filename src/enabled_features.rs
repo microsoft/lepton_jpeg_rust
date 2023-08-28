@@ -11,9 +11,6 @@ pub struct EnabledFeatures {
 
     // maximum jpeg height
     pub max_jpeg_height: i32,
-
-    // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-    pub use_16bit_dc_estimate: bool,
 }
 
 impl Default for EnabledFeatures {
@@ -23,21 +20,18 @@ impl Default for EnabledFeatures {
             reject_dqts_with_zeros: true,
             max_jpeg_width: 16386,
             max_jpeg_height: 16386,
-            use_16bit_dc_estimate: false,
         }
     }
 }
 
 impl EnabledFeatures {
     /// parameters that allow everything
-    #[allow(dead_code)]
     pub fn all() -> Self {
         Self {
             progressive: true,
             reject_dqts_with_zeros: true,
             max_jpeg_height: i32::MAX,
             max_jpeg_width: i32::MAX,
-            use_16bit_dc_estimate: false,
         }
     }
 }

@@ -6,8 +6,6 @@
 
 use std::num::Wrapping;
 
-use crate::enabled_features::EnabledFeatures;
-
 #[derive(Copy, Clone)]
 pub struct NeighborSummary {
     edge_pixels_h: [i16; 8],
@@ -44,57 +42,23 @@ impl NeighborSummary {
         return &self.edge_pixels_h;
     }
 
-    pub fn set_horizontal(
-        &mut self,
-        data: &[i16; 64],
-        qt: &[u16; 64],
-        dc: i16,
-        enabled_features: &EnabledFeatures,
-    ) {
-        if enabled_features.use_16bit_dc_estimate {
-            // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-            for i in 0..8 {
-                let delta = data[i + 56].wrapping_sub(data[i + 48]);
-                self.edge_pixels_h[i] = ((dc as i32 * qt[0] as i32) as i16)
-                    .wrapping_add(data[i + 56])
-                    .wrapping_add(128 * X_IDCT_SCALE as i16)
-                    .wrapping_add(delta / 2);
-            }
-        } else {
-            for i in 0..8 {
-                let delta = data[i + 56] as i32 - data[i + 48] as i32;
-                self.edge_pixels_h[i] = ((dc as i32 * qt[0] as i32)
-                    + data[i + 56] as i32
-                    + (128 * X_IDCT_SCALE)
-                    + (delta / 2)) as i16;
-            }
+    pub fn set_horizontal(&mut self, data: &[i16; 64], qt: &[u16; 64], dc: i16) {
+        for i in 0..8 {
+            let delta = data[i + 56] as i32 - data[i + 48] as i32;
+            self.edge_pixels_h[i] = ((dc as i32 * qt[0] as i32)
+                + data[i + 56] as i32
+                + (128 * X_IDCT_SCALE)
+                + (delta / 2)) as i16;
         }
     }
 
-    pub fn set_vertical(
-        &mut self,
-        data: &[i16; 64],
-        qt: &[u16; 64],
-        dc: i16,
-        features: &EnabledFeatures,
-    ) {
-        if features.use_16bit_dc_estimate {
-            // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-            for i in 0..8 {
-                let delta: i16 = data[(i * 8) + 7].wrapping_sub(data[(i * 8) + 6]);
-                self.edge_pixels_v[i] = ((dc as i32 * qt[0] as i32) as i16)
-                    .wrapping_add(data[(i * 8) + 7])
-                    .wrapping_add((128 * X_IDCT_SCALE) as i16)
-                    .wrapping_add(delta / 2);
-            }
-        } else {
-            for i in 0..8 {
-                let delta = data[(i * 8) + 7] as i32 - data[(i * 8) + 6] as i32;
-                self.edge_pixels_v[i] = ((dc as i32 * qt[0] as i32)
-                    + data[(i * 8) + 7] as i32
-                    + (128 * X_IDCT_SCALE)
-                    + (delta / 2)) as i16;
-            }
+    pub fn set_vertical(&mut self, data: &[i16; 64], qt: &[u16; 64], dc: i16) {
+        for i in 0..8 {
+            let delta = data[(i * 8) + 7] as i32 - data[(i * 8) + 6] as i32;
+            self.edge_pixels_v[i] = ((dc as i32 * qt[0] as i32)
+                + data[(i * 8) + 7] as i32
+                + (128 * X_IDCT_SCALE)
+                + (delta / 2)) as i16;
         }
     }
 
