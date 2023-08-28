@@ -134,32 +134,40 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     result_size: *mut u64,
 ) -> i32 {
     match catch_unwind(|| {
-        let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
-
-        let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
-
-        let mut reader = Cursor::new(input);
-        let mut writer = Cursor::new(output);
-
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
         let mut enabled_features = EnabledFeatures::all();
         enabled_features.reject_dqts_with_zeros = false;
 
-        match decode_lepton_wrapper(
-            &mut reader,
-            &mut writer,
-            number_of_threads as usize,
-            &enabled_features,
-        ) {
-            Ok(_) => {}
-            Err(e) => {
-                return translate_error(e).exit_code as i32;
+        loop {
+            let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
+            let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
+
+            let mut reader = Cursor::new(input);
+            let mut writer = Cursor::new(output);
+
+            match decode_lepton_wrapper(
+                &mut reader,
+                &mut writer,
+                number_of_threads as usize,
+                &enabled_features,
+            ) {
+                Ok(_) => {
+                    *result_size = writer.position().into();
+                    return 0;
+                }
+                Err(e) => {
+                    // there's a bug in the C++ version where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path depending on the compiler options.
+                    // unfortunately there's no way to tell ahead of time other than the fact that the image will be decoded with an error.
+                    if !enabled_features.use_16bit_dc_estimate {
+                        // try again with the flag set
+                        enabled_features.use_16bit_dc_estimate = true;
+                        continue;
+                    }
+
+                    return translate_error(e).exit_code as i32;
+                }
             }
         }
-
-        *result_size = writer.position().into();
-
-        return 0;
     }) {
         Ok(code) => {
             return code;

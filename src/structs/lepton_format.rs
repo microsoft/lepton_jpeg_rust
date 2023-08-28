@@ -60,7 +60,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
         .context(here!())?;
 
     let metrics = lh
-        .recode_jpeg(writer, reader, size, num_threads)
+        .recode_jpeg(writer, reader, size, num_threads, enabled_features)
         .context(here!())?;
 
     return Ok(metrics);
@@ -83,6 +83,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         writer,
         &lp.thread_handoff[..],
         &image_data[..],
+        enabled_features,
     )
     .context(here!())?;
 
@@ -311,6 +312,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     reader: &mut R,
     last_data_position: u64,
     max_threads_to_use: usize,
+    features: &EnabledFeatures,
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
@@ -423,6 +425,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                             lh.thread_handoff[thread_id].luma_y_end,
                             thread_id == lh.thread_handoff.len() - 1,
                             true,
+                            features,
                         )
                         .context(here!())?,
                     );
@@ -522,6 +525,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
     image_data: &[BlockBasedImage],
+    features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -583,6 +587,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
                     thread_handoffs[thread_id].luma_y_end,
                     thread_id == thread_handoffs.len() - 1,
                     true,
+                    features,
                 )
                 .context(here!())?;
 
@@ -745,6 +750,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics, anyhow::Error> {
         writer.write_all(&SOI)?;
 
@@ -754,11 +760,23 @@ impl LeptonHeader {
             .context(here!())?;
 
         let metrics = if self.jpeg_header.jpeg_type == JPegType::Progressive {
-            self.recode_progressive_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?
+            self.recode_progressive_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                num_threads,
+                enabled_features,
+            )
+            .context(here!())?
         } else {
-            self.recode_baseline_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?
+            self.recode_baseline_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                num_threads,
+                enabled_features,
+            )
+            .context(here!())?
         };
 
         // Blit any trailing header data.
@@ -777,6 +795,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        features: &EnabledFeatures,
     ) -> Result<(Vec<BlockBasedImage>, Metrics)> {
         // run the threads first, since we need everything before we can start decoding
         let (metrics, mut results) = run_lepton_decoder_threads(
@@ -784,6 +803,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            features,
             |_thread_handoff, image_data, _lh| {
                 // just return the image data directly to be merged together
                 return Ok(image_data);
@@ -827,10 +847,11 @@ impl LeptonHeader {
         last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
         // run the threads first, since we need everything before we can start decoding
         let (merged, metrics) = self
-            .decode_as_single_image(reader, last_data_position, num_threads)
+            .decode_as_single_image(reader, last_data_position, num_threads, enabled_features)
             .context(here!())?;
 
         loop {
@@ -840,7 +861,7 @@ impl LeptonHeader {
             // read the next headers (DHT, etc) while mirroring it back to the writer
             let old_pos = self.raw_jpeg_header_read_index;
             let result = self
-                .advance_next_header_segment(&EnabledFeatures::all())
+                .advance_next_header_segment(enabled_features)
                 .context(here!())?;
 
             writer
@@ -866,6 +887,7 @@ impl LeptonHeader {
         last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
         // step 2: recode image data
         let (metrics, results) = run_lepton_decoder_threads(
@@ -873,6 +895,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            enabled_features,
             |thread_handoff, image_data, lh| {
                 let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
                 let mut cursor = Cursor::new(&mut result_buffer);
