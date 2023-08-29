@@ -156,15 +156,19 @@ pub unsafe extern "C" fn WrapperDecompressImage(
                     return 0;
                 }
                 Err(e) => {
+                    let exit_code = translate_error(e).exit_code;
+
                     // there's a bug in the C++ version where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path depending on the compiler options.
                     // unfortunately there's no way to tell ahead of time other than the fact that the image will be decoded with an error.
-                    if !enabled_features.use_16bit_dc_estimate {
+                    if exit_code == ExitCode::StreamInconsistent
+                        && !enabled_features.use_16bit_dc_estimate
+                    {
                         // try again with the flag set
                         enabled_features.use_16bit_dc_estimate = true;
                         continue;
                     }
 
-                    return translate_error(e).exit_code as i32;
+                    return exit_code as i32;
                 }
             }
         }
