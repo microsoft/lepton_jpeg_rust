@@ -10,8 +10,8 @@ use log::{info, warn};
 use std::cmp;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::swap;
-use std::sync::mpsc::Receiver;
 use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Receiver, SendError};
 use std::thread;
 use std::thread::ScopedJoinHandle;
 use std::time::Instant;
@@ -439,6 +439,9 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
             }));
         }
 
+        // track if we got an error while trying to send to a thread
+        let mut error_sending: Option<SendError<Message>> = None;
+
         // now that the threads are waiting for inptut, read the stream and send all the buffers to their respective readers
         while reader.stream_position().context(here!())? < last_data_position - 4 {
             let thread_marker = reader.read_u8().context(here!())?;
@@ -483,9 +486,13 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 )
             })?;
 
-            channel_to_sender[thread_id as usize]
-                .send(Message::WriteBlock(thread_id, buffer))
-                .context(here!())?;
+            let e =
+                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
+
+            if let Err(e) = e {
+                error_sending = Some(e);
+                break;
+            }
         }
         //info!("done sending!");
 
@@ -498,11 +505,17 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
 
         let mut result = Vec::new();
         for i in running_threads.drain(..) {
-            let thread_result = i.join().unwrap().context(here!())?;
+            let (result_to_process, source_metrics) = i.join().unwrap().context(here!())?;
 
-            metrics.merge_from(thread_result.1);
+            metrics.merge_from(source_metrics);
 
-            result.push(thread_result.0);
+            result.push(result_to_process);
+        }
+
+        // if there was an error during send, it should have resulted in an error from one of the threads above and
+        // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
+        if let Some(e) = error_sending {
+            return Err(e).context(here!());
         }
 
         info!(
