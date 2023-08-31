@@ -17,6 +17,7 @@ fuzz_target!(|data: &[u8]| {
         reject_dqts_with_zeros: true,
         max_jpeg_height: 1024,
         max_jpeg_width: 1024,
+        use_16bit_dc_estimate: false,
     };
 
     {
