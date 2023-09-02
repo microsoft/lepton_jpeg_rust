@@ -212,10 +212,11 @@ fn main_with_result() -> anyhow::Result<()> {
             let mut reader = Cursor::new(&input_data);
 
             output_data = Vec::with_capacity(input_data.len());
+            let mut writer = Cursor::new(&mut output_data);
 
             metrics = decode_lepton_wrapper(
                 &mut reader,
-                &mut output_data,
+                &mut writer,
                 num_threads as usize,
                 &enabled_features,
             )

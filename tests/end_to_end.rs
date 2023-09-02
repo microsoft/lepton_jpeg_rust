@@ -81,7 +81,7 @@ fn verify_decode(
 
     decode_lepton(
         &mut Cursor::new(input),
-        &mut output,
+        &mut Cursor::new(&mut output),
         8,
         &EnabledFeatures::all(),
     )
@@ -142,7 +142,7 @@ fn verify_encode(
 
     decode_lepton(
         &mut Cursor::new(lepton),
-        &mut output,
+        &mut Cursor::new(&mut output),
         8,
         &EnabledFeatures::all(),
     )
@@ -163,7 +163,7 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::all();
         features.use_16bit_dc_estimate = true;
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut Cursor::new(&mut output), 8, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -178,7 +178,7 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::all();
         features.use_16bit_dc_estimate = false;
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut Cursor::new(&mut output), 8, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }

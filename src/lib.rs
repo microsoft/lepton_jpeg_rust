@@ -46,7 +46,7 @@ fn translate_error(e: anyhow::Error) -> LeptonError {
 }
 
 /// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: Read + Seek, W: Write>(
+pub fn decode_lepton<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,

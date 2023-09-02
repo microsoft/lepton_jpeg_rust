@@ -43,7 +43,7 @@ use super::jpeg_read::{read_progressive_scan, read_scan};
 use super::jpeg_write::jpeg_write_entire_scan;
 
 /// reads a lepton file and writes it out as a jpeg
-pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
+pub fn decode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
@@ -121,6 +121,7 @@ pub fn encode_lepton_wrapper_verify(
     // decode and compare to original in order to enure we encoded correctly
 
     let mut verify_buffer = Vec::with_capacity(input_data.len());
+    let mut verifywriter = Cursor::new(&mut verify_buffer);
     let mut verifyreader = Cursor::new(&output_data[..]);
 
     info!("decompressing to verify contents");
@@ -128,7 +129,7 @@ pub fn encode_lepton_wrapper_verify(
     metrics.merge_from(
         decode_lepton_wrapper(
             &mut verifyreader,
-            &mut verify_buffer,
+            &mut verifywriter,
             max_threads,
             &enabled_features,
         )
@@ -757,7 +758,7 @@ impl LeptonHeader {
         };
     }
 
-    fn recode_jpeg<R: Read + Seek, W: Write>(
+    fn recode_jpeg<R: Read + Seek, W: Write + Seek>(
         &mut self,
         writer: &mut W,
         reader: &mut R,
@@ -797,6 +798,16 @@ impl LeptonHeader {
         writer
             .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
             .context(here!())?;
+
+        // Before writing the garbage data, bind the output to match the file plain text size. While this 
+        // logic usually does nothing and seems unneeded, it matches the Lepton C++ impl. and solves a
+        // back-compat case for a JPEG file with trailing restarts that were missing in the original JPG.
+        let plain_text_size_without_garbage_data = self.plain_text_size - (self.garbage_data.len() as u32);
+        let current_write_position = writer.stream_position()? as u32;
+        if current_write_position > plain_text_size_without_garbage_data
+        {
+            writer.seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64)).context(here!())?;
+        }
 
         writer.write_all(&self.garbage_data).context(here!())?;
         Ok(metrics)
