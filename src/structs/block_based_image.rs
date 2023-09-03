@@ -10,6 +10,8 @@ use crate::consts::{ALIGNED_BLOCK_INDEX_DC_INDEX, RASTER_TO_ALIGNED, ZIGZAG_TO_A
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
 
+use unroll::unroll_for_loops;
+
 /// holds the 8x8 blocks for a given component. Since we do multithreaded encoding,
 /// the image may only hold a subset of the components (specified by dpos_offset),
 /// but they can be merged
@@ -209,6 +211,17 @@ impl AlignedBlock {
     }
 
     /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
+    #[unroll_for_loops]
+    pub fn zigzag(&self) -> AlignedBlock {
+        let mut block = AlignedBlock::default();
+        for i in 0..64 {
+            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_ALIGNED[i])];
+        }
+        return block;
+    }
+
+    // used for debugging
+    #[allow(dead_code)]
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }
