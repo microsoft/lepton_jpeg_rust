@@ -41,6 +41,7 @@ use crate::{
     helpers::{err_exit_code, here, u16_bit_length},
     jpeg_code,
     lepton_error::ExitCode,
+    structs::block_based_image::AlignedBlock,
 };
 
 use std::io::Write;
@@ -194,14 +195,11 @@ fn recode_one_mcu_row<W: Write>(
 
             if jf.jpeg_type == JPegType::Sequential {
                 // unzigzag
-                let mut block = [0i16; 64]; // store block for coeffs
-                for bpos in 0..64 {
-                    block[bpos] = current_block.get_coefficient_zigzag(bpos);
-                }
+                let mut block = current_block.zigzag();
 
                 // diff coding for dc
-                let dc = block[0];
-                block[0] -= lastdc[state.get_cmp()];
+                let dc = block.get_block()[0];
+                block.get_block_mut()[0] -= lastdc[state.get_cmp()];
                 lastdc[state.get_cmp()] = dc;
 
                 // encode block
@@ -358,10 +356,10 @@ fn encode_block_seq(
     huffw: &mut BitWriter,
     dctbl: &HuffCodes,
     actbl: &HuffCodes,
-    block: &[i16; 64],
+    block: &AlignedBlock,
 ) {
     // process the array of coefficients as a 4 x 16 = 64 bit integer
-    let block64: &[u64; 16] = cast_ref(block);
+    let block64: &[u64; 16] = cast_ref(block.get_block());
 
     // little endian format since we want to read the 16-bit coefficients from the lowest to the highest in 64 bit chunks
     let mut current_value = u64::from_le(block64[0]);
@@ -683,4 +681,88 @@ fn test_envli() {
         let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u32;
         assert_eq!(n, n2, "i={} s={}", i, s);
     }
+}
+
+#[test]
+fn test_encode_block_seq() {
+    let mut buf = Vec::new();
+
+    let mut b = BitWriter::new();
+    let mut block = AlignedBlock::default();
+    for i in 0..64 {
+        block.get_block_mut()[i] = i as i16;
+    }
+
+    encode_block_seq(
+        &mut b,
+        &HuffCodes::construct_default_code(),
+        &HuffCodes::construct_default_code(),
+        &block,
+    );
+
+    b.flush_with_escape(&mut buf).unwrap();
+
+    let expected = [
+        0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 130, 80, 37, 130, 96, 38, 130, 112,
+        39, 130, 192, 22, 32, 178, 5, 152, 45, 1, 106, 11, 96, 91, 130, 224, 23, 32, 186, 5, 216,
+        47, 1, 122, 11, 224, 95, 131, 64, 13, 8, 52, 64, 209, 131, 72, 13, 40, 52, 192, 211, 131,
+        80, 13, 72, 53, 64, 213, 131, 88, 13, 104, 53, 192, 215, 131, 96, 13, 136, 54, 64, 217,
+        131, 104, 13, 168, 54, 192, 219, 131, 112, 13, 200, 55, 64, 221, 131, 120, 13, 232, 55,
+        192, 223,
+    ];
+    assert_eq!(buf, expected);
+}
+
+#[test]
+fn test_encode_block_zero_runs() {
+    let mut buf = Vec::new();
+
+    let mut b = BitWriter::new();
+    let mut block = AlignedBlock::default();
+
+    for i in 0..10 {
+        block.get_block_mut()[i] = i as i16;
+    }
+    for i in 30..50 {
+        block.get_block_mut()[i] = i as i16;
+    }
+    for i in 50..52 {
+        block.get_block_mut()[i] = i as i16;
+    }
+
+    encode_block_seq(
+        &mut b,
+        &HuffCodes::construct_default_code(),
+        &HuffCodes::construct_default_code(),
+        &block,
+    );
+
+    b.flush_with_escape(&mut buf).unwrap();
+
+    let expected = [
+        0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 248, 34, 248, 23, 224, 208, 3, 66, 13,
+        16, 52, 96, 210, 3, 74, 13, 48, 52, 224, 212, 3, 82, 13, 80, 53, 96, 214, 3, 90, 13, 112,
+        53, 224, 216, 3, 98, 13, 144, 54, 96,
+    ];
+    assert_eq!(buf, expected);
+}
+
+#[test]
+fn test_encode_block_seq_zero() {
+    let mut buf = Vec::new();
+
+    let mut b: BitWriter = BitWriter::new();
+    let block = AlignedBlock::default();
+
+    encode_block_seq(
+        &mut b,
+        &HuffCodes::construct_default_code(),
+        &HuffCodes::construct_default_code(),
+        &block,
+    );
+
+    b.flush_with_escape(&mut buf).unwrap();
+
+    let expected = [0, 0];
+    assert_eq!(buf, expected);
 }

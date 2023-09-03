@@ -62,6 +62,19 @@ impl HuffCodes {
             max_eob_run: 0,
         }
     }
+
+    #[cfg(test)]
+    pub fn construct_default_code() -> Self {
+        let mut retval = HuffCodes::new();
+
+        for i in 0..256 {
+            retval.c_len[i] = 8;
+            retval.c_val[i] = i as u16;
+            retval.c_val_shift[i] = (retval.c_val[i] as u32) << (i & 0xf);
+        }
+
+        retval
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
