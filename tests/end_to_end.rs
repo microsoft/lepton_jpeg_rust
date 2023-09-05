@@ -67,8 +67,9 @@ fn verify_decode(
         "trailingrst",
         "trailingrst2",
         "trunc",
-        "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
-        "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
+        "eof_and_trailingrst",          // the lepton format has a wrongly set unexpected eof and trailing rst
+        "eof_and_trailinghdrdata",      // the lepton format has a wrongly set unexpected eof and trailing header data
+        "trailingrst_missing_in_jpg"    // the lepton format has trailing rsts but they are missing in the JPG
     )]
     file: &str,
 ) {
