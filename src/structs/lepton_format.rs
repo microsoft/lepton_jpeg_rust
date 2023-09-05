@@ -799,14 +799,16 @@ impl LeptonHeader {
             .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
             .context(here!())?;
 
-        // Before writing the garbage data, bind the output to match the file plain text size. While this 
+        // Before writing the garbage data, bind the output to match the file plain text size. While this
         // logic usually does nothing and seems unneeded, it matches the Lepton C++ impl. and solves a
         // back-compat case for a JPEG file with trailing restarts that were missing in the original JPG.
-        let plain_text_size_without_garbage_data = self.plain_text_size - (self.garbage_data.len() as u32);
+        let plain_text_size_without_garbage_data =
+            self.plain_text_size - (self.garbage_data.len() as u32);
         let current_write_position = writer.stream_position()? as u32;
-        if current_write_position > plain_text_size_without_garbage_data
-        {
-            writer.seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64)).context(here!())?;
+        if current_write_position > plain_text_size_without_garbage_data {
+            writer
+                .seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64))
+                .context(here!())?;
         }
 
         writer.write_all(&self.garbage_data).context(here!())?;

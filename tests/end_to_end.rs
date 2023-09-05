@@ -69,7 +69,7 @@ fn verify_decode(
         "trunc",
         "eof_and_trailingrst",          // the lepton format has a wrongly set unexpected eof and trailing rst
         "eof_and_trailinghdrdata",      // the lepton format has a wrongly set unexpected eof and trailing header data
-        "trailingrst_missing_in_jpg"    // the lepton format has trailing rsts but they are missing in the JPG
+        "trailingrst_missing_in_jpg"    // trailing rsts are missing in the JPG
     )]
     file: &str,
 ) {
@@ -125,6 +125,7 @@ fn verify_encode(
             "trailingrst",
             "trailingrst2",
             "trunc",
+            "trailingrst_missing_in_jpg"    // trailing rsts are missing in the JPG
         )]
     file: &str,
 ) {
@@ -164,7 +165,13 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::all();
         features.use_16bit_dc_estimate = true;
 
-        decode_lepton(&mut Cursor::new(input), &mut Cursor::new(&mut output), 8, &features).unwrap();
+        decode_lepton(
+            &mut Cursor::new(input),
+            &mut Cursor::new(&mut output),
+            8,
+            &features,
+        )
+        .unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -179,7 +186,13 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::all();
         features.use_16bit_dc_estimate = false;
 
-        decode_lepton(&mut Cursor::new(input), &mut Cursor::new(&mut output), 8, &features).unwrap();
+        decode_lepton(
+            &mut Cursor::new(input),
+            &mut Cursor::new(&mut output),
+            8,
+            &features,
+        )
+        .unwrap();
 
         assert!(output[..] == expected[..]);
     }
