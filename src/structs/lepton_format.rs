@@ -43,7 +43,7 @@ use super::jpeg_read::{read_progressive_scan, read_scan};
 use super::jpeg_write::jpeg_write_entire_scan;
 
 /// reads a lepton file and writes it out as a jpeg
-pub fn decode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
+pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
@@ -121,7 +121,6 @@ pub fn encode_lepton_wrapper_verify(
     // decode and compare to original in order to enure we encoded correctly
 
     let mut verify_buffer = Vec::with_capacity(input_data.len());
-    let mut verifywriter = Cursor::new(&mut verify_buffer);
     let mut verifyreader = Cursor::new(&output_data[..]);
 
     info!("decompressing to verify contents");
@@ -129,7 +128,7 @@ pub fn encode_lepton_wrapper_verify(
     metrics.merge_from(
         decode_lepton_wrapper(
             &mut verifyreader,
-            &mut verifywriter,
+            &mut verify_buffer,
             max_threads,
             &enabled_features,
         )
@@ -758,7 +757,7 @@ impl LeptonHeader {
         };
     }
 
-    fn recode_jpeg<R: Read + Seek, W: Write + Seek>(
+    fn recode_jpeg<R: Read + Seek, W: Write>(
         &mut self,
         writer: &mut W,
         reader: &mut R,
@@ -787,7 +786,10 @@ impl LeptonHeader {
                 reader,
                 last_data_position,
                 writer,
-                self.plain_text_size as u64 - self.garbage_data.len() as u64 - self.raw_jpeg_header_read_index as u64 - SOI.len() as u64,
+                self.plain_text_size as u64
+                    - self.garbage_data.len() as u64
+                    - self.raw_jpeg_header_read_index as u64
+                    - SOI.len() as u64,
                 num_threads,
                 enabled_features,
             )
@@ -799,16 +801,6 @@ impl LeptonHeader {
         writer
             .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
             .context(here!())?;
-
-        // Before writing the garbage data, bind the output to match the file plain text size. While this 
-        // logic usually does nothing and seems unneeded, it matches the Lepton C++ impl. and solves a
-        // back-compat case for a JPEG file with trailing restarts that were missing in the original JPG.
-        let plain_text_size_without_garbage_data = self.plain_text_size - (self.garbage_data.len() as u32);
-        let current_write_position = writer.stream_position()? as u32;
-        if current_write_position > plain_text_size_without_garbage_data
-        {
-            writer.seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64)).context(here!())?;
-        }
 
         writer.write_all(&self.garbage_data).context(here!())?;
         Ok(metrics)
@@ -911,7 +903,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         writer: &mut W,
-        size_limit : u64,
+        size_limit: u64,
         num_threads: usize,
         enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
@@ -953,7 +945,6 @@ impl LeptonHeader {
                 combined_thread_handoff.num_overhang_bits
             );
 
-                assert!(result_buffer.len() >= thread_handoff.segment_size as usize, "delta {} {}", result_buffer.len() as i32 - thread_handoff.segment_size, lh.rst_err[0] );
                 if result_buffer.len() > thread_handoff.segment_size as usize {
                     warn!("warning: truncating segment");
                     result_buffer.resize(thread_handoff.segment_size as usize, 0);
@@ -963,7 +954,7 @@ impl LeptonHeader {
             },
         )?;
 
-        let mut amount_written : u64 = 0;
+        let mut amount_written: u64 = 0;
 
         // write all the buffers that we collected
         for r in results {
@@ -973,6 +964,9 @@ impl LeptonHeader {
 
         // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
         // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        //
+        // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
+        // data to store any extra RST codes or whatever else might be at the end of the file.
         if self.rst_err.len() > 0 {
             let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
                 ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
@@ -980,9 +974,8 @@ impl LeptonHeader {
                 0
             } as u8;
             for i in 0..self.rst_err[0] as u8 {
-
-                // the C++ version will strangely ask for extra rst codes even if we are at the end of the file and shouldn't
-                // be emitting anything more, so if we are over the size limit then don't emit the RST code
+                // the C++ version will strangely sometimes ask for extra rst codes even if we are at the end of the file and shouldn't
+                // be emitting anything more, so if we are over or at the size limit then don't emit the RST code
                 if amount_written >= size_limit {
                     break;
                 }
@@ -1115,7 +1108,7 @@ impl LeptonHeader {
                 // re-adjust the last segment size
                 last.segment_size = max_last_segment_size;
             }
-        } 
+        }
 
         Ok(())
     }
