@@ -787,6 +787,7 @@ impl LeptonHeader {
                 reader,
                 last_data_position,
                 writer,
+                self.plain_text_size as u64 - self.garbage_data.len() as u64 - self.raw_jpeg_header_read_index as u64 - SOI.len() as u64,
                 num_threads,
                 enabled_features,
             )
@@ -799,14 +800,16 @@ impl LeptonHeader {
             .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
             .context(here!())?;
 
-        // Before writing the garbage data, bind the output to match the file plain text size. While this 
+        // Before writing the garbage data, bind the output to match the file plain text size. While this
         // logic usually does nothing and seems unneeded, it matches the Lepton C++ impl. and solves a
         // back-compat case for a JPEG file with trailing restarts that were missing in the original JPG.
-        let plain_text_size_without_garbage_data = self.plain_text_size - (self.garbage_data.len() as u32);
+        let plain_text_size_without_garbage_data =
+            self.plain_text_size - (self.garbage_data.len() as u32);
         let current_write_position = writer.stream_position()? as u32;
-        if current_write_position > plain_text_size_without_garbage_data
-        {
-            writer.seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64)).context(here!())?;
+        if current_write_position > plain_text_size_without_garbage_data {
+            writer
+                .seek(SeekFrom::Start(plain_text_size_without_garbage_data as u64))
+                .context(here!())?;
         }
 
         writer.write_all(&self.garbage_data).context(here!())?;
@@ -910,6 +913,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         writer: &mut W,
+        size_limit : u64,
         num_threads: usize,
         enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
@@ -951,6 +955,7 @@ impl LeptonHeader {
                 combined_thread_handoff.num_overhang_bits
             );
 
+                assert!(result_buffer.len() >= thread_handoff.segment_size as usize, "delta {} {}", result_buffer.len() as i32 - thread_handoff.segment_size, lh.rst_err[0] );
                 if result_buffer.len() > thread_handoff.segment_size as usize {
                     warn!("warning: truncating segment");
                     result_buffer.resize(thread_handoff.segment_size as usize, 0);
@@ -960,8 +965,11 @@ impl LeptonHeader {
             },
         )?;
 
+        let mut amount_written : u64 = 0;
+
         // write all the buffers that we collected
         for r in results {
+            amount_written += r.len() as u64;
             writer.write_all(&r[..]).context(here!())?;
         }
 
@@ -974,9 +982,17 @@ impl LeptonHeader {
                 0
             } as u8;
             for i in 0..self.rst_err[0] as u8 {
+
+                // the C++ version will strangely ask for extra rst codes even if we are at the end of the file and shouldn't
+                // be emitting anything more, so if we are over the size limit then don't emit the RST code
+                if amount_written >= size_limit {
+                    break;
+                }
+
                 let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
                 writer.write_u8(0xFF)?;
                 writer.write_u8(rst)?;
+                amount_written += 2;
             }
         }
 
@@ -1088,7 +1104,7 @@ impl LeptonHeader {
             let mut max_last_segment_size = i32::try_from(self.plain_text_size)?
                 - i32::try_from(self.garbage_data.len())?
                 - i32::try_from(self.raw_jpeg_header_read_index)?
-                - 2;
+                - SOI.len() as i32;
 
             // subtract the segment sizes of all the previous segments (except for the last)
             for i in 0..num_threads - 1 {
@@ -1101,7 +1117,7 @@ impl LeptonHeader {
                 // re-adjust the last segment size
                 last.segment_size = max_last_segment_size;
             }
-        }
+        } 
 
         Ok(())
     }
