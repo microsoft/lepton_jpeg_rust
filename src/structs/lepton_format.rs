@@ -968,22 +968,25 @@ impl LeptonHeader {
         // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
         // data to store any extra RST codes or whatever else might be at the end of the file.
         if self.rst_err.len() > 0 {
+            let mut markers = Vec::new();
+
             let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
                 ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
             } else {
                 0
             } as u8;
             for i in 0..self.rst_err[0] as u8 {
-                // the C++ version will strangely sometimes ask for extra rst codes even if we are at the end of the file and shouldn't
-                // be emitting anything more, so if we are over or at the size limit then don't emit the RST code
-                if amount_written >= size_limit {
-                    break;
-                }
-
                 let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
-                writer.write_u8(0xFF)?;
-                writer.write_u8(rst)?;
-                amount_written += 2;
+                markers.push(0xFF);
+                markers.push(rst);
+            }
+
+            // the C++ version will strangely sometimes ask for extra rst codes even if we are at the end of the file and shouldn't
+            // be emitting anything more, so if we are over or at the size limit then don't emit the RST code
+            if amount_written < size_limit {
+                writer.write_all(
+                    &markers[0..cmp::min(markers.len(), (size_limit - amount_written) as usize)],
+                )?;
             }
         }
 
