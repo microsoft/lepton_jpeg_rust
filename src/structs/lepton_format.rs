@@ -786,6 +786,10 @@ impl LeptonHeader {
                 reader,
                 last_data_position,
                 writer,
+                self.plain_text_size as u64
+                    - self.garbage_data.len() as u64
+                    - self.raw_jpeg_header_read_index as u64
+                    - SOI.len() as u64,
                 num_threads,
                 enabled_features,
             )
@@ -899,6 +903,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         writer: &mut W,
+        size_limit: u64,
         num_threads: usize,
         enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
@@ -949,14 +954,22 @@ impl LeptonHeader {
             },
         )?;
 
+        let mut amount_written: u64 = 0;
+
         // write all the buffers that we collected
         for r in results {
+            amount_written += r.len() as u64;
             writer.write_all(&r[..]).context(here!())?;
         }
 
         // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
         // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        //
+        // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
+        // data to store any extra RST codes or whatever else might be at the end of the file.
         if self.rst_err.len() > 0 {
+            let mut markers = Vec::new();
+
             let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
                 ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
             } else {
@@ -964,8 +977,16 @@ impl LeptonHeader {
             } as u8;
             for i in 0..self.rst_err[0] as u8 {
                 let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
-                writer.write_u8(0xFF)?;
-                writer.write_u8(rst)?;
+                markers.push(0xFF);
+                markers.push(rst);
+            }
+
+            // the C++ version will strangely sometimes ask for extra rst codes even if we are at the end of the file and shouldn't
+            // be emitting anything more, so if we are over or at the size limit then don't emit the RST code
+            if amount_written < size_limit {
+                writer.write_all(
+                    &markers[0..cmp::min(markers.len(), (size_limit - amount_written) as usize)],
+                )?;
             }
         }
 
@@ -1077,7 +1098,7 @@ impl LeptonHeader {
             let mut max_last_segment_size = i32::try_from(self.plain_text_size)?
                 - i32::try_from(self.garbage_data.len())?
                 - i32::try_from(self.raw_jpeg_header_read_index)?
-                - 2;
+                - SOI.len() as i32;
 
             // subtract the segment sizes of all the previous segments (except for the last)
             for i in 0..num_threads - 1 {
