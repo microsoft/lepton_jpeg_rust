@@ -22,8 +22,7 @@ impl BitWriter {
         };
     }
 
-    #[inline(never)]
-    fn flush_bytes_slowly(&mut self) {
+    fn flush_bytes(&mut self) {
         let mut tmp_current_bit = self.current_bit;
         let mut tmp_fill_register = self.fill_register;
 
@@ -44,8 +43,32 @@ impl BitWriter {
         self.current_bit = tmp_current_bit;
     }
 
+    /// writes the given value to the buffer, escaping 0xff bytes on at a time.
+    /// This is a slow path that is only used when we have 0xff bytes in the data,
+    /// or when we are about to overflow the buffer.
+    #[inline(never)]
+    #[cold]
+    pub fn write_u64_slowly(&mut self, val: u64) {
+        let mut tmp_current_bit = 0;
+        let mut tmp_fill_register = val;
+
+        while tmp_current_bit <= 56 {
+            let b = (tmp_fill_register >> 56) as u8;
+            if b != 0xff {
+                self.data_buffer.push(b);
+            } else {
+                // escape 0xff here to avoid multiple scans of the same data
+                self.data_buffer.extend_from_slice(&[0xff, 0]);
+            }
+
+            tmp_fill_register <<= 8;
+            tmp_current_bit += 8;
+        }
+    }
+
     #[inline(always)]
-    pub fn write(&mut self, mut val: u32, mut new_bits: u32) {
+    pub fn write(&mut self, val: u64, new_bits: u32) {
+        debug_assert!(new_bits <= 64, "new_bits {0} should be <= 64", new_bits);
         debug_assert!(
             val < (1 << new_bits),
             "value {0} should fit into the number of {1} bits provided",
@@ -55,32 +78,35 @@ impl BitWriter {
 
         // first see if everything fits in the current register
         if new_bits <= self.current_bit {
-            self.fill_register |= (val as u64).wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = self.current_bit - new_bits;
+            let cbit = self.current_bit.wrapping_sub(new_bits);
+            self.fill_register |= val.wrapping_shl(cbit); // support corner case where new_bits is zero, we don't want to panic
+            self.current_bit = cbit;
         } else {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
-            let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
+            let leftover_bits = new_bits.wrapping_sub(self.current_bit);
+            let value_to_write = self.fill_register | val.wrapping_shr(leftover_bits);
 
-            new_bits -= self.current_bit;
-            val &= (1 << new_bits) - 1;
+            self.fill_register = (val as u64).wrapping_shl(64 - leftover_bits); // support corner case where new_bits is zero, we don't want to panic
+            self.current_bit = 64 - leftover_bits;
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
-            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) != 0
+            if (value_to_write
+                & 0x8080808080808080
+                & !value_to_write.wrapping_add(0x0101010101010101))
+                != 0
                 || self
                     .data_buffer
                     .capacity()
                     .wrapping_sub(self.data_buffer.len())
                     < 8
             {
-                self.fill_register = fill;
-                self.current_bit = 0;
-                self.flush_bytes_slowly();
+                self.write_u64_slowly(value_to_write);
             } else {
-                self.data_buffer.extend_from_slice(&fill.to_be_bytes());
+                // this is the fast path, we can just write the 64 bit value directly to the buffer without escaping 0xff bytes or bounds checks
+                self.data_buffer
+                    .extend_from_slice(&value_to_write.to_be_bytes());
             }
-            self.fill_register = (val as u64).wrapping_shl(64 - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = 64 - new_bits;
         }
     }
 
@@ -91,7 +117,7 @@ impl BitWriter {
             offset <<= 1;
         }
 
-        self.flush_bytes_slowly();
+        self.flush_bytes();
 
         debug_assert!(
             self.current_bit == 64,
@@ -102,7 +128,7 @@ impl BitWriter {
     // flushes the data buffer while escaping all 0xff characters
     pub fn flush_with_escape<W: Write>(&mut self, w: &mut W) -> anyhow::Result<()> {
         // flush any remaining whole bytes
-        self.flush_bytes_slowly();
+        self.flush_bytes();
 
         w.write_all(&self.data_buffer[..])?;
 
@@ -210,7 +236,7 @@ fn roundtrip_randombits() {
 
         let mut b = BitWriter::new();
         for i in &test_data {
-            b.write(i.0 as u32, i.1 as u32);
+            b.write(i.0 as u64, i.1 as u32);
 
             // randomly flush the buffer
             if rng.gen_range(0..50) == 0 {
