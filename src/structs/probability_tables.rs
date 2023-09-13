@@ -19,6 +19,7 @@ use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
 use wide::i16x8;
+use wide::i32x8;
 
 pub struct ProbabilityTables {
     left_present: bool,
@@ -259,78 +260,111 @@ impl ProbabilityTables {
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
     ) -> PredictDCResult {
-        let mut uncertainty_val: i16 = 0;
-        let mut uncertainty2_val: i16 = 0;
-
         let mut pixels_sans_dc = [0i16; 64];
         let q = qt.get_quantization_table();
 
-        let mut avgmed = 0;
-
         run_idct::<true>(here, q, &mut pixels_sans_dc);
 
-        if ALL_PRESENT || self.left_present || self.above_present {
-            let mut min_dc = i16::MAX;
-            let mut max_dc = i16::MIN;
+        // helper functions to avoid code duplication that calculate the left and above prediction values
 
-            let avg_horizontal_option;
-            if ALL_PRESENT || self.left_present {
-                let left_context = block_context.neighbor_context_left(num_non_zeros);
+        let calc_left = || {
+            let left_context = block_context.neighbor_context_left(num_non_zeros);
 
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 8);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 1, 8);
-                let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 8);
+            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 1, 8);
+            let pixel_delta = a1 - a2;
+            let a: i16x8 = a1 + 1024;
+            let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
 
-                let dc_estimates = (b - a).to_array();
+            b - a
+        };
 
-                avg_horizontal_option = Some(ProbabilityTables::estimate_dir_average(
-                    &dc_estimates,
-                    &mut min_dc,
-                    &mut max_dc,
-                ));
-            } else {
-                avg_horizontal_option = None;
-            }
+        let calc_above = || {
+            let above_context = block_context.neighbor_context_above(num_non_zeros);
 
-            let avg_vertical_option;
+            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 1);
+            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 8, 1);
+            let pixel_delta = a1 - a2;
+            let a: i16x8 = a1 + 1024;
+            let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+
+            b - a
+        };
+
+        let min_dc_vec;
+        let max_dc_vec;
+        let mut avg_horizontal: i32;
+        let mut avg_vertical: i32;
+
+        if ALL_PRESENT || self.left_present {
             if ALL_PRESENT || self.above_present {
-                let above_context = block_context.neighbor_context_above(num_non_zeros);
+                // most common case where we have both left and above
 
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 1);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 8, 1);
-                let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+                let horiz = calc_left();
+                let vert = calc_above();
 
-                let dc_estimates = (b - a).to_array();
+                min_dc_vec = horiz.min(vert);
+                max_dc_vec = horiz.max(vert);
 
-                avg_vertical_option = Some(ProbabilityTables::estimate_dir_average(
-                    &dc_estimates,
-                    &mut min_dc,
-                    &mut max_dc,
-                ));
+                // compile does a great job vectorizing this
+                avg_horizontal = i32x8::from_i16x8(horiz).as_array_ref().iter().sum();
+                avg_vertical = i32x8::from_i16x8(vert).as_array_ref().iter().sum();
             } else {
-                avg_vertical_option = None;
+                let horiz = calc_left();
+                min_dc_vec = horiz;
+                max_dc_vec = horiz;
+
+                avg_horizontal = i32x8::from_i16x8(horiz).as_array_ref().iter().sum();
+                avg_vertical = avg_horizontal;
             }
-
-            let mut avg_vertical = avg_vertical_option.or(avg_horizontal_option).unwrap();
-            let mut avg_horizontal = avg_horizontal_option.or(avg_vertical_option).unwrap();
-
-            let overall_avg: i32 = (avg_vertical + avg_horizontal) >> 1;
-            avgmed = overall_avg;
-            uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
-            avg_horizontal -= avgmed;
-            avg_vertical -= avgmed;
-
-            let mut far_afield_value = avg_vertical;
-            if avg_horizontal.abs() < avg_vertical.abs() {
-                far_afield_value = avg_horizontal;
-            }
-
-            uncertainty2_val = (far_afield_value >> 3) as i16;
+        } else if self.above_present {
+            let vert = calc_above();
+            min_dc_vec = vert;
+            max_dc_vec = vert;
+            avg_vertical = i32x8::from_i16x8(vert).as_array_ref().iter().sum();
+            avg_horizontal = avg_vertical;
+        } else {
+            return PredictDCResult {
+                predicted_dc: 0,
+                uncertainty: 0,
+                uncertainty2: 0,
+                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            };
         }
+
+        let min_dc = min(
+            min(
+                min(min_dc_vec.as_array_ref()[0], min_dc_vec.as_array_ref()[1]),
+                min(min_dc_vec.as_array_ref()[2], min_dc_vec.as_array_ref()[3]),
+            ),
+            min(
+                min(min_dc_vec.as_array_ref()[4], min_dc_vec.as_array_ref()[5]),
+                min(min_dc_vec.as_array_ref()[6], min_dc_vec.as_array_ref()[7]),
+            ),
+        );
+
+        let max_dc = max(
+            max(
+                max(max_dc_vec.as_array_ref()[0], max_dc_vec.as_array_ref()[1]),
+                max(max_dc_vec.as_array_ref()[2], max_dc_vec.as_array_ref()[3]),
+            ),
+            max(
+                max(max_dc_vec.as_array_ref()[4], max_dc_vec.as_array_ref()[5]),
+                max(max_dc_vec.as_array_ref()[6], max_dc_vec.as_array_ref()[7]),
+            ),
+        );
+
+        let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
+        let uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
+        avg_horizontal -= avgmed;
+        avg_vertical -= avgmed;
+
+        let mut far_afield_value = avg_vertical;
+        if avg_horizontal.abs() < avg_vertical.abs() {
+            far_afield_value = avg_horizontal;
+        }
+
+        let uncertainty2_val = (far_afield_value >> 3) as i16;
 
         return PredictDCResult {
             predicted_dc: ((avgmed / i32::from(q[0])) + 4) >> 3,
@@ -338,43 +372,5 @@ impl ProbabilityTables {
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
         };
-    }
-
-    fn estimate_dir_average(dc_estimates: &[i16; 8], min_dc: &mut i16, max_dc: &mut i16) -> i32 {
-        let mut dir_average: i32 = 0;
-        for i in 0..8 {
-            let cur_est = dc_estimates[i];
-            dir_average += cur_est as i32;
-        }
-
-        // compiler vectorizes this using pminsw and pmaxsw, so no need to optimize further
-        *min_dc = min(
-            *min_dc,
-            min(
-                min(
-                    min(dc_estimates[0], dc_estimates[1]),
-                    min(dc_estimates[2], dc_estimates[3]),
-                ),
-                min(
-                    min(dc_estimates[4], dc_estimates[5]),
-                    min(dc_estimates[6], dc_estimates[7]),
-                ),
-            ),
-        );
-        *max_dc = max(
-            *max_dc,
-            max(
-                max(
-                    max(dc_estimates[0], dc_estimates[1]),
-                    max(dc_estimates[2], dc_estimates[3]),
-                ),
-                max(
-                    max(dc_estimates[4], dc_estimates[5]),
-                    max(dc_estimates[6], dc_estimates[7]),
-                ),
-            ),
-        );
-
-        return dir_average;
     }
 }
