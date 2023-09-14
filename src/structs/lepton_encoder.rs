@@ -330,10 +330,12 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    for coord in UNZIGZAG_49 {
+    for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
+
+        let coord = UNZIGZAG_49[zig49];
 
         let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
@@ -344,7 +346,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
             .write_coef(
                 bool_writer,
                 coef,
-                coord as usize,
+                zig49,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
@@ -515,11 +517,14 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         .context(here!())?;
 
     let delta;
+    let mut zig15offset;
 
     if HORIZONTAL {
         delta = 1;
+        zig15offset = 0;
     } else {
         delta = 8;
+        zig15offset = 7;
     }
 
     let mut coord = delta;
@@ -540,7 +545,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         let coef = block.get_coefficient(coord);
 
         model_per_color
-            .write_edge_coefficient(bool_writer, qt, coef, coord, &ptcc8)
+            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
             .context(here!())?;
 
         if coef != 0 {
@@ -548,6 +553,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         coord += delta;
+        zig15offset += 1;
     }
 
     Ok(())

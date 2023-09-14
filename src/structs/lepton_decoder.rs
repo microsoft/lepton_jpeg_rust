@@ -313,28 +313,30 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    for coord in UNZIGZAG_49 {
+    for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
 
-        debug_assert!(
-            (coord & 7) > 0 && (coord >> 3) > 0,
-            "this does the DC and the lower 7x7 AC"
-        );
+        let coord = UNZIGZAG_49[zig49];
 
         let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
         let coef = model_per_color
             .read_coef(
                 bool_reader,
-                coord as usize,
+                zig49,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;
 
         if coef != 0 {
+            debug_assert!(
+                (coord & 7) > 0 && (coord >> 3) > 0,
+                "this does the DC and the lower 7x7 AC"
+            );
+
             let b_x = coord & 7;
             let b_y = coord >> 3;
 
@@ -457,11 +459,14 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     let delta;
+    let mut zig15offset;
 
     if HORIZONTAL {
         delta = 1;
+        zig15offset = 0;
     } else {
         delta = 8;
+        zig15offset = 7;
     }
 
     let mut coord = delta;
@@ -480,7 +485,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge,
         );
 
-        let coef = model_per_color.read_edge_coefficient(bool_reader, qt, coord, &ptcc8)?;
+        let coef =
+            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
@@ -489,6 +495,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         here_mut.set_coefficient(coord, coef);
 
         coord += delta;
+        zig15offset += 1;
     }
 
     Ok(())
