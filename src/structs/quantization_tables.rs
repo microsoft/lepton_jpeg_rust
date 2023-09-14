@@ -50,7 +50,7 @@ impl QuantizationTables {
 
     fn set_quantization_table(&mut self, _color: usize, quantization_table: &[u16; 64]) {
         for i in 0..64 {
-            self.quantization_table[i] = quantization_table[RASTER_TO_JPEG_ZIGZAG[i] as usize];
+            self.quantization_table[i] = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
         }
 
         // transpose the quantization table as an 8x8 block.

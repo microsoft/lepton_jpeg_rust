@@ -11,7 +11,6 @@ use default_boxed::DefaultBoxed;
 use std::cmp;
 use std::io::Read;
 
-use crate::consts::{LOG_TABLE_256, RASTER_TO_ALIGNED, UNZIGZAG_49};
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
@@ -313,37 +312,41 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    for zz in 0..49 {
+    for coord in 9..64 {
+        // skip left edges
+        if coord & 0x7 == 0 {
+            continue;
+        }
+
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
 
-        let best_prior_bit_length = u16_bit_length(best_priors[zz] as u16);
+        debug_assert!(
+            (coord & 7) > 0 && (coord >> 3) > 0,
+            "this does the DC and the lower 7x7 AC"
+        );
+
+        let best_prior_bit_length = u16_bit_length(best_priors[coord] as u16);
 
         let coef = model_per_color
             .read_coef(
                 bool_reader,
-                zz.into(),
+                coord,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;
 
         if coef != 0 {
-            let coord = UNZIGZAG_49[zz];
-            debug_assert!(
-                (coord & 7) > 0 && (coord >> 3) > 0,
-                "this does the DC and the lower 7x7 AC"
-            );
-
             let b_x = coord & 7;
             let b_y = coord >> 3;
 
-            eob_x = cmp::max(eob_x, b_x);
-            eob_y = cmp::max(eob_y, b_y);
+            eob_x = cmp::max(eob_x, b_x as u8);
+            eob_y = cmp::max(eob_y, b_y as u8);
             num_non_zeros_left_7x7 -= 1;
 
-            output.set_coefficient(zz, coef);
+            output.set_coefficient(coord, coef);
         }
     }
 
@@ -457,26 +460,17 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
     }
 
-    let aligned_block_offset;
-    let log_edge_step;
     let delta;
-    let mut zig15offset;
 
     if HORIZONTAL {
-        log_edge_step = LOG_TABLE_256[(RASTER_TO_ALIGNED[2] - RASTER_TO_ALIGNED[1]) as usize];
-        aligned_block_offset = RASTER_TO_ALIGNED[1];
         delta = 1;
-        zig15offset = 0;
     } else {
-        log_edge_step = LOG_TABLE_256[(RASTER_TO_ALIGNED[16] - RASTER_TO_ALIGNED[8]) as usize];
-        aligned_block_offset = RASTER_TO_ALIGNED[8];
         delta = 8;
-        zig15offset = 7;
     }
 
     let mut coord = delta;
 
-    for lane in 0..7 {
+    for _lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
         }
@@ -490,20 +484,15 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge,
         );
 
-        let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
+        let coef = model_per_color.read_edge_coefficient(bool_reader, qt, coord, &ptcc8)?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
         }
 
-        here_mut.set_coefficient(
-            aligned_block_offset as usize + (lane << log_edge_step),
-            coef,
-        );
+        here_mut.set_coefficient(coord, coef);
 
         coord += delta;
-        zig15offset += 1;
     }
 
     Ok(())

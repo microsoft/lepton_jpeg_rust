@@ -32,18 +32,18 @@ const R2: i32 = 181; // 256/sqrt(2)
 #[inline(always)]
 fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
     return i32x8::new([
+        block.get_coefficient(7 * stride + offset) as i32,
+        block.get_coefficient(6 * stride + offset) as i32,
+        block.get_coefficient(5 * stride + offset) as i32,
+        block.get_coefficient(4 * stride + offset) as i32,
+        block.get_coefficient(3 * stride + offset) as i32,
+        block.get_coefficient(2 * stride + offset) as i32,
+        block.get_coefficient(1 * stride + offset) as i32,
         if IGNORE_DC && offset == 0 {
             0
         } else {
-            block.get_coefficient_raster(offset) as i32
+            block.get_coefficient(offset) as i32
         },
-        block.get_coefficient_raster(1 * stride + offset) as i32,
-        block.get_coefficient_raster(2 * stride + offset) as i32,
-        block.get_coefficient_raster(3 * stride + offset) as i32,
-        block.get_coefficient_raster(4 * stride + offset) as i32,
-        block.get_coefficient_raster(5 * stride + offset) as i32,
-        block.get_coefficient_raster(6 * stride + offset) as i32,
-        block.get_coefficient_raster(7 * stride + offset) as i32,
     ]);
 }
 
@@ -187,15 +187,15 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
             let mut x0 = if ignore_dc && y == 0 {
                 Wrapping(0)
             } else {
-                mul(block.get_coefficient_raster(y8 + 0), q[y8 + 0]) << 11
+                mul(block.get_coefficient(y8 + 0), q[y8 + 0]) << 11
             } + Wrapping(128);
-            let mut x1 = mul(block.get_coefficient_raster(y8 + 4), q[y8 + 4]) << 11;
-            let mut x2 = mul(block.get_coefficient_raster(y8 + 6), q[y8 + 6]);
-            let mut x3 = mul(block.get_coefficient_raster(y8 + 2), q[y8 + 2]);
-            let mut x4 = mul(block.get_coefficient_raster(y8 + 1), q[y8 + 1]);
-            let mut x5 = mul(block.get_coefficient_raster(y8 + 7), q[y8 + 7]);
-            let mut x6 = mul(block.get_coefficient_raster(y8 + 5), q[y8 + 5]);
-            let mut x7 = mul(block.get_coefficient_raster(y8 + 3), q[y8 + 3]);
+            let mut x1 = mul(block.get_coefficient(y8 + 4), q[y8 + 4]) << 11;
+            let mut x2 = mul(block.get_coefficient(y8 + 6), q[y8 + 6]);
+            let mut x3 = mul(block.get_coefficient(y8 + 2), q[y8 + 2]);
+            let mut x4 = mul(block.get_coefficient(y8 + 1), q[y8 + 1]);
+            let mut x5 = mul(block.get_coefficient(y8 + 7), q[y8 + 7]);
+            let mut x6 = mul(block.get_coefficient(y8 + 5), q[y8 + 5]);
+            let mut x7 = mul(block.get_coefficient(y8 + 3), q[y8 + 3]);
 
             // If all the AC components are zero, then the IDCT is trivial.
             if x1 == Wrapping(0)
