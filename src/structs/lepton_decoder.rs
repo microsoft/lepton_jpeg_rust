@@ -11,6 +11,7 @@ use default_boxed::DefaultBoxed;
 use std::cmp;
 use std::io::Read;
 
+use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
@@ -312,12 +313,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    for coord in 9..64 {
-        // skip left edges
-        if coord & 0x7 == 0 {
-            continue;
-        }
-
+    for coord in UNZIGZAG_49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
@@ -327,12 +323,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             "this does the DC and the lower 7x7 AC"
         );
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord] as u16);
+        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
         let coef = model_per_color
             .read_coef(
                 bool_reader,
-                coord,
+                coord as usize,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
@@ -342,11 +338,11 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             let b_x = coord & 7;
             let b_y = coord >> 3;
 
-            eob_x = cmp::max(eob_x, b_x as u8);
-            eob_y = cmp::max(eob_y, b_y as u8);
+            eob_x = cmp::max(eob_x, b_x);
+            eob_y = cmp::max(eob_y, b_y);
             num_non_zeros_left_7x7 -= 1;
 
-            output.set_coefficient(coord, coef);
+            output.set_coefficient(coord as usize, coef);
         }
     }
 

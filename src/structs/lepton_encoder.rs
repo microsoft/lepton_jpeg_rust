@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use std::cmp;
 use std::io::Write;
 
+use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
@@ -329,26 +330,21 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
-    for coord in 9..64 {
-        // skip left edges
-        if coord & 0x7 == 0 {
-            continue;
-        }
-
+    for coord in UNZIGZAG_49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
         }
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord] as u16);
+        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
         // this should work in all cases but doesn't utilize that the zig49 is related
-        let coef = block.get_coefficient(coord);
+        let coef = block.get_coefficient(coord as usize);
 
         model_per_color
             .write_coef(
                 bool_writer,
                 coef,
-                coord,
+                coord as usize,
                 ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
