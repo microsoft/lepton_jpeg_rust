@@ -6,7 +6,7 @@
 
 use super::block_based_image::AlignedBlock;
 
-use wide::i32x8;
+use wide::{i32x8, i16x8};
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -29,34 +29,34 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
-    return i32x8::new([
-        block.get_coefficient_raster(7 * stride + offset) as i32,
-        block.get_coefficient_raster(6 * stride + offset) as i32,
-        block.get_coefficient_raster(5 * stride + offset) as i32,
-        block.get_coefficient_raster(4 * stride + offset) as i32,
-        block.get_coefficient_raster(3 * stride + offset) as i32,
-        block.get_coefficient_raster(2 * stride + offset) as i32,
-        block.get_coefficient_raster(1 * stride + offset) as i32,
+fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i16x8 {
+    return i16x8::new([
+        block.get_coefficient_raster(7 * stride + offset),
+        block.get_coefficient_raster(6 * stride + offset),
+        block.get_coefficient_raster(5 * stride + offset),
+        block.get_coefficient_raster(4 * stride + offset),
+        block.get_coefficient_raster(3 * stride + offset),
+        block.get_coefficient_raster(2 * stride + offset),
+        block.get_coefficient_raster(1 * stride + offset),
         if IGNORE_DC && offset == 0 {
             0
         } else {
-            block.get_coefficient_raster(offset) as i32
+            block.get_coefficient_raster(offset)
         },
     ]);
 }
 
 #[inline(always)]
-pub fn get_q(offset: usize, stride: usize, q: &[u16; 64]) -> i32x8 {
-    return i32x8::new([
-        q[7 * stride + offset] as i32,
-        q[6 * stride + offset] as i32,
-        q[5 * stride + offset] as i32,
-        q[4 * stride + offset] as i32,
-        q[3 * stride + offset] as i32,
-        q[2 * stride + offset] as i32,
-        q[1 * stride + offset] as i32,
-        q[offset] as i32,
+pub fn get_q(offset: usize, stride: usize, q: &[u16; 64]) -> i16x8 {
+    return i16x8::new([
+        q[7 * stride + offset] as i16,
+        q[6 * stride + offset] as i16,
+        q[5 * stride + offset] as i16,
+        q[4 * stride + offset] as i16,
+        q[3 * stride + offset] as i16,
+        q[2 * stride + offset] as i16,
+        q[1 * stride + offset] as i16,
+        q[offset] as i16,
     ]);
 }
 
@@ -97,23 +97,23 @@ fn transpose(
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64]) {
     // horizontal
-    let mut xv0 = get_raster::<IGNORE_DC>(0, 8, block);
-    let mut xv1 = get_raster::<IGNORE_DC>(4, 8, block);
-    let mut xv2 = get_raster::<IGNORE_DC>(6, 8, block);
-    let mut xv3 = get_raster::<IGNORE_DC>(2, 8, block);
-    let mut xv4 = get_raster::<IGNORE_DC>(1, 8, block);
-    let mut xv5 = get_raster::<IGNORE_DC>(7, 8, block);
-    let mut xv6 = get_raster::<IGNORE_DC>(5, 8, block);
-    let mut xv7 = get_raster::<IGNORE_DC>(3, 8, block);
+    let r0 = get_raster::<IGNORE_DC>(0, 8, block);
+    let r1 = get_raster::<IGNORE_DC>(1, 8, block);
+    let r2 = get_raster::<IGNORE_DC>(2, 8, block);
+    let r3 = get_raster::<IGNORE_DC>(3, 8, block);
+    let r4 = get_raster::<IGNORE_DC>(4, 8, block);
+    let r5 = get_raster::<IGNORE_DC>(5, 8, block);
+    let r6 = get_raster::<IGNORE_DC>(6, 8, block);
+    let r7 = get_raster::<IGNORE_DC>(7, 8, block);
 
-    xv0 = ((xv0 * get_q(0, 8, q)) << 11) + 128;
-    xv1 = (xv1 * get_q(4, 8, q)) << 11;
-    xv2 *= get_q(6, 8, q);
-    xv3 *= get_q(2, 8, q);
-    xv4 *= get_q(1, 8, q);
-    xv5 *= get_q(7, 8, q);
-    xv6 *= get_q(5, 8, q);
-    xv7 *= get_q(3, 8, q);
+    let mut xv0 = (r0.mul_widen(get_q(0, 8, q)) << 11) + 128;
+    let mut xv1 = r1.mul_widen(get_q(1, 8, q));
+    let mut xv2 = r2.mul_widen(get_q(2, 8, q));
+    let mut xv3 = r3.mul_widen(get_q(3, 8, q));
+    let mut xv4 = r4.mul_widen(get_q(4, 8, q)) << 11;
+    let mut xv5 = r5.mul_widen(get_q(5, 8, q));
+    let mut xv6 = r6.mul_widen(get_q(6, 8, q));
+    let mut xv7 = r7.mul_widen(get_q(7, 8, q));
 
     // Stage 1.
     let mut xv8 = _W7 * (xv4 + xv5);
@@ -366,7 +366,7 @@ pub fn test_idct_with_existing_behavior() {
     for _ in 0..16 {
         for i in 0..64 {
             test_data.get_block_mut()[i] = rng.gen_range(i16::MIN..=i16::MAX);
-            test_q[i] = rng.gen_range(0..=u16::MAX);
+            test_q[i] = rng.gen_range(0..=u8::MAX as u16);
         }
 
         {
