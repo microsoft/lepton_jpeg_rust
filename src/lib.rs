@@ -50,8 +50,9 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
+    enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    decode_lepton_wrapper(reader, writer, num_threads).map_err(translate_error)
+    decode_lepton_wrapper(reader, writer, num_threads, enabled_features).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -133,23 +134,44 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     result_size: *mut u64,
 ) -> i32 {
     match catch_unwind(|| {
-        let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
+        // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
+        let mut enabled_features = EnabledFeatures::all();
+        enabled_features.reject_dqts_with_zeros = false;
 
-        let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
+        loop {
+            let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
+            let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
-        let mut reader = Cursor::new(input);
-        let mut writer = Cursor::new(output);
+            let mut reader = Cursor::new(input);
+            let mut writer = Cursor::new(output);
 
-        match decode_lepton_wrapper(&mut reader, &mut writer, number_of_threads as usize) {
-            Ok(_) => {}
-            Err(e) => {
-                return translate_error(e).exit_code as i32;
+            match decode_lepton_wrapper(
+                &mut reader,
+                &mut writer,
+                number_of_threads as usize,
+                &enabled_features,
+            ) {
+                Ok(_) => {
+                    *result_size = writer.position().into();
+                    return 0;
+                }
+                Err(e) => {
+                    let exit_code = translate_error(e).exit_code;
+
+                    // there's a bug in the C++ version where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path depending on the compiler options.
+                    // unfortunately there's no way to tell ahead of time other than the fact that the image will be decoded with an error.
+                    if exit_code == ExitCode::StreamInconsistent
+                        && !enabled_features.use_16bit_dc_estimate
+                    {
+                        // try again with the flag set
+                        enabled_features.use_16bit_dc_estimate = true;
+                        continue;
+                    }
+
+                    return exit_code as i32;
+                }
             }
         }
-
-        *result_size = writer.position().into();
-
-        return 0;
     }) {
         Ok(code) => {
             return code;

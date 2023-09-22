@@ -10,8 +10,8 @@ use log::{info, warn};
 use std::cmp;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::swap;
-use std::sync::mpsc::Receiver;
 use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Receiver, SendError};
 use std::thread;
 use std::thread::ScopedJoinHandle;
 use std::time::Instant;
@@ -47,6 +47,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     num_threads: usize,
+    enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     // figure out how long the input is
     let orig_pos = reader.stream_position()?;
@@ -55,10 +56,11 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
 
     let mut lh = LeptonHeader::new();
 
-    lh.read_lepton_header(reader).context(here!())?;
+    lh.read_lepton_header(reader, enabled_features)
+        .context(here!())?;
 
     let metrics = lh
-        .recode_jpeg(writer, reader, size, num_threads)
+        .recode_jpeg(writer, reader, size, num_threads, enabled_features)
         .context(here!())?;
 
     return Ok(metrics);
@@ -81,6 +83,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         writer,
         &lp.thread_handoff[..],
         &image_data[..],
+        enabled_features,
     )
     .context(here!())?;
 
@@ -123,8 +126,13 @@ pub fn encode_lepton_wrapper_verify(
     info!("decompressing to verify contents");
 
     metrics.merge_from(
-        decode_lepton_wrapper(&mut verifyreader, &mut verify_buffer, max_threads)
-            .context(here!())?,
+        decode_lepton_wrapper(
+            &mut verifyreader,
+            &mut verify_buffer,
+            max_threads,
+            &enabled_features,
+        )
+        .context(here!())?,
     );
 
     if input_data.len() != verify_buffer.len() {
@@ -304,6 +312,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     reader: &mut R,
     last_data_position: u64,
     max_threads_to_use: usize,
+    features: &EnabledFeatures,
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
@@ -416,6 +425,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                             lh.thread_handoff[thread_id].luma_y_end,
                             thread_id == lh.thread_handoff.len() - 1,
                             true,
+                            features,
                         )
                         .context(here!())?,
                     );
@@ -428,6 +438,9 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 Ok((process_result, metrics))
             }));
         }
+
+        // track if we got an error while trying to send to a thread
+        let mut error_sending: Option<SendError<Message>> = None;
 
         // now that the threads are waiting for inptut, read the stream and send all the buffers to their respective readers
         while reader.stream_position().context(here!())? < last_data_position - 4 {
@@ -473,9 +486,13 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
                 )
             })?;
 
-            channel_to_sender[thread_id as usize]
-                .send(Message::WriteBlock(thread_id, buffer))
-                .context(here!())?;
+            let e =
+                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
+
+            if let Err(e) = e {
+                error_sending = Some(e);
+                break;
+            }
         }
         //info!("done sending!");
 
@@ -488,11 +505,17 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
 
         let mut result = Vec::new();
         for i in running_threads.drain(..) {
-            let thread_result = i.join().unwrap().context(here!())?;
+            let (result_to_process, source_metrics) = i.join().unwrap().context(here!())?;
 
-            metrics.merge_from(thread_result.1);
+            metrics.merge_from(source_metrics);
 
-            result.push(thread_result.0);
+            result.push(result_to_process);
+        }
+
+        // if there was an error during send, it should have resulted in an error from one of the threads above and
+        // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
+        if let Some(e) = error_sending {
+            return Err(e).context(here!());
         }
 
         info!(
@@ -515,6 +538,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
     image_data: &[BlockBasedImage],
+    features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -576,6 +600,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
                     thread_handoffs[thread_id].luma_y_end,
                     thread_id == thread_handoffs.len() - 1,
                     true,
+                    features,
                 )
                 .context(here!())?;
 
@@ -738,6 +763,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics, anyhow::Error> {
         writer.write_all(&SOI)?;
 
@@ -747,19 +773,34 @@ impl LeptonHeader {
             .context(here!())?;
 
         let metrics = if self.jpeg_header.jpeg_type == JPegType::Progressive {
-            self.recode_progressive_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?
+            self.recode_progressive_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                num_threads,
+                enabled_features,
+            )
+            .context(here!())?
         } else {
-            self.recode_baseline_jpeg(reader, last_data_position, writer, num_threads)
-                .context(here!())?
+            self.recode_baseline_jpeg(
+                reader,
+                last_data_position,
+                writer,
+                self.plain_text_size as u64
+                    - self.garbage_data.len() as u64
+                    - self.raw_jpeg_header_read_index as u64
+                    - SOI.len() as u64,
+                num_threads,
+                enabled_features,
+            )
+            .context(here!())?
         };
 
-        if !self.early_eof_encountered {
-            /* step 3: blit any trailing header data */
-            writer
-                .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
-                .context(here!())?;
-        }
+        // Blit any trailing header data.
+        // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        writer
+            .write_all(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..])
+            .context(here!())?;
 
         writer.write_all(&self.garbage_data).context(here!())?;
         Ok(metrics)
@@ -771,6 +812,7 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         num_threads: usize,
+        features: &EnabledFeatures,
     ) -> Result<(Vec<BlockBasedImage>, Metrics)> {
         // run the threads first, since we need everything before we can start decoding
         let (metrics, mut results) = run_lepton_decoder_threads(
@@ -778,6 +820,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            features,
             |_thread_handoff, image_data, _lh| {
                 // just return the image data directly to be merged together
                 return Ok(image_data);
@@ -821,10 +864,11 @@ impl LeptonHeader {
         last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
         // run the threads first, since we need everything before we can start decoding
         let (merged, metrics) = self
-            .decode_as_single_image(reader, last_data_position, num_threads)
+            .decode_as_single_image(reader, last_data_position, num_threads, enabled_features)
             .context(here!())?;
 
         loop {
@@ -834,7 +878,7 @@ impl LeptonHeader {
             // read the next headers (DHT, etc) while mirroring it back to the writer
             let old_pos = self.raw_jpeg_header_read_index;
             let result = self
-                .advance_next_header_segment(&EnabledFeatures::all())
+                .advance_next_header_segment(enabled_features)
                 .context(here!())?;
 
             writer
@@ -859,7 +903,9 @@ impl LeptonHeader {
         reader: &mut R,
         last_data_position: u64,
         writer: &mut W,
+        size_limit: u64,
         num_threads: usize,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
         // step 2: recode image data
         let (metrics, results) = run_lepton_decoder_threads(
@@ -867,6 +913,7 @@ impl LeptonHeader {
             reader,
             last_data_position,
             num_threads,
+            enabled_features,
             |thread_handoff, image_data, lh| {
                 let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
                 let mut cursor = Cursor::new(&mut result_buffer);
@@ -907,14 +954,22 @@ impl LeptonHeader {
             },
         )?;
 
+        let mut amount_written: u64 = 0;
+
         // write all the buffers that we collected
         for r in results {
+            amount_written += r.len() as u64;
             writer.write_all(&r[..]).context(here!())?;
         }
 
         // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
         // Run this logic even if early_eof_encountered to be compatible with C++ version.
+        //
+        // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
+        // data to store any extra RST codes or whatever else might be at the end of the file.
         if self.rst_err.len() > 0 {
+            let mut markers = Vec::new();
+
             let cumulative_reset_markers = if self.jpeg_header.rsti != 0 {
                 ((self.jpeg_header.mcuh * self.jpeg_header.mcuv) - 1) / self.jpeg_header.rsti
             } else {
@@ -922,8 +977,16 @@ impl LeptonHeader {
             } as u8;
             for i in 0..self.rst_err[0] as u8 {
                 let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
-                writer.write_u8(0xFF)?;
-                writer.write_u8(rst)?;
+                markers.push(0xFF);
+                markers.push(rst);
+            }
+
+            // the C++ version will strangely sometimes ask for extra rst codes even if we are at the end of the file and shouldn't
+            // be emitting anything more, so if we are over or at the size limit then don't emit the RST code
+            if amount_written < size_limit {
+                writer.write_all(
+                    &markers[0..cmp::min(markers.len(), (size_limit - amount_written) as usize)],
+                )?;
             }
         }
 
@@ -931,7 +994,11 @@ impl LeptonHeader {
     }
 
     /// reads the start of the lepton file and parses the compressed header. Returns the raw JPEG header contents.
-    pub fn read_lepton_header<R: Read>(&mut self, reader: &mut R) -> Result<()> {
+    pub fn read_lepton_header<R: Read>(
+        &mut self,
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<()> {
         let mut header = [0 as u8; LEPTON_FILE_HEADER.len()];
 
         reader.read_exact(&mut header).context(here!())?;
@@ -1007,7 +1074,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor, &EnabledFeatures::all())
+                .parse(&mut header_data_cursor, &enabled_features)
                 .context(here!())?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -1031,7 +1098,7 @@ impl LeptonHeader {
             let mut max_last_segment_size = i32::try_from(self.plain_text_size)?
                 - i32::try_from(self.garbage_data.len())?
                 - i32::try_from(self.raw_jpeg_header_read_index)?
-                - 2;
+                - SOI.len() as i32;
 
             // subtract the segment sizes of all the previous segments (except for the last)
             for i in 0..num_threads - 1 {
@@ -1660,5 +1727,7 @@ fn parse_and_write_header() {
 
     let mut other = LeptonHeader::new();
     let mut other_reader = Cursor::new(&serialized);
-    other.read_lepton_header(&mut other_reader).unwrap();
+    other
+        .read_lepton_header(&mut other_reader, &EnabledFeatures::all())
+        .unwrap();
 }
