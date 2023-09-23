@@ -192,6 +192,10 @@ impl Default for AlignedBlock {
 }
 
 impl AlignedBlock {
+    pub fn new(block: [i16; 64]) -> Self {
+        AlignedBlock { raw_data: block }
+    }
+
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[ALIGNED_BLOCK_INDEX_DC_INDEX];
     }

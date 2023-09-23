@@ -410,14 +410,14 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let here = context.neighbor_context_here(num_non_zeros);
 
     here.set_horizontal(
-        &predicted_val.advanced_predict_dc_pixels_sans_dc,
+        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
         qt.get_quantization_table(),
         block.get_dc(),
         features,
     );
 
     here.set_vertical(
-        &predicted_val.advanced_predict_dc_pixels_sans_dc,
+        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
         qt.get_quantization_table(),
         block.get_dc(),
         features,
