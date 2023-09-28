@@ -429,6 +429,7 @@ fn complexiter(
     }
 }
 
+#[unroll::unroll_for_loops]
 fn simpleiter(
     mask: i32,
     z: &mut i32,
@@ -442,28 +443,30 @@ fn simpleiter(
     let lz = xor.as_array_ref().map(|x| 16 - x.leading_zeros() as i16);
     let vsh = i16x16::new(lz.map(|x| (1 << x) - 1));
     let vn = vtemp & vsh;
+    let mut tz = *z;
 
     for j in 0..16 {
         if mask & (1 << j) != 0 {
-            *z += 16;
-            continue;
+            tz += 16;
+        } else {
+            // vli encode
+            let s = lz[j];
+            let n = vn.as_array_ref()[j];
+
+            let hc = ((tz as u32 | s as u32) & 0xff) as usize;
+
+            // combine into single write
+            // c_val_shift is already shifted left by s
+            let val = actbl.c_val_shift[hc] | (n as u32);
+            let new_bits = u32::from(actbl.c_len[hc]) + s as u32;
+
+            // write everything to bitwriter
+            huffw.write(val as u64, new_bits);
+            tz = 0;
         }
-
-        // vli encode
-        let s = lz[j];
-        let n = vn.as_array_ref()[j];
-
-        let hc = (*z as u32 | s as u32) as usize;
-
-        // combine into single write
-        // c_val_shift is already shifted left by s
-        let val = actbl.c_val_shift[hc] | (n as u32);
-        let new_bits = u32::from(actbl.c_len[hc]) + s as u32;
-
-        // write everything to bitwriter
-        huffw.write(val as u64, new_bits);
-        *z = 0;
     }
+
+    *z = tz;
 }
 
 /// encodes a coefficient which is a huffman code specifying the size followed
