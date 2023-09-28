@@ -262,11 +262,11 @@ impl ProbabilityTables {
         let mut uncertainty_val: i16 = 0;
         let mut uncertainty2_val: i16 = 0;
 
-        let q_tranposed = qt.get_quantization_table_transposed();
+        let q_transposed = qt.get_quantization_table_transposed();
 
         let mut avgmed = 0;
 
-        let pixels_sans_dc = run_idct::<true>(here, q_tranposed);
+        let pixels_sans_dc = run_idct::<true>(here, q_transposed);
 
         if ALL_PRESENT || self.left_present || self.above_present {
             let mut min_dc = i16::MAX;
@@ -332,7 +332,7 @@ impl ProbabilityTables {
         }
 
         return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q_tranposed.get_coefficient(0))) + 4) >> 3,
+            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0))) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
