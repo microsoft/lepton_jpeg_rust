@@ -260,12 +260,7 @@ impl ProbabilityTables {
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
     ) -> PredictDCResult {
-        let mut uncertainty_val: i16 = 0;
-        let mut uncertainty2_val: i16 = 0;
-
         let q_transposed = qt.get_quantization_table_transposed();
-
-        let mut avgmed = 0;
 
         let pixels_sans_dc = run_idct::<true>(here, q_transposed);
 
@@ -274,8 +269,8 @@ impl ProbabilityTables {
         let calc_left = || {
             let left_context = block_context.neighbor_context_left(num_non_zeros);
 
-            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 8);
-            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 1, 8);
+            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
+            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
             let pixel_delta = a1 - a2;
             let a: i16x8 = a1 + 1024;
             let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
@@ -286,8 +281,8 @@ impl ProbabilityTables {
         let calc_above = || {
             let above_context = block_context.neighbor_context_above(num_non_zeros);
 
-            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 1);
-            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 8, 1);
+            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
+            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
             let pixel_delta = a1 - a2;
             let a: i16x8 = a1 + 1024;
             let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
