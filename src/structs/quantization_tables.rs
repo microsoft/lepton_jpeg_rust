@@ -19,7 +19,7 @@ pub struct QuantizationTables {
     icos_idct_linear8192_dequantized: [i32; 64],
     quantization_table: [u16; 64],
 
-    /// quantization_table transposed (rotated by 90 degrees).
+    /// quantization_table transposed (as 8x8 matrix rotated by 90 degrees).
     /// Important that this is am AlignedBlock so that the compiler can use SIMD instructions
     quantization_table_transposed: AlignedBlock,
     freq_max: [u16; 64],
