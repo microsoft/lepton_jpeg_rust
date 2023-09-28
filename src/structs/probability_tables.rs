@@ -32,7 +32,7 @@ pub struct PredictDCResult {
     pub predicted_dc: i32,
     pub uncertainty: i16,
     pub uncertainty2: i16,
-    pub advanced_predict_dc_pixels_sans_dc: [i16; 64],
+    pub advanced_predict_dc_pixels_sans_dc: AlignedBlock,
 }
 
 impl ProbabilityTables {
@@ -260,10 +260,14 @@ impl ProbabilityTables {
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
     ) -> PredictDCResult {
-        let mut pixels_sans_dc = [0i16; 64];
-        let q = qt.get_quantization_table();
+        let mut uncertainty_val: i16 = 0;
+        let mut uncertainty2_val: i16 = 0;
 
-        run_idct::<true>(here, q, &mut pixels_sans_dc);
+        let q_transposed = qt.get_quantization_table_transposed();
+
+        let mut avgmed = 0;
+
+        let pixels_sans_dc = run_idct::<true>(here, q_transposed);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
@@ -367,7 +371,7 @@ impl ProbabilityTables {
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
         return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q[0])) + 4) >> 3,
+            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0))) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
