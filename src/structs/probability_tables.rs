@@ -31,7 +31,7 @@ pub struct PredictDCResult {
     pub predicted_dc: i32,
     pub uncertainty: i16,
     pub uncertainty2: i16,
-    pub advanced_predict_dc_pixels_sans_dc: [i16; 64],
+    pub advanced_predict_dc_pixels_sans_dc: AlignedBlock,
 }
 
 impl ProbabilityTables {
@@ -262,12 +262,11 @@ impl ProbabilityTables {
         let mut uncertainty_val: i16 = 0;
         let mut uncertainty2_val: i16 = 0;
 
-        let mut pixels_sans_dc = [0i16; 64];
-        let q = qt.get_quantization_table();
+        let q_transposed = qt.get_quantization_table_transposed();
 
         let mut avgmed = 0;
 
-        run_idct::<true>(here, q, &mut pixels_sans_dc);
+        let pixels_sans_dc = run_idct::<true>(here, q_transposed);
 
         if ALL_PRESENT || self.left_present || self.above_present {
             let mut min_dc = i16::MAX;
@@ -277,8 +276,8 @@ impl ProbabilityTables {
             if ALL_PRESENT || self.left_present {
                 let left_context = block_context.neighbor_context_left(num_non_zeros);
 
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 8);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 1, 8);
+                let a1 = ProbabilityTables::from_stride(pixels_sans_dc.get_block(), 0, 8);
+                let a2 = ProbabilityTables::from_stride(pixels_sans_dc.get_block(), 1, 8);
                 let pixel_delta = a1 - a2;
                 let a: i16x8 = a1 + 1024;
                 let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
@@ -298,8 +297,8 @@ impl ProbabilityTables {
             if ALL_PRESENT || self.above_present {
                 let above_context = block_context.neighbor_context_above(num_non_zeros);
 
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc, 0, 1);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc, 8, 1);
+                let a1 = ProbabilityTables::from_stride(pixels_sans_dc.get_block(), 0, 1);
+                let a2 = ProbabilityTables::from_stride(pixels_sans_dc.get_block(), 8, 1);
                 let pixel_delta = a1 - a2;
                 let a: i16x8 = a1 + 1024;
                 let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
@@ -333,7 +332,7 @@ impl ProbabilityTables {
         }
 
         return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q[0])) + 4) >> 3,
+            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0))) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
