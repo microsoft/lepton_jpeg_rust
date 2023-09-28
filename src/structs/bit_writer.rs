@@ -39,9 +39,12 @@ impl BitWriter {
     }
 
     #[inline(always)]
-    pub fn write(&mut self, mut val: u32, mut new_bits: u32) {
+    pub fn write(&mut self, val: u32, new_bits: u32) {
         /// this is the slow path that is rarely called but generates a lot of code inlined
-        /// so we move it out of the main function to keep the main function small
+        /// so we move it out of the main function to keep the main function small with few branches.
+        ///
+        /// We also call this path when we are about to overflow the buffer to avoid having
+        /// to inline the buffer growing logic, which is also much bigger than a simple insert.
         #[inline(never)]
         #[cold]
         fn write_ff_encoded(data_buffer: &mut Vec<u8>, fill_register: u64) {
@@ -71,8 +74,8 @@ impl BitWriter {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
             let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
 
-            new_bits -= self.current_bit;
-            val &= (1 << new_bits) - 1;
+            let leftover_new_bits = new_bits - self.current_bit;
+            let leftover_val = val & (1 << leftover_new_bits) - 1;
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
@@ -88,8 +91,8 @@ impl BitWriter {
                 self.data_buffer.extend_from_slice(&fill.to_be_bytes());
             }
 
-            self.fill_register = (val as u64).wrapping_shl(64 - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = 64 - new_bits;
+            self.fill_register = (leftover_val as u64).wrapping_shl(64 - leftover_new_bits); // support corner case where new_bits is zero, we don't want to panic
+            self.current_bit = 64 - leftover_new_bits;
         }
     }
 
