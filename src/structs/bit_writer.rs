@@ -22,13 +22,10 @@ impl BitWriter {
         };
     }
 
-    #[inline(never)]
-    fn flush_bytes_slowly(&mut self) {
-        let mut tmp_current_bit = self.current_bit;
-        let mut tmp_fill_register = self.fill_register;
-
-        while tmp_current_bit <= 56 {
-            let b = (tmp_fill_register >> 56) as u8;
+    /// flushes whole bytes from the register into the data buffer
+    fn flush_whole_bytes(&mut self) {
+        while self.current_bit <= 56 {
+            let b = (self.fill_register >> 56) as u8;
             if b != 0xff {
                 self.data_buffer.push(b);
             } else {
@@ -36,16 +33,32 @@ impl BitWriter {
                 self.data_buffer.extend_from_slice(&[0xff, 0]);
             }
 
-            tmp_fill_register <<= 8;
-            tmp_current_bit += 8;
+            self.fill_register <<= 8;
+            self.current_bit += 8;
         }
-
-        self.fill_register = tmp_fill_register;
-        self.current_bit = tmp_current_bit;
     }
 
     #[inline(always)]
-    pub fn write(&mut self, mut val: u32, mut new_bits: u32) {
+    pub fn write(&mut self, val: u32, new_bits: u32) {
+        /// this is the slow path that is rarely called but generates a lot of code inlined
+        /// so we move it out of the main function to keep the main function small with few branches.
+        ///
+        /// We also call this path when we are about to overflow the buffer to avoid having
+        /// to inline the buffer growing logic, which is also much bigger than a simple insert.
+        #[inline(never)]
+        #[cold]
+        fn write_ff_encoded(data_buffer: &mut Vec<u8>, fill_register: u64) {
+            for i in 0..8 {
+                let b = (fill_register >> (56 - (i * 8))) as u8;
+                if b != 0xff {
+                    data_buffer.push(b);
+                } else {
+                    // escape 0xff here to avoid multiple scans of the same data
+                    data_buffer.extend_from_slice(&[0xff, 0]);
+                }
+            }
+        }
+
         debug_assert!(
             val < (1 << new_bits),
             "value {0} should fit into the number of {1} bits provided",
@@ -61,8 +74,8 @@ impl BitWriter {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
             let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
 
-            new_bits -= self.current_bit;
-            val &= (1 << new_bits) - 1;
+            let leftover_new_bits = new_bits - self.current_bit;
+            let leftover_val = val & (1 << leftover_new_bits) - 1;
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
@@ -73,14 +86,13 @@ impl BitWriter {
                     .wrapping_sub(self.data_buffer.len())
                     < 8
             {
-                self.fill_register = fill;
-                self.current_bit = 0;
-                self.flush_bytes_slowly();
+                write_ff_encoded(&mut self.data_buffer, fill);
             } else {
                 self.data_buffer.extend_from_slice(&fill.to_be_bytes());
             }
-            self.fill_register = (val as u64).wrapping_shl(64 - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = 64 - new_bits;
+
+            self.fill_register = (leftover_val as u64).wrapping_shl(64 - leftover_new_bits); // support corner case where new_bits is zero, we don't want to panic
+            self.current_bit = 64 - leftover_new_bits;
         }
     }
 
@@ -91,7 +103,7 @@ impl BitWriter {
             offset <<= 1;
         }
 
-        self.flush_bytes_slowly();
+        self.flush_whole_bytes();
 
         debug_assert!(
             self.current_bit == 64,
@@ -102,7 +114,7 @@ impl BitWriter {
     // flushes the data buffer while escaping all 0xff characters
     pub fn flush_with_escape<W: Write>(&mut self, w: &mut W) -> anyhow::Result<()> {
         // flush any remaining whole bytes
-        self.flush_bytes_slowly();
+        self.flush_whole_bytes();
 
         w.write_all(&self.data_buffer[..])?;
 
