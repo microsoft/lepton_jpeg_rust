@@ -208,8 +208,7 @@ impl AlignedBlock {
         block_data[usize::from(crate::consts::ZIGZAG_TO_ALIGNED[usize::from(index)])] = value;
     }
 
-    // used for debugging
-    #[allow(dead_code)]
+    /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }

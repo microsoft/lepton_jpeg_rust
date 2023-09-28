@@ -18,6 +18,9 @@ pub struct QuantizationTables {
     icos_idct_edge8192_dequantized_y: [i32; 64],
     icos_idct_linear8192_dequantized: [i32; 64],
     quantization_table: [u16; 64],
+
+    /// quantization_table transposed (rotated by 90 degrees).
+    /// Important that this is am AlignedBlock so that the compiler can use SIMD instructions
     quantization_table_transposed: AlignedBlock,
     freq_max: [u16; 64],
     bit_len_freq_max: [u8; 64],
@@ -50,6 +53,9 @@ impl QuantizationTables {
             self.quantization_table[i] = quantization_table[RASTER_TO_JPEG_ZIGZAG[i] as usize];
         }
 
+        // transpose the quantization table as an 8x8 block.
+        // i16x8 has a transpose method for doing this with an array of 8 i16x8s, so
+        // cast it as that and then cast the result back to an AlignedBlock
         self.quantization_table_transposed =
             AlignedBlock::new(cast(i16x8::transpose(cast(self.quantization_table))));
 
