@@ -381,14 +381,14 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     here.set_num_non_zeros(num_non_zeros_7x7);
 
     here.set_horizontal(
-        &predicted_dc.advanced_predict_dc_pixels_sans_dc,
+        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
         qt.get_quantization_table(),
         output.get_dc(),
         features,
     );
 
     here.set_vertical(
-        &predicted_dc.advanced_predict_dc_pixels_sans_dc,
+        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
         qt.get_quantization_table(),
         output.get_dc(),
         features,

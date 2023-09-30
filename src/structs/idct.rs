@@ -4,9 +4,10 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::block_based_image::AlignedBlock;
+use bytemuck::{cast, cast_ref};
+use wide::{i16x8, i32x8};
 
-use wide::i32x8;
+use super::block_based_image::AlignedBlock;
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -31,67 +32,51 @@ const R2: i32 = 181; // 256/sqrt(2)
 #[inline(always)]
 fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
     return i32x8::new([
-        block.get_coefficient_raster(7 * stride + offset) as i32,
-        block.get_coefficient_raster(6 * stride + offset) as i32,
-        block.get_coefficient_raster(5 * stride + offset) as i32,
-        block.get_coefficient_raster(4 * stride + offset) as i32,
-        block.get_coefficient_raster(3 * stride + offset) as i32,
-        block.get_coefficient_raster(2 * stride + offset) as i32,
-        block.get_coefficient_raster(1 * stride + offset) as i32,
         if IGNORE_DC && offset == 0 {
             0
         } else {
             block.get_coefficient_raster(offset) as i32
         },
+        block.get_coefficient_raster(1 * stride + offset) as i32,
+        block.get_coefficient_raster(2 * stride + offset) as i32,
+        block.get_coefficient_raster(3 * stride + offset) as i32,
+        block.get_coefficient_raster(4 * stride + offset) as i32,
+        block.get_coefficient_raster(5 * stride + offset) as i32,
+        block.get_coefficient_raster(6 * stride + offset) as i32,
+        block.get_coefficient_raster(7 * stride + offset) as i32,
     ]);
 }
 
 #[inline(always)]
-pub fn get_q(offset: usize, stride: usize, q: &[u16; 64]) -> i32x8 {
-    return i32x8::new([
-        q[7 * stride + offset] as i32,
-        q[6 * stride + offset] as i32,
-        q[5 * stride + offset] as i32,
-        q[4 * stride + offset] as i32,
-        q[3 * stride + offset] as i32,
-        q[2 * stride + offset] as i32,
-        q[1 * stride + offset] as i32,
-        q[offset] as i32,
-    ]);
-}
-
-#[inline(always)]
-fn copy_to_output(row: i32x8, offset: usize, outp: &mut [i16; 64]) {
-    outp[offset] = row.as_array_ref()[0] as i16;
-    outp[offset + 1] = row.as_array_ref()[1] as i16;
-    outp[offset + 2] = row.as_array_ref()[2] as i16;
-    outp[offset + 3] = row.as_array_ref()[3] as i16;
-    outp[offset + 4] = row.as_array_ref()[4] as i16;
-    outp[offset + 5] = row.as_array_ref()[5] as i16;
-    outp[offset + 6] = row.as_array_ref()[6] as i16;
-    outp[offset + 7] = row.as_array_ref()[7] as i16;
+pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_i16x8(rows[offset])
 }
 
 #[inline(never)]
-pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp: &mut [i16; 64]) {
-    // horizontal
-    let mut xv0 = get_raster::<IGNORE_DC>(0, 8, block);
-    let mut xv1 = get_raster::<IGNORE_DC>(1, 8, block);
-    let mut xv2 = get_raster::<IGNORE_DC>(2, 8, block);
-    let mut xv3 = get_raster::<IGNORE_DC>(3, 8, block);
-    let mut xv4 = get_raster::<IGNORE_DC>(4, 8, block);
-    let mut xv5 = get_raster::<IGNORE_DC>(5, 8, block);
-    let mut xv6 = get_raster::<IGNORE_DC>(6, 8, block);
-    let mut xv7 = get_raster::<IGNORE_DC>(7, 8, block);
+pub fn run_idct<const IGNORE_DC: bool>(
+    block: &AlignedBlock,
+    q_transposed: &AlignedBlock,
+) -> AlignedBlock {
+    // get horizontal transpose at the same time since we have to do the translation from zigzag anyway
+    let r0 = get_raster::<IGNORE_DC>(0, 8, block);
+    let r1 = get_raster::<IGNORE_DC>(1, 8, block);
+    let r2 = get_raster::<IGNORE_DC>(2, 8, block);
+    let r3 = get_raster::<IGNORE_DC>(3, 8, block);
+    let r4 = get_raster::<IGNORE_DC>(4, 8, block);
+    let r5 = get_raster::<IGNORE_DC>(5, 8, block);
+    let r6 = get_raster::<IGNORE_DC>(6, 8, block);
+    let r7 = get_raster::<IGNORE_DC>(7, 8, block);
 
-    xv0 = ((xv0 * get_q(0, 8, q)) << 11) + 128;
-    xv1 *= get_q(1, 8, q);
-    xv2 *= get_q(2, 8, q);
-    xv3 *= get_q(3, 8, q);
-    xv4 = (xv4 * get_q(4, 8, q)) << 11;
-    xv5 *= get_q(5, 8, q);
-    xv6 *= get_q(6, 8, q);
-    xv7 *= get_q(7, 8, q);
+    // multiply by quant table (get it already transposed so we can load it quickly)
+    let mut xv0 = ((r0 * get_q(0, q_transposed)) << 11) + 128;
+    let mut xv1 = r1 * get_q(1, q_transposed);
+    let mut xv2 = r2 * get_q(2, q_transposed);
+    let mut xv3 = r3 * get_q(3, q_transposed);
+    let mut xv4 = (r4 * get_q(4, q_transposed)) << 11;
+    let mut xv5 = r5 * get_q(5, q_transposed);
+    let mut xv6 = r6 * get_q(6, q_transposed);
+    let mut xv7 = r7 * get_q(7, q_transposed);
 
     // Stage 1.
     let mut xv8 = _W7 * (xv1 + xv7);
@@ -136,51 +121,51 @@ pub fn run_idct<const IGNORE_DC: bool>(block: &AlignedBlock, q: &[u16; 64], outp
     let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
         i32x8::transpose(row);
 
-    yv7 = (yv7 << 8) + 8192;
-    yv3 = yv3 << 8;
+    yv0 = (yv0 << 8) + 8192;
+    yv4 = yv4 << 8;
 
     // Stage 1.
-    let mut yv8 = (W7 * (yv6 + yv0)) + 4;
-    yv6 = (yv8 + (W1MW7 * yv6)) >> 3;
-    yv0 = (yv8 - (W1PW7 * yv0)) >> 3;
-    yv8 = (W3 * (yv2 + yv4)) + 4;
-    yv2 = (yv8 - (W3MW5 * yv2)) >> 3;
-    yv4 = (yv8 - (W3PW5 * yv4)) >> 3;
+    let mut yv8 = (W7 * (yv1 + yv7)) + 4;
+    yv1 = (yv8 + (W1MW7 * yv1)) >> 3;
+    yv7 = (yv8 - (W1PW7 * yv7)) >> 3;
+    yv8 = (W3 * (yv5 + yv3)) + 4;
+    yv5 = (yv8 - (W3MW5 * yv5)) >> 3;
+    yv3 = (yv8 - (W3PW5 * yv3)) >> 3;
 
     // Stage 2.
-    yv8 = yv7 + yv3;
-    yv7 -= yv3;
-    yv3 = ((W6) * (yv5 + yv1)) + 4;
-    yv1 = (yv3 - (W2PW6 * yv1)) >> 3;
-    yv5 = (yv3 + (W2MW6 * yv5)) >> 3;
-    yv3 = yv6 + yv2;
-    yv6 -= yv2;
-    yv2 = yv0 + yv4;
+    yv8 = yv0 + yv4;
     yv0 -= yv4;
+    yv4 = ((W6) * (yv2 + yv6)) + 4;
+    yv6 = (yv4 - (W2PW6 * yv6)) >> 3;
+    yv2 = (yv4 + (W2MW6 * yv2)) >> 3;
+    yv4 = yv1 + yv5;
+    yv1 -= yv5;
+    yv5 = yv7 + yv3;
+    yv7 -= yv3;
 
     // Stage 3.
-    yv4 = yv8 + yv5;
-    yv8 -= yv5;
-    yv5 = yv7 + yv1;
-    yv7 -= yv1;
-    yv1 = ((R2 * (yv6 + yv0)) + 128) >> 8;
-    yv6 = ((R2 * (yv6 - yv0)) + 128) >> 8;
+    yv3 = yv8 + yv2;
+    yv8 -= yv2;
+    yv2 = yv0 + yv6;
+    yv0 -= yv6;
+    yv6 = ((R2 * (yv1 + yv7)) + 128) >> 8;
+    yv1 = ((R2 * (yv1 - yv7)) + 128) >> 8;
 
     // Stage 4.
-    copy_to_output((yv4 + yv3) >> 11, 0, outp);
-    copy_to_output((yv5 + yv1) >> 11, 8, outp);
-    copy_to_output((yv7 + yv6) >> 11, 2 * 8, outp);
-    copy_to_output((yv8 + yv2) >> 11, 3 * 8, outp);
-    copy_to_output((yv8 - yv2) >> 11, 4 * 8, outp);
-    copy_to_output((yv7 - yv6) >> 11, 5 * 8, outp);
-    copy_to_output((yv5 - yv1) >> 11, 6 * 8, outp);
-    copy_to_output((yv4 - yv3) >> 11, 7 * 8, outp);
+    AlignedBlock::new(cast([
+        i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
+        i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
+        i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
+        i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
+        i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
+        i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
+        i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
+        i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
+    ]))
 }
 
-/// test with random permutations to verify that the current implementation matches the legacy
-/// implemenation from the original scalar C++ code
-#[test]
-pub fn test_idct_with_existing_behavior() {
+#[cfg(test)]
+fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     use std::num::Wrapping;
 
     fn mul(a: i16, b: u16) -> Wrapping<i32> {
@@ -328,6 +313,48 @@ pub fn test_idct_with_existing_behavior() {
         }
     }
 
+    {
+        let outp = run_idct::<true>(
+            test_data,
+            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
+        );
+
+        let mut outp2 = [0; 64];
+        run_idct_old(test_data, test_q, &mut outp2, true);
+
+        assert_eq!(*outp.get_block(), outp2);
+    }
+
+    {
+        let outp = run_idct::<false>(
+            test_data,
+            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
+        );
+
+        let mut outp2 = [0; 64];
+        run_idct_old(test_data, test_q, &mut outp2, false);
+
+        assert_eq!(*outp.get_block(), outp2);
+    }
+}
+
+/// test with a simple block to catch obvious mistakes
+#[test]
+pub fn test_idct_with_simple_block() {
+    let mut test_data = AlignedBlock::default();
+    let mut test_q = [1u16; 64];
+
+    test_q[0] = 2;
+    test_data.set_coefficient(0, 1000);
+    test_data.set_coefficient(1, -1000);
+
+    test_idct(&test_data, &test_q);
+}
+
+/// test with random permutations to verify that the current implementation matches the legacy
+/// implemenation from the original scalar C++ code
+#[test]
+pub fn test_idct_with_random_blocks() {
     use rand::rngs::StdRng;
     use rand::Rng;
     use rand::SeedableRng;
@@ -339,27 +366,9 @@ pub fn test_idct_with_existing_behavior() {
     for _ in 0..16 {
         for i in 0..64 {
             test_data.get_block_mut()[i] = rng.gen_range(i16::MIN..=i16::MAX);
-            test_q[i] = rng.gen_range(0..=u16::MAX);
+            test_q[i] = rng.gen_range(0..=u8::MAX as u16);
         }
 
-        {
-            let mut outp = [0; 64];
-            run_idct::<true>(&test_data, &test_q, &mut outp);
-
-            let mut outp2 = [0; 64];
-            run_idct_old(&test_data, &test_q, &mut outp2, true);
-
-            assert_eq!(outp, outp2);
-        }
-
-        {
-            let mut outp = [0; 64];
-            run_idct::<false>(&test_data, &test_q, &mut outp);
-
-            let mut outp2 = [0; 64];
-            run_idct_old(&test_data, &test_q, &mut outp2, false);
-
-            assert_eq!(outp, outp2);
-        }
+        test_idct(&test_data, &test_q);
     }
 }
