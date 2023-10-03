@@ -11,7 +11,6 @@ use crate::helpers::*;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
-use std::cmp::{max, min};
 
 use super::block_based_image::AlignedBlock;
 use super::block_context::BlockContext;
@@ -290,37 +289,36 @@ impl ProbabilityTables {
             b - a
         };
 
-        let min_dc_vec;
-        let max_dc_vec;
+        let min_dc;
+        let max_dc;
         let mut avg_horizontal: i32;
         let mut avg_vertical: i32;
 
         if ALL_PRESENT || self.left_present {
             if ALL_PRESENT || self.above_present {
                 // most common case where we have both left and above
-
                 let horiz = calc_left();
                 let vert = calc_above();
 
-                min_dc_vec = horiz.min(vert);
-                max_dc_vec = horiz.max(vert);
+                min_dc = horiz.min(vert).reduce_min();
+                max_dc = horiz.max(vert).reduce_max();
 
-                // compile does a great job vectorizing this
-                avg_horizontal = i32x8::from_i16x8(horiz).as_array_ref().iter().sum();
-                avg_vertical = i32x8::from_i16x8(vert).as_array_ref().iter().sum();
+                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
+                avg_vertical = i32x8::from_i16x8(vert).reduce_add();
             } else {
                 let horiz = calc_left();
-                min_dc_vec = horiz;
-                max_dc_vec = horiz;
+                min_dc = horiz.reduce_min();
+                max_dc = horiz.reduce_max();
 
-                avg_horizontal = i32x8::from_i16x8(horiz).as_array_ref().iter().sum();
+                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
                 avg_vertical = avg_horizontal;
             }
         } else if self.above_present {
             let vert = calc_above();
-            min_dc_vec = vert;
-            max_dc_vec = vert;
-            avg_vertical = i32x8::from_i16x8(vert).as_array_ref().iter().sum();
+            min_dc = vert.reduce_min();
+            max_dc = vert.reduce_max();
+
+            avg_vertical = i32x8::from_i16x8(vert).reduce_add();
             avg_horizontal = avg_vertical;
         } else {
             return PredictDCResult {
@@ -330,28 +328,6 @@ impl ProbabilityTables {
                 advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
             };
         }
-
-        let min_dc = min(
-            min(
-                min(min_dc_vec.as_array_ref()[0], min_dc_vec.as_array_ref()[1]),
-                min(min_dc_vec.as_array_ref()[2], min_dc_vec.as_array_ref()[3]),
-            ),
-            min(
-                min(min_dc_vec.as_array_ref()[4], min_dc_vec.as_array_ref()[5]),
-                min(min_dc_vec.as_array_ref()[6], min_dc_vec.as_array_ref()[7]),
-            ),
-        );
-
-        let max_dc = max(
-            max(
-                max(max_dc_vec.as_array_ref()[0], max_dc_vec.as_array_ref()[1]),
-                max(max_dc_vec.as_array_ref()[2], max_dc_vec.as_array_ref()[3]),
-            ),
-            max(
-                max(max_dc_vec.as_array_ref()[4], max_dc_vec.as_array_ref()[5]),
-                max(max_dc_vec.as_array_ref()[6], max_dc_vec.as_array_ref()[7]),
-            ),
-        );
 
         let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
         let uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
