@@ -44,7 +44,7 @@ use crate::{
     structs::block_based_image::AlignedBlock,
 };
 
-use std::io::Write;
+use std::{io::Write, num::NonZeroI32};
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
@@ -374,7 +374,7 @@ fn encode_block_seq(
     let mut block_index = 0;
     let mut z: u32 = 0; // number of zeros in a row * 16 (shifted because this is that way the coefficients are encoded later on)
 
-    loop {
+    'main: loop {
         // see if there was a non-zero coefficient in the current 64 bit block
         if current_value != 0 {
             // scan for trailing zeros to left in the current 64 bit block to figure out which one wasn't zero
@@ -386,7 +386,9 @@ fn encode_block_seq(
             current_value >>= nonzero_position;
 
             // write the non-zero coefficient we found
-            write_coef(huffw, current_value as i16, z, actbl);
+            let coef = current_value as i16;
+            assert!(coef != 0);
+            write_coef(huffw, coef, z, actbl);
 
             z = 0;
             bits_remaining -= 16;
@@ -429,12 +431,14 @@ fn encode_block_seq(
                         z = 0;
                         bits_remaining -= 16;
                         current_value >>= 16;
+
+                        continue 'main;
                     } else {
                         // everything remaining was zero, so we increment the number of zeros seen in z
                         z += bits_remaining;
 
                         if block_index >= 15 {
-                            break;
+                            break 'main;
                         }
 
                         // get the next block of 4 coefficients
@@ -442,10 +446,6 @@ fn encode_block_seq(
                         bits_remaining = 4 * 16;
                         current_value = u64::from_le(block64[block_index]);
                     }
-                }
-
-                if block_index >= 15 {
-                    break;
                 }
             }
         }
@@ -658,12 +658,17 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
 fn envli(vs: i16) -> (u32, u32) {
-    let v = i32::from(vs);
-    let mask = v >> 31;
-    let temp = v + mask;
-    let s = 32 - (mask ^ temp).leading_zeros();
-    let n = temp & ((1 << s) - 1);
-    return (n as u32, s);
+    if let Some(nz) = NonZeroI32::new(i32::from(vs)) {
+        let s = 32 - nz.unsigned_abs().leading_zeros();
+
+        let v = nz.get() as u32;
+        let neg = v >> 31;
+
+        let n = v.wrapping_sub(neg).wrapping_add(neg << s);
+        return (n as u32, s);
+    } else {
+        (0, 0)
+    }
 }
 
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
