@@ -39,7 +39,7 @@ impl BitWriter {
     }
 
     #[inline(always)]
-    pub fn write(&mut self, val: u64, new_bits: u32) {
+    pub fn write(&mut self, val: u32, new_bits: u32) {
         /// this is the slow path that is rarely called but generates a lot of code inlined
         /// so we move it out of the main function to keep the main function small with few branches.
         ///
@@ -68,11 +68,11 @@ impl BitWriter {
 
         // first see if everything fits in the current register
         if new_bits <= self.current_bit {
-            self.fill_register |= val.wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
+            self.fill_register |= (val as u64).wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
             self.current_bit = self.current_bit - new_bits;
         } else {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
-            let fill = self.fill_register | val.wrapping_shr(new_bits - self.current_bit);
+            let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
 
             let leftover_new_bits = new_bits - self.current_bit;
             let leftover_val = val & (1 << leftover_new_bits) - 1;
@@ -91,7 +91,7 @@ impl BitWriter {
                 self.data_buffer.extend_from_slice(&fill.to_be_bytes());
             }
 
-            self.fill_register = leftover_val.wrapping_shl(64 - leftover_new_bits); // support corner case where new_bits is zero, we don't want to panic
+            self.fill_register = (leftover_val as u64).wrapping_shl(64 - leftover_new_bits); // support corner case where new_bits is zero, we don't want to panic
             self.current_bit = 64 - leftover_new_bits;
         }
     }
@@ -222,7 +222,7 @@ fn roundtrip_randombits() {
 
         let mut b = BitWriter::new();
         for i in &test_data {
-            b.write(i.0 as u64, i.1 as u32);
+            b.write(i.0 as u32, i.1 as u32);
 
             // randomly flush the buffer
             if rng.gen_range(0..50) == 0 {
