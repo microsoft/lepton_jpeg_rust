@@ -38,16 +38,6 @@ steps:
 - script: 'cargo build --locked --release 2>&1'
   displayName: 'Build Release'
 
-- task: CopyFiles@2
-  displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
-  inputs:
-    SourceFolder: '$(Build.SourcesDirectory)'
-    Contents: |
-     target\debug\?(*.dll|*.exe|*.pdb)
-     target\release\?(*.dll|*.exe|*.pdb)
-     
-    TargetFolder: '$(Build.ArtifactStagingDirectory)'
-
 - task: UseDotNet@2
   inputs:
     packageType: 'sdk'
@@ -56,8 +46,12 @@ steps:
 - task: EsrpCodeSigning@4
   inputs:
     ConnectedServiceName: 'ESRP CodeSigning'
-    FolderPath: '$(Build.ArtifactStagingDirectory)'
-    Pattern: '*.dll,*.exe'
+    FolderPath: '$(Build.SourcesDirectory)'
+    Pattern: '
+      target\debug\lepton_jpeg.dll,
+      target\debug\lepton_jpeg_util.exe,
+      target\release\lepton_jpeg.dll,
+      target\release\lepton_jpeg_util.exe'
     signConfigType: 'inlineSignParams'
     inlineOperation: |
       [
@@ -86,7 +80,17 @@ steps:
     MaxConcurrency: '50'
     MaxRetryAttempts: '5'
     PendingAnalysisWaitTimeoutMinutes: '5'
-    
+
+- task: CopyFiles@2
+  displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
+  inputs:
+    SourceFolder: '$(Build.SourcesDirectory)'
+    Contents: |
+     target\debug\?(*.dll|*.exe|*.pdb)
+     target\release\?(*.dll|*.exe|*.pdb)
+     
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
 - task: PublishBuildArtifacts@1
   displayName: 'Publish Artifact'
   inputs:
