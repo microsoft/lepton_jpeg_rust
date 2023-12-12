@@ -23,19 +23,21 @@ cargo build --release
 
 #### Running
 
-There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress/decompress and also to verify the test end-to-end on a given JPEG. If the input file has a `.jpg` extension, it will encode. If the input file has a `.lep` extension, it will decode back to the original`.jpg`. 
+There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress/decompress and also to verify the test end-to-end on a given JPEG. If the input file has a `.jpg` extension, it will encode. If the input file has a `.lep` extension, it will decode back to the original`.jpg`.
 
 It supports the following options:
 
 `lepton_jpeg_util.exe [options] <inputfile> [<outputfile>]`
 
-| Option           | Description                                                  |
-| ---------------- | ------------------------------------------------------------ |
-| `-threads:n`     | Runs with a maximum of n threads. For encoding, this limits the amount of parallelism that can be gotten out of the decoder. |
-| `-dump`          | Dumps the contents of a JPG or LEP file, with the -all option, it will also dump the cooefficient image blocks |
-| `-noprogressive` | Will cause an error if we encounter a progressive file rather than trying to encode it |
-| `-verify`        | Reads, encodes and unencodes verifying that there is an exact match. No output file is specified. |
-| `-iter:n`        | Runs N iterations of the operation. Useful when we are running inside a profiler. |
+| Option                  | Description                                                  |
+| ----------------------- | ------------------------------------------------------------ |
+| `-threads:n`            | Runs with a maximum of n threads. For encoding, this limits the amount of parallelism that can be gotten out of the decoder. |
+| `-dump`                 | Dumps the contents of a JPG or LEP file, with the `-all` option, it will also dump the cooefficient image blocks. |
+| `-noprogressive`        | Will cause an error if we encounter a progressive file rather than trying to encode it. |
+| `-acceptdqtswithzeros`  | Accept images with DQTs with zeros (may cause divide-by-zero). |
+| `-iter:n`               | Runs N iterations of the operation. Useful when we are running inside a profiler. |
+| `-max-width:n`          | Limit the maximum image width to n pixels, instead of the default 16386. Fails with an error if limit is exceeded. |
+| `-max-height:n`         | Limit the maximum image height to n pixels, instead of the default 16386. Fails with an error il limit is exceeded. |
 
 ## Contributing
 
