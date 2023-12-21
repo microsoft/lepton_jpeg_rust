@@ -4,28 +4,18 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
             "name": "(Windows) Launch",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/target/debug/lepton_jpeg_util.exe",
-            "args": ["-dump", "${workspaceFolder}\\images\\slrcity.jpg"],
+            "args": ["-verify", "${workspaceFolder}\\images\\slrcity.jpg"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
             "console": "externalTerminal",
-        },
-        {
-            "name": "Debug unit test",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/target/debug/deps/end_to_end-5c5d5b533f217bea.exe",
-            "args": [ "verify_extern_16bit_math_retry" ],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "console": "externalTerminal",
-            "preLaunchTask": "rust: cargo test norun",
-        },
+        }
+
     ]
 }

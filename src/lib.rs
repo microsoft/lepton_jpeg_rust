@@ -133,40 +133,10 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
-    return WrapperDecompressImageEx(
-        input_buffer,
-        input_buffer_size,
-        output_buffer,
-        output_buffer_size,
-        number_of_threads,
-        result_size,
-        false, // use_16bit_dc_estimate
-    );
-}
-
-/// C ABI interface for decompressing image, exposed from DLL.
-/// use_16bit_dc_estimate argument should be set to true only for images
-/// that were compressed by C++ version of Leptron (see comments below).
-#[no_mangle]
-pub unsafe extern "C" fn WrapperDecompressImageEx(
-    input_buffer: *const u8,
-    input_buffer_size: u64,
-    output_buffer: *mut u8,
-    output_buffer_size: u64,
-    number_of_threads: i32,
-    result_size: *mut u64,
-    use_16bit_dc_estimate: bool,
-) -> i32 {
     match catch_unwind(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
         let mut enabled_features = EnabledFeatures::all();
         enabled_features.reject_dqts_with_zeros = false;
-
-        // C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-        // depending on the compiler options. If use_16bit_dc_estimate=true, the decompression uses a back-compat
-        // mode that considers it. The caller should set use_16bit_dc_estimate to true only for images that were
-        // compressed by C++ version with relevant compiler options.
-        enabled_features.use_16bit_dc_estimate = use_16bit_dc_estimate;
 
         loop {
             let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -188,14 +158,12 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
                 Err(e) => {
                     let exit_code = translate_error(e).exit_code;
 
-                    // The retry logic below runs if the caller did not pass use_16bit_dc_estimate=true, but the decompression
-                    // encountered StreamInconsistent failure which is commonly caused by the the C++ 16 bit bug. In this case
-                    // we retry the decompression with use_16bit_dc_estimate=true.
-                    // Note that it's prefferable for the caller to pass use_16bit_dc_estimate properly and not to rely on this
-                    // retry logic, that may miss some cases leading to bad (corrupted) decompression results.
+                    // there's a bug in the C++ version where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path depending on the compiler options.
+                    // unfortunately there's no way to tell ahead of time other than the fact that the image will be decoded with an error.
                     if exit_code == ExitCode::StreamInconsistent
                         && !enabled_features.use_16bit_dc_estimate
                     {
+                        // try again with the flag set
                         enabled_features.use_16bit_dc_estimate = true;
                         continue;
                     }
