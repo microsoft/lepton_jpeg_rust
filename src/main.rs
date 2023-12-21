@@ -75,6 +75,8 @@ fn main_with_result() -> anyhow::Result<()> {
                 enabled_features.progressive = false;
             } else if args[i] == "-acceptdqtswithzeros" {
                 enabled_features.reject_dqts_with_zeros = false;
+            } else if args[i] == "-use16bitdc" {
+                enabled_features.use_16bit_dc_estimate = true;
             } else {
                 return err_exit_code(
                     ExitCode::SyntaxError,
