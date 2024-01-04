@@ -65,6 +65,10 @@ fn main_with_result() -> anyhow::Result<()> {
                 num_threads = x;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-iter:") {
                 iterations = x;
+            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-width:") {
+                enabled_features.max_jpeg_width = x;
+            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-height:") {
+                enabled_features.max_jpeg_height = x;
             } else if args[i] == "-dump" {
                 dump = true;
             } else if args[i] == "-all" {

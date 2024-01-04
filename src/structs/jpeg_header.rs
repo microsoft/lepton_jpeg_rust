@@ -531,7 +531,7 @@ impl JPegHeader {
 
                 if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
                 {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, "image dimensions larger than 16386");
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image dimensions larger than {0}x{1}", enabled_features.max_jpeg_width, enabled_features.max_jpeg_height).as_str());
                 }
 
                 self.cmpc = usize::from(segment[hpos + 5]);
