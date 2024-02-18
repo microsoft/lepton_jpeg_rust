@@ -7,6 +7,7 @@
 use std::cmp;
 
 use crate::consts::*;
+use crate::enabled_features;
 use crate::helpers::*;
 use crate::structs::idct::*;
 use crate::structs::model::*;
@@ -258,6 +259,7 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         block_context: &BlockContext,
         num_non_zeros: &[NeighborSummary],
+        enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
         let q_transposed = qt.get_quantization_table_transposed();
 
@@ -268,25 +270,51 @@ impl ProbabilityTables {
         let calc_left = || {
             let left_context = block_context.neighbor_context_left(num_non_zeros);
 
-            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
-            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
-            let pixel_delta = a1 - a2;
-            let a: i16x8 = a1 + 1024;
-            let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+            if enabled_features.use_16bit_adv_predict {
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
 
-            b - a
+                b - a
+            } else {
+                let mut dc_estimates = [0i16; 8];
+                for i in 0..8 {
+                    let a = i32::from(pixels_sans_dc.get_block()[i << 3]) + 1024;
+                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i << 3])
+                        - i32::from(pixels_sans_dc.get_block()[(i << 3) + 1]);
+                    let b = i32::from(left_context.get_vertical()[i]) - (pixel_delta / 2); //round to zero
+                    dc_estimates[i] = (b - a) as i16;
+                }
+
+                i16x8::from(dc_estimates)
+            }
         };
 
         let calc_above = || {
             let above_context = block_context.neighbor_context_above(num_non_zeros);
 
-            let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
-            let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
-            let pixel_delta = a1 - a2;
-            let a: i16x8 = a1 + 1024;
-            let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+            if enabled_features.use_16bit_adv_predict {
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
 
-            b - a
+                b - a
+            } else {
+                let mut dc_estimates = [0i16; 8];
+                for i in 0..8 {
+                    let a = i32::from(pixels_sans_dc.get_block()[i]) + 1024;
+                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i])
+                        - i32::from(pixels_sans_dc.get_block()[i + 8]);
+                    let b = i32::from(above_context.get_horizontal()[i]) - (pixel_delta / 2); //round to zero
+                    dc_estimates[i] = (b - a) as i16;
+                }
+
+                i16x8::from(dc_estimates)
+            }
         };
 
         let min_dc;

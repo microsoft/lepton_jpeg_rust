@@ -12,8 +12,11 @@ pub struct EnabledFeatures {
     // maximum jpeg height
     pub max_jpeg_height: i32,
 
-    // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
+    /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
     pub use_16bit_dc_estimate: bool,
+
+    /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
+    pub use_16bit_adv_predict: bool,
 }
 
 impl Default for EnabledFeatures {
@@ -24,6 +27,7 @@ impl Default for EnabledFeatures {
             max_jpeg_width: 16386,
             max_jpeg_height: 16386,
             use_16bit_dc_estimate: false,
+            use_16bit_adv_predict: true,
         }
     }
 }
@@ -38,6 +42,7 @@ impl EnabledFeatures {
             max_jpeg_height: i32::MAX,
             max_jpeg_width: i32::MAX,
             use_16bit_dc_estimate: false,
+            use_16bit_adv_predict: true,
         }
     }
 }

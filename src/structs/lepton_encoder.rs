@@ -378,7 +378,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, &num_non_zeros);
+    let predicted_val =
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, &num_non_zeros, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         block.get_dc(),

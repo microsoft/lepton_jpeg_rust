@@ -81,6 +81,9 @@ fn main_with_result() -> anyhow::Result<()> {
                 enabled_features.reject_dqts_with_zeros = false;
             } else if args[i] == "-use16bitdc" {
                 enabled_features.use_16bit_dc_estimate = true;
+            } else if args[i] == "-useleptonscalar" {
+                enabled_features.use_16bit_adv_predict = false;
+                enabled_features.use_16bit_dc_estimate = false;
             } else {
                 return err_exit_code(
                     ExitCode::SyntaxError,

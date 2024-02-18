@@ -90,6 +90,28 @@ fn verify_decode(
     assert!(output[..] == expected[..]);
 }
 
+/// verifies that the decode will accept existing Lepton files and generate
+/// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
+#[test]
+fn verify_decode_scalar_overflow() {
+    let file = "mathoverflow_scalar";
+
+    println!("decoding {0:?}", file);
+
+    let input = read_file(file, ".lep");
+    let expected = read_file(file, ".jpg");
+
+    let mut output = Vec::new();
+
+    let mut features = EnabledFeatures::all();
+    features.use_16bit_adv_predict = false;
+    features.use_16bit_dc_estimate = false;
+
+    decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+
+    assert!(output[..] == expected[..]);
+}
+
 /// Verifies that the decode will accept existing Lepton files and generate
 /// exactly the same jpeg from them when called by an external interface
 /// with use_16bit_dc_estimate=true for C++ backward compatibility.
