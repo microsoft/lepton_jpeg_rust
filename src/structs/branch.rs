@@ -164,15 +164,7 @@ fn test_all_probabilities() {
         for _k in 0..10 {
             old_f.record_obs_and_update(false);
             new_f.record_and_update_false_obs();
-            if old_f.probability == 0 {
-                // there is a change of behavior here compared to the C++ version,
-                // but because of the way split is calculated it doesn't result in an
-                // overall change in the way that encoding is done, but it does simplify
-                // one of the corner cases.
-                assert_eq!(old_f.probability, 1);
-            } else {
-                assert_eq!(old_f.probability, new_f.get_probability());
-            }
+            assert_eq!(old_f.probability, new_f.get_probability());
         }
 
         let mut old_t = OriginalImplForTest {
@@ -185,14 +177,14 @@ fn test_all_probabilities() {
             old_t.record_obs_and_update(true);
             new_t.record_and_update_true_obs();
 
-            if old_f.probability == 0 {
+            if old_t.probability == 0 {
                 // there is a change of behavior here compared to the C++ version,
                 // but because of the way split is calculated it doesn't result in an
                 // overall change in the way that encoding is done, but it does simplify
                 // one of the corner cases.
-                assert_eq!(old_f.probability, 1);
+                assert_eq!(new_t.get_probability(), 1);
             } else {
-                assert_eq!(old_f.probability, new_f.get_probability());
+                assert_eq!(old_t.probability, new_t.get_probability());
             }
         }
     }
