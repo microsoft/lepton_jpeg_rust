@@ -360,7 +360,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         eob_y,
     )?;
 
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros);
+    let predicted_dc =
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros, features);
 
     let coef = model
         .read_dc(

@@ -96,7 +96,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             &mut reader,
             &mut writer,
             number_of_threads as usize,
-            &EnabledFeatures::default(),
+            &EnabledFeatures::compat_lepton_vector_write(),
         ) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
@@ -159,14 +159,19 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
 ) -> i32 {
     match catch_unwind(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
-        let mut enabled_features = EnabledFeatures::all();
-        enabled_features.reject_dqts_with_zeros = false;
 
         // C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
         // depending on the compiler options. If use_16bit_dc_estimate=true, the decompression uses a back-compat
         // mode that considers it. The caller should set use_16bit_dc_estimate to true only for images that were
         // compressed by C++ version with relevant compiler options.
-        enabled_features.use_16bit_dc_estimate = use_16bit_dc_estimate;
+
+        // this is a bit of a mess since for a while we were encoded a mix of 16 and 32 bit math
+        // (hence the two parameters in features).
+
+        let mut enabled_features = EnabledFeatures {
+            use_16bit_dc_estimate: use_16bit_dc_estimate,
+            ..EnabledFeatures::compat_lepton_vector_read()
+        };
 
         loop {
             let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -179,7 +184,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
                 &mut reader,
                 &mut writer,
                 number_of_threads as usize,
-                &enabled_features,
+                &mut enabled_features,
             ) {
                 Ok(_) => {
                     *result_size = writer.position().into();

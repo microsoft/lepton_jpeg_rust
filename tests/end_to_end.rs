@@ -83,9 +83,29 @@ fn verify_decode(
         &mut Cursor::new(input),
         &mut output,
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
+
+    assert!(output[..] == expected[..]);
+}
+
+/// verifies that the decode will accept existing Lepton files and generate
+/// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
+#[test]
+fn verify_decode_scalar_overflow() {
+    let file = "mathoverflow_scalar";
+
+    println!("decoding {0:?}", file);
+
+    let input = read_file(file, ".lep");
+    let expected = read_file(file, ".jpg");
+
+    let mut output = Vec::new();
+
+    let features = EnabledFeatures::compat_lepton_scalar_read();
+
+    decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
 
     assert!(output[..] == expected[..]);
 }
@@ -208,7 +228,7 @@ fn verify_encode(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_write(),
     )
     .unwrap();
 
@@ -216,7 +236,7 @@ fn verify_encode(
         &mut Cursor::new(lepton),
         &mut output,
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
 
@@ -232,8 +252,7 @@ fn verify_16bitmath() {
 
         let mut output = Vec::new();
 
-        let mut features = EnabledFeatures::all();
-        features.use_16bit_dc_estimate = true;
+        let features = EnabledFeatures::compat_lepton_vector_read();
 
         decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
 
@@ -247,7 +266,7 @@ fn verify_16bitmath() {
 
         let mut output = Vec::new();
 
-        let mut features = EnabledFeatures::all();
+        let mut features = EnabledFeatures::compat_lepton_vector_read();
         features.use_16bit_dc_estimate = false;
 
         decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
@@ -290,7 +309,12 @@ fn verify_extern_16bit_math_retry() {
 fn verify_encode_verify(#[values("slrcity")] file: &str) {
     let input = read_file(file, ".jpg");
 
-    encode_lepton_verify(&input[..], 8, &EnabledFeatures::all()).unwrap();
+    encode_lepton_verify(
+        &input[..],
+        8,
+        &EnabledFeatures::compat_lepton_vector_write(),
+    )
+    .unwrap();
 }
 
 fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
@@ -317,7 +341,7 @@ fn verify_encode_progressive_false(
             8,
             &EnabledFeatures {
                 progressive: false,
-                ..Default::default()
+                ..EnabledFeatures::compat_lepton_vector_write()
             },
         ),
     );
@@ -335,7 +359,7 @@ fn verify_nonoptimal() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            &EnabledFeatures::all(),
+            &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
 }
@@ -345,13 +369,14 @@ fn verify_nonoptimal() {
 fn verify_encode_image_with_zeros_in_dqt_tables() {
     let input = read_file("zeros_in_dqt_tables", ".jpg");
     let mut lepton = Vec::new();
+
     assert_exception(
         ExitCode::UnsupportedJpeg,
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            &EnabledFeatures::all(),
+            &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
 }

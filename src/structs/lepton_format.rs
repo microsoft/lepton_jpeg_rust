@@ -56,11 +56,13 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
 
     let mut lh = LeptonHeader::new();
 
-    lh.read_lepton_header(reader, enabled_features)
+    let mut features_mut = enabled_features.clone();
+
+    lh.read_lepton_header(reader, &mut features_mut)
         .context(here!())?;
 
     let metrics = lh
-        .recode_jpeg(writer, reader, size, num_threads, enabled_features)
+        .recode_jpeg(writer, reader, size, num_threads, &features_mut)
         .context(here!())?;
 
     return Ok(metrics);
@@ -75,7 +77,8 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, max_threads, |_jh| {})?;
 
-    lp.write_lepton_header(writer).context(here!())?;
+    lp.write_lepton_header(writer, enabled_features)
+        .context(here!())?;
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
@@ -125,14 +128,11 @@ pub fn encode_lepton_wrapper_verify(
 
     info!("decompressing to verify contents");
 
+    let mut c = enabled_features.clone();
+
     metrics.merge_from(
-        decode_lepton_wrapper(
-            &mut verifyreader,
-            &mut verify_buffer,
-            max_threads,
-            &enabled_features,
-        )
-        .context(here!())?,
+        decode_lepton_wrapper(&mut verifyreader, &mut verify_buffer, max_threads, &mut c)
+            .context(here!())?,
     );
 
     if input_data.len() != verify_buffer.len() {
@@ -997,7 +997,7 @@ impl LeptonHeader {
     pub fn read_lepton_header<R: Read>(
         &mut self,
         reader: &mut R,
-        enabled_features: &EnabledFeatures,
+        enabled_features: &mut EnabledFeatures,
     ) -> Result<()> {
         let mut header = [0 as u8; LEPTON_FILE_HEADER.len()];
 
@@ -1039,6 +1039,13 @@ impl LeptonHeader {
         if header[5] == 'M' as u8 && header[6] == 'S' as u8 {
             c.set_position(7);
             self.uncompressed_lepton_header_size = c.read_u32::<LittleEndian>()?;
+
+            // read the flag bits to know how we should decode this file
+            let flags = c.read_u8()?;
+            if (flags & 0x80) != 0 {
+                enabled_features.use_16bit_dc_estimate = (flags & 0x01) != 0;
+                enabled_features.use_16bit_adv_predict = (flags & 0x02) != 0;
+            }
         }
 
         // full size of the original file
@@ -1230,7 +1237,11 @@ impl LeptonHeader {
         return Ok(hdr_data);
     }
 
-    pub fn write_lepton_header<W: Write>(&self, writer: &mut W) -> Result<()> {
+    pub fn write_lepton_header<W: Write>(
+        &self,
+        writer: &mut W,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<()> {
         let mut lepton_header = Vec::<u8>::new();
 
         {
@@ -1273,7 +1284,21 @@ impl LeptonHeader {
         writer.write_u8('M' as u8)?;
         writer.write_u8('S' as u8)?;
         writer.write_u32::<LittleEndian>(lepton_header.len() as u32)?;
-        writer.write_all(&[0; 6])?;
+
+        // write the flags that were used to encode this file
+        writer.write_u8(
+            0x80 | if enabled_features.use_16bit_dc_estimate {
+                1
+            } else {
+                0
+            } | if enabled_features.use_16bit_adv_predict {
+                2
+            } else {
+                0
+            },
+        )?;
+
+        writer.write_all(&[0; 5])?;
 
         writer.write_u32::<LittleEndian>(self.jpeg_file_size)?;
         writer.write_u32::<LittleEndian>(compressed_header.len() as u32)?;
@@ -1706,10 +1731,12 @@ fn parse_and_write_header() {
         0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd2, 0xcf, 0x20, 0xff, 0xd9, // EOI
     ];
 
+    let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
 
-    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &EnabledFeatures::all())
+    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
         .unwrap();
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
@@ -1722,12 +1749,12 @@ fn parse_and_write_header() {
     });
 
     let mut serialized = Vec::new();
-    lh.write_lepton_header(&mut Cursor::new(&mut serialized))
+    lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
         .unwrap();
 
     let mut other = LeptonHeader::new();
     let mut other_reader = Cursor::new(&serialized);
     other
-        .read_lepton_header(&mut other_reader, &EnabledFeatures::all())
+        .read_lepton_header(&mut other_reader, &mut enabled_features)
         .unwrap();
 }

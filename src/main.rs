@@ -52,7 +52,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut dump = false;
     let mut all = false;
     let mut overwrite = false;
-    let mut enabled_features = EnabledFeatures::default();
+    let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
     if stdout().is_terminal() {
@@ -80,6 +80,14 @@ fn main_with_result() -> anyhow::Result<()> {
             } else if args[i] == "-acceptdqtswithzeros" {
                 enabled_features.reject_dqts_with_zeros = false;
             } else if args[i] == "-use16bitdc" {
+                enabled_features.use_16bit_dc_estimate = true;
+            } else if args[i] == "-useleptonscalar" {
+                // lepton files that were encoded by the dropbox c++ version compiled in scalar mode
+                enabled_features.use_16bit_adv_predict = false;
+                enabled_features.use_16bit_dc_estimate = false;
+            } else if args[i] == "-useleptonvector" {
+                // lepton files that were encoded by the dropbox c++ version compiled in AVX2/SSE2 mode
+                enabled_features.use_16bit_adv_predict = true;
                 enabled_features.use_16bit_dc_estimate = true;
             } else {
                 return err_exit_code(
@@ -111,7 +119,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 .context(here!())?;
         } else {
             lh = LeptonHeader::new();
-            lh.read_lepton_header(&mut reader, &enabled_features)
+            lh.read_lepton_header(&mut reader, &mut enabled_features)
                 .context(here!())?;
 
             let _metrics;
@@ -131,7 +139,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
 
                 if !lh
-                    .advance_next_header_segment(&EnabledFeatures::default())
+                    .advance_next_header_segment(&enabled_features)
                     .context(here!())?
                 {
                     break;
