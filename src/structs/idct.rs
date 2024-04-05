@@ -32,18 +32,18 @@ const R2: i32 = 181; // 256/sqrt(2)
 #[inline(always)]
 fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
     return i32x8::new([
-        block.get_coefficient(7 * stride + offset) as i32,
-        block.get_coefficient(6 * stride + offset) as i32,
-        block.get_coefficient(5 * stride + offset) as i32,
-        block.get_coefficient(4 * stride + offset) as i32,
-        block.get_coefficient(3 * stride + offset) as i32,
-        block.get_coefficient(2 * stride + offset) as i32,
-        block.get_coefficient(1 * stride + offset) as i32,
         if IGNORE_DC && offset == 0 {
             0
         } else {
             block.get_coefficient(offset) as i32
         },
+        block.get_coefficient(1 * stride + offset) as i32,
+        block.get_coefficient(2 * stride + offset) as i32,
+        block.get_coefficient(3 * stride + offset) as i32,
+        block.get_coefficient(4 * stride + offset) as i32,
+        block.get_coefficient(5 * stride + offset) as i32,
+        block.get_coefficient(6 * stride + offset) as i32,
+        block.get_coefficient(7 * stride + offset) as i32,
     ]);
 }
 
