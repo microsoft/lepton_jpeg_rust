@@ -18,7 +18,16 @@ jobs:
     - uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
-        target: wasm32-wasi,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc
+        target: wasm32-wasi
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-unknown-linux-musl
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: x86_64-pc-windows-msvc
+        
     - name: Build
       run: 
         cargo build --locked --verbose
