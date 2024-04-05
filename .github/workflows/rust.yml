@@ -29,15 +29,15 @@ jobs:
         target: x86_64-pc-windows-msvc
 
     - name: Build default target
-      run: cargo build --locked --verbose
+      run: cargo build --locked 
     - name: Build wasm32-wasi
-      run: cargo build --locked --verbose --target wasm32-wasi
+      run: cargo build --locked --target wasm32-wasi --lib
     - name: Build aarch64-unknown-linux-musl
-      run: cargo build --locked --verbose --target aarch64-unknown-linux-musl
+      run: cargo build --locked --target aarch64-unknown-linux-musl --lib
     - name: Build x86_64-pc-windows-msvc
-      run: cargo build --locked --verbose --target x86_64-pc-windows-msvc
+      run: cargo build --locked --target x86_64-pc-windows-msvc
     - name: Run tests
-      run: cargo test --locked --verbose
+      run: cargo test --locked
     - name: Check formatting
       run: cargo fmt --check
       
