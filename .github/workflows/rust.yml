@@ -27,14 +27,15 @@ jobs:
       with:
         toolchain: stable
         target: x86_64-pc-windows-msvc
-        
-    - name: Build
-      run: 
-        cargo build --locked --verbose
-        cargo build --locked --verbose --target wasm32-wasi
-        cargo build --locked --verbose --target aarch64-unknown-linux-musl
-        cargo build --locked --verbose --target x86_64-pc-windows-msvc
 
+    - name: Build default target
+      run: cargo build --locked --verbose
+    - name: Build wasm32-wasi
+      run: cargo build --locked --verbose --target wasm32-wasi
+    - name: Build aarch64-unknown-linux-musl
+      run: cargo build --locked --verbose --target aarch64-unknown-linux-musl
+    - name: Build x86_64-pc-windows-msvc
+      run: cargo build --locked --verbose --target x86_64-pc-windows-msvc
     - name: Run tests
       run: cargo test --locked --verbose
     - name: Check formatting
