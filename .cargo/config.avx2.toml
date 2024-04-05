@@ -1,5 +1,0 @@
-# -Ccontrol-flow-guard: Enable Control Flow Guard (needed for OneBranch's post-build analysis).
-# -Ctarget-feature=+crt-static: Statically link the CRT (required to link the spectre-mitigated CRT).
-# -Clink-args=/DYNAMICBASE /CETCOMPAT: Enable "shadow stack" (https://docs.microsoft.com/en-us/cpp/build/reference/cetcompat)
-[target.'cfg(target_os = "windows")']
-xrustflags = ["-Ccontrol-flow-guard", "-Ctarget-feature=+crt-static,+avx2,+fma", "-Clink-args=/DYNAMICBASE /CETCOMPAT"]
