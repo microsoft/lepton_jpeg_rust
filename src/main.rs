@@ -14,9 +14,9 @@ mod structs;
 
 use anyhow;
 use anyhow::Context;
-use cpu_time::ThreadTime;
 use helpers::err_exit_code;
 use lepton_error::{ExitCode, LeptonError};
+use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
@@ -204,7 +204,7 @@ fn main_with_result() -> anyhow::Result<()> {
 
     let mut current_iteration = 0;
     loop {
-        let thread_cpu = ThreadTime::now();
+        let thread_cpu = CpuTimeMeasure::new();
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results

@@ -5,7 +5,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use cpu_time::ThreadTime;
 use log::{info, warn};
 use std::cmp;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
@@ -27,7 +26,7 @@ use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
-use crate::metrics::Metrics;
+use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::bit_writer::BitWriter;
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegHeader;
@@ -367,7 +366,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
             }
 
             running_threads.push(s.spawn(move || -> Result<(P, Metrics)> {
-                let cpu_time = ThreadTime::now();
+                let cpu_time = CpuTimeMeasure::new();
 
                 // determine how much we are going to write in total to presize the buffer
                 let mut decoded_size = 0;
@@ -580,7 +579,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
             let cloned_sender = tx.clone();
 
             running_threads.push(s.spawn(move || -> Result<Metrics> {
-                let cpu_time = ThreadTime::now();
+                let cpu_time = CpuTimeMeasure::new();
 
                 let thread_id = i;
                 let mut thread_writer = MessageSender {
