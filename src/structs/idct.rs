@@ -30,24 +30,6 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-fn get_raster<const IGNORE_DC: bool>(offset: usize, stride: usize, block: &AlignedBlock) -> i32x8 {
-    return i32x8::new([
-        if IGNORE_DC && offset == 0 {
-            0
-        } else {
-            block.get_coefficient(offset) as i32
-        },
-        block.get_coefficient(1 * stride + offset) as i32,
-        block.get_coefficient(2 * stride + offset) as i32,
-        block.get_coefficient(3 * stride + offset) as i32,
-        block.get_coefficient(4 * stride + offset) as i32,
-        block.get_coefficient(5 * stride + offset) as i32,
-        block.get_coefficient(6 * stride + offset) as i32,
-        block.get_coefficient(7 * stride + offset) as i32,
-    ]);
-}
-
-#[inline(always)]
 pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
     let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
     i32x8::from_i16x8(rows[offset])
@@ -58,15 +40,22 @@ pub fn run_idct<const IGNORE_DC: bool>(
     block: &AlignedBlock,
     q_transposed: &AlignedBlock,
 ) -> AlignedBlock {
-    // get horizontal transpose at the same time since we have to do the translation from zigzag anyway
-    let r0 = get_raster::<IGNORE_DC>(0, 8, block);
-    let r1 = get_raster::<IGNORE_DC>(1, 8, block);
-    let r2 = get_raster::<IGNORE_DC>(2, 8, block);
-    let r3 = get_raster::<IGNORE_DC>(3, 8, block);
-    let r4 = get_raster::<IGNORE_DC>(4, 8, block);
-    let r5 = get_raster::<IGNORE_DC>(5, 8, block);
-    let r6 = get_raster::<IGNORE_DC>(6, 8, block);
-    let r7 = get_raster::<IGNORE_DC>(7, 8, block);
+    // first transpose as 16 bit values, then cast up to 32 bit for multiplications
+    let v: &[i16x8; 8] = cast_ref(block.get_block());
+    let t = i16x8::transpose(*v);
+
+    let r0 = i32x8::from_i16x8(if IGNORE_DC {
+        t[0] & i16x8::new([0, -1, -1, -1, -1, -1, -1, -1])
+    } else {
+        t[0]
+    });
+    let r1 = i32x8::from_i16x8(t[1]);
+    let r2 = i32x8::from_i16x8(t[2]);
+    let r3 = i32x8::from_i16x8(t[3]);
+    let r4 = i32x8::from_i16x8(t[4]);
+    let r5 = i32x8::from_i16x8(t[5]);
+    let r6 = i32x8::from_i16x8(t[6]);
+    let r7 = i32x8::from_i16x8(t[7]);
 
     // multiply by quant table (get it already transposed so we can load it quickly)
     let mut xv0 = ((r0 * get_q(0, q_transposed)) << 11) + 128;
