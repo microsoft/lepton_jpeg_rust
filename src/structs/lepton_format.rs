@@ -12,8 +12,6 @@ use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::swap;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::mpsc::{Receiver, SendError};
-use std::thread;
-use std::thread::ScopedJoinHandle;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -311,7 +309,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     lh: &LeptonHeader,
     reader: &mut R,
     last_data_position: u64,
-    max_threads_to_use: usize,
+    _max_threads_to_use: usize,
     features: &EnabledFeatures,
     process: fn(
         thread_handoff: &ThreadHandoff,
@@ -334,113 +332,30 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
         qt.push(qtables);
     }
 
-    let r = thread::scope(|s| -> Result<(Metrics, Vec<P>)> {
-        let mut running_threads: Vec<ScopedJoinHandle<Result<(P, Metrics)>>> = Vec::new();
+    let mut thread_results = Vec::<Option<Result<(Metrics, P)>>>::new();
+    for _i in 0..lh.thread_handoff.len() {
+        thread_results.push(None);
+    }
+
+    // track if we got an error while trying to send to a thread
+    let mut error_sending: Option<SendError<Message>> = None;
+
+    rayon::in_place_scope(|s| -> Result<()> {
         let mut channel_to_sender = Vec::new();
 
         let pts_ref = &pts;
         let q_ref = &qt[..];
 
-        // don't use more threads than we need
-        let m = cmp::min(max_threads_to_use, lh.thread_handoff.len());
+        info!("decoding {0} multipexed streams", lh.thread_handoff.len());
 
-        info!(
-            "decoding {0} multipexed streams with {1} threads",
-            lh.thread_handoff.len(),
-            m
-        );
+        for (t, result) in thread_results.iter_mut().enumerate() {
+            let (tx, rx) = channel();
+            channel_to_sender.push(tx);
 
-        // ratio of threads to work items
-        let ratio = lh.thread_handoff.len() as f32 / m as f32;
-
-        for t in 0..m {
-            let start = (t as f32 * ratio) as usize;
-            let end = ((t + 1) as f32 * ratio) as usize;
-
-            let iter_per_thread = end - start;
-
-            let mut rx_channels = Vec::new();
-            for _k in 0..iter_per_thread {
-                let (tx, rx) = channel();
-                channel_to_sender.push(tx);
-                rx_channels.push(Some(rx));
-            }
-
-            running_threads.push(s.spawn(move || -> Result<(P, Metrics)> {
-                let cpu_time = ThreadTime::now();
-
-                // determine how much we are going to write in total to presize the buffer
-                let mut decoded_size = 0;
-                for thread_id in start..end {
-                    decoded_size += lh.thread_handoff[thread_id].segment_size as usize;
-                }
-
-                // create a combined handoff that merges all the sections we have read so we process them in one go
-                let combined_thread_handoff = ThreadHandoff {
-                    luma_y_start: lh.thread_handoff[start].luma_y_start,
-                    luma_y_end: lh.thread_handoff[end - 1].luma_y_end,
-                    segment_offset_in_file: lh.thread_handoff[start].segment_offset_in_file,
-                    segment_size: decoded_size as i32,
-                    overhang_byte: lh.thread_handoff[start].overhang_byte,
-                    num_overhang_bits: lh.thread_handoff[start].num_overhang_bits,
-                    last_dc: lh.thread_handoff[start].last_dc.clone(),
-                };
-
-                let mut image_data = Vec::new();
-                for i in 0..lh.jpeg_header.cmpc {
-                    image_data.push(BlockBasedImage::new(
-                        &lh.jpeg_header,
-                        i,
-                        combined_thread_handoff.luma_y_start,
-                        if t == m - 1 {
-                            // if this is the last thead, then the image should extend all the way to the bottom
-                            lh.jpeg_header.cmp_info[0].bcv
-                        } else {
-                            combined_thread_handoff.luma_y_end
-                        },
-                    ));
-                }
-
-                let mut metrics = Metrics::default();
-
-                // now run the range of thread handoffs in the file that this thread is supposed to handle
-                for thread_id in start..end {
-                    // get the appropriate receiver so we can read out data from it
-                    let rx = rx_channels[thread_id - start].take().context(here!())?;
-                    let mut reader = MessageReceiver {
-                        thread_id: thread_id as u8,
-                        current_buffer: Cursor::new(Vec::new()),
-                        receiver: rx,
-                        end_of_file: false,
-                    };
-
-                    metrics.merge_from(
-                        lepton_decode_row_range(
-                            pts_ref,
-                            q_ref,
-                            &lh.truncate_components,
-                            &mut image_data,
-                            &mut reader,
-                            lh.thread_handoff[thread_id].luma_y_start,
-                            lh.thread_handoff[thread_id].luma_y_end,
-                            thread_id == lh.thread_handoff.len() - 1,
-                            true,
-                            features,
-                        )
-                        .context(here!())?,
-                    );
-                }
-
-                let process_result = process(&combined_thread_handoff, image_data, lh)?;
-
-                metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-                Ok((process_result, metrics))
-            }));
+            s.spawn(move |_| {
+                *result = Some(decoder_thread(lh, t, rx, pts_ref, q_ref, features, process));
+            });
         }
-
-        // track if we got an error while trying to send to a thread
-        let mut error_sending: Option<SendError<Message>> = None;
 
         // now that the threads are waiting for inptut, read the stream and send all the buffers to their respective readers
         while reader.stream_position().context(here!())? < last_data_position - 4 {
@@ -501,34 +416,102 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
             let _ = c.send(Message::Eof);
         }
 
-        let mut metrics = Metrics::default();
+        Ok(())
+    })?;
 
-        let mut result = Vec::new();
-        for i in running_threads.drain(..) {
-            let (result_to_process, source_metrics) = i.join().unwrap().context(here!())?;
+    let mut metrics = Metrics::default();
 
-            metrics.merge_from(source_metrics);
-
-            result.push(result_to_process);
+    let mut result = Vec::new();
+    let mut thread_not_run = false;
+    for i in thread_results.drain(..) {
+        match i {
+            None => thread_not_run = true,
+            Some(Err(e)) => {
+                return Err(e).context(here!());
+            }
+            Some(Ok((m, r))) => {
+                metrics.merge_from(m);
+                result.push(r);
+            }
         }
+    }
 
-        // if there was an error during send, it should have resulted in an error from one of the threads above and
-        // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
-        if let Some(e) = error_sending {
-            return Err(e).context(here!());
-        }
+    if thread_not_run {
+        return err_exit_code(ExitCode::GeneralFailure, "thread did not run").context(here!());
+    }
 
-        info!(
-            "worker threads {0}ms of CPU time in {1}ms of wall time",
-            metrics.get_cpu_time_worker_time().as_millis(),
-            wall_time.elapsed().as_millis()
-        );
+    // if there was an error during send, it should have resulted in an error from one of the threads above and
+    // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
+    if let Some(e) = error_sending {
+        return Err(e).context(here!());
+    }
 
-        return Ok((metrics, result));
-    })
-    .context(here!())?;
+    info!(
+        "worker threads {0}ms of CPU time in {1}ms of wall time",
+        metrics.get_cpu_time_worker_time().as_millis(),
+        wall_time.elapsed().as_millis()
+    );
 
-    Ok(r)
+    Ok((metrics, result))
+}
+
+fn decoder_thread<P>(
+    lh: &LeptonHeader,
+    thread_id: usize,
+    rx: Receiver<Message>,
+    pts_ref: &ProbabilityTablesSet,
+    q_ref: &[QuantizationTables],
+    features: &EnabledFeatures,
+    process: fn(&ThreadHandoff, Vec<BlockBasedImage>, &LeptonHeader) -> Result<P, anyhow::Error>,
+) -> Result<(Metrics, P), anyhow::Error> {
+    let cpu_time = ThreadTime::now();
+
+    let mut image_data = Vec::new();
+    for i in 0..lh.jpeg_header.cmpc {
+        image_data.push(BlockBasedImage::new(
+            &lh.jpeg_header,
+            i,
+            lh.thread_handoff[thread_id].luma_y_start,
+            if thread_id == lh.thread_handoff.len() - 1 {
+                // if this is the last thread, then the image should extend all the way to the bottom
+                lh.jpeg_header.cmp_info[0].bcv
+            } else {
+                lh.thread_handoff[thread_id].luma_y_end
+            },
+        ));
+    }
+
+    let mut metrics = Metrics::default();
+
+    // get the appropriate receiver so we can read out data from it
+    let mut reader = MessageReceiver {
+        thread_id: thread_id as u8,
+        current_buffer: Cursor::new(Vec::new()),
+        receiver: rx,
+        end_of_file: false,
+    };
+
+    metrics.merge_from(
+        lepton_decode_row_range(
+            pts_ref,
+            q_ref,
+            &lh.truncate_components,
+            &mut image_data,
+            &mut reader,
+            lh.thread_handoff[thread_id].luma_y_start,
+            lh.thread_handoff[thread_id].luma_y_end,
+            thread_id == lh.thread_handoff.len() - 1,
+            true,
+            features,
+        )
+        .context(here!())?,
+    );
+
+    let process_result = process(&lh.thread_handoff[thread_id], image_data, lh)?;
+
+    metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+    Ok((metrics, process_result))
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
@@ -569,49 +552,29 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     let mut sizes = Vec::<u64>::new();
     sizes.resize(thread_handoffs.len(), 0);
 
-    let mut merged_metrics = Metrics::default();
+    let mut thread_results = Vec::<Option<Result<Metrics>>>::new();
+    for _i in 0..thread_handoffs.len() {
+        thread_results.push(None);
+    }
 
-    thread::scope(|s| -> Result<()> {
+    rayon::in_place_scope(|s| -> Result<()> {
         let (tx, rx) = channel();
 
-        let mut running_threads = Vec::new();
-
-        for i in 0..thread_handoffs.len() {
+        for (thread_id, result) in thread_results.iter_mut().enumerate() {
             let cloned_sender = tx.clone();
 
-            running_threads.push(s.spawn(move || -> Result<Metrics> {
-                let cpu_time = ThreadTime::now();
-
-                let thread_id = i;
-                let mut thread_writer = MessageSender {
-                    thread_id: thread_id as u8,
-                    sender: cloned_sender,
-                    buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
-                };
-
-                let mut range_metrics = lepton_encode_row_range(
+            s.spawn(move |_| {
+                *result = Some(encode_thread_action(
+                    thread_id,
+                    cloned_sender,
                     pts_ref,
                     q_ref,
                     image_data,
-                    &mut thread_writer,
-                    thread_id as i32,
                     colldata,
-                    thread_handoffs[thread_id].luma_y_start,
-                    thread_handoffs[thread_id].luma_y_end,
-                    thread_id == thread_handoffs.len() - 1,
-                    true,
+                    thread_handoffs,
                     features,
-                )
-                .context(here!())?;
-
-                thread_writer.flush().context(here!())?;
-
-                thread_writer.sender.send(Message::Eof).context(here!())?;
-
-                range_metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-                Ok(range_metrics)
-            }));
+                ));
+            });
         }
 
         // drop the sender so that the channel breaks when all the threads exit
@@ -636,28 +599,31 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
 
                     sizes[thread_id as usize] += b.len() as u64;
                 }
-                Err(x) => {
-                    // get the actual error that cause the channel to
-                    // prematurely close
-                    for result in running_threads.drain(..) {
-                        let r = result.join().unwrap();
-                        if let Err(e) = r {
-                            return Err(e.context(here!()));
-                        }
-                    }
-
-                    return Err(x);
+                Err(_) => {
+                    break;
                 }
             }
-        }
-
-        for result in running_threads.drain(..) {
-            merged_metrics.merge_from(result.join().unwrap().unwrap());
         }
 
         return Ok(());
     })
     .context(here!())?;
+
+    let mut thread_not_run = false;
+    let mut merged_metrics = Metrics::default();
+
+    for result in thread_results.drain(..) {
+        match result {
+            None => thread_not_run = true,
+            Some(Ok(metrics)) => merged_metrics.merge_from(metrics),
+            // if there was an error processing anything, return it
+            Some(Err(e)) => return Err(e),
+        }
+    }
+
+    if thread_not_run {
+        return err_exit_code(ExitCode::GeneralFailure, "thread did not run");
+    }
 
     info!(
         "scan portion of JPEG uncompressed size = {0}",
@@ -671,6 +637,48 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     Ok(merged_metrics)
+}
+
+fn encode_thread_action(
+    thread_id: usize,
+    cloned_sender: Sender<Message>,
+    pts_ref: &ProbabilityTablesSet,
+    q_ref: &[QuantizationTables],
+    image_data: &[BlockBasedImage],
+    colldata: &TruncateComponents,
+    thread_handoffs: &[ThreadHandoff],
+    features: &EnabledFeatures,
+) -> std::prelude::v1::Result<Metrics, anyhow::Error> {
+    let cpu_time = ThreadTime::now();
+
+    let mut thread_writer = MessageSender {
+        thread_id: thread_id as u8,
+        sender: cloned_sender,
+        buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
+    };
+
+    let mut range_metrics = lepton_encode_row_range(
+        pts_ref,
+        q_ref,
+        image_data,
+        &mut thread_writer,
+        thread_id as i32,
+        colldata,
+        thread_handoffs[thread_id].luma_y_start,
+        thread_handoffs[thread_id].luma_y_end,
+        thread_id == thread_handoffs.len() - 1,
+        true,
+        features,
+    )
+    .context(here!())?;
+
+    thread_writer.flush().context(here!())?;
+
+    thread_writer.sender.send(Message::Eof).context(here!())?;
+
+    range_metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+    Ok(range_metrics)
 }
 
 #[derive(Debug)]
