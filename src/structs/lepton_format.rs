@@ -346,8 +346,11 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
         let pts_ref = &pts;
         let q_ref = &qt[..];
 
-        info!("decoding {0} multipexed streams", lh.thread_handoff.len());
+        info!("decoding {0} multiplexed streams", lh.thread_handoff.len());
 
+        // create a channel for each stream and spawn a work item to read from it
+        // the return value from each work item is stored in thread_results, which
+        // is collected at the end
         for (t, result) in thread_results.iter_mut().enumerate() {
             let (tx, rx) = channel();
             channel_to_sender.push(tx);
@@ -357,7 +360,7 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
             });
         }
 
-        // now that the threads are waiting for inptut, read the stream and send all the buffers to their respective readers
+        // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
         while reader.stream_position().context(here!())? < last_data_position - 4 {
             let thread_marker = reader.read_u8().context(here!())?;
             let thread_id = (thread_marker & 0xf) as u8;
