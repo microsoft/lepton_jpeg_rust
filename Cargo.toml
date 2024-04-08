@@ -35,6 +35,7 @@ wide = "0.7"
 log = "0.4"
 simple_logger ="4.0"
 cpu-time = "1.0"
+unroll="*"
 
 [dev-dependencies]
 rstest = "0.18"
