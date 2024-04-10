@@ -129,11 +129,14 @@ where
                     writer.write_all(&b[..]).context(here!())?;
                 }
                 Err(_) => {
+                    // if we get a receiving error here, this means that one of the threads broke
+                    // with an error, and this error will be collected when we join the threads
                     break;
                 }
             }
         }
 
+        // in place scope will join all the threads before it exits
         return Ok(());
     })
     .context(here!())?;
