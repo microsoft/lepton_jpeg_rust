@@ -49,16 +49,36 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
     let size = reader.seek(SeekFrom::End(0))?;
     reader.seek(SeekFrom::Start(orig_pos))?;
 
+    // last four bytes specify the file size
+    let mut reader_minus_trailer = reader.take(size - 4);
+
     let mut lh = LeptonHeader::new();
 
     let mut features_mut = enabled_features.clone();
 
-    lh.read_lepton_header(reader, &mut features_mut)
+    lh.read_lepton_header(&mut reader_minus_trailer, &mut features_mut)
         .context(here!())?;
 
     let metrics = lh
-        .recode_jpeg(writer, reader, size, num_threads, &features_mut)
+        .recode_jpeg(
+            writer,
+            &mut reader_minus_trailer,
+            num_threads,
+            &features_mut,
+        )
         .context(here!())?;
+
+    let expected_size = reader.read_u32::<LittleEndian>()?;
+    if expected_size != size as u32 {
+        return err_exit_code(
+            ExitCode::VerificationLengthMismatch,
+            format!(
+                "ERROR mismatch expected_size = {0}, actual_size = {1}",
+                expected_size, size
+            )
+            .as_str(),
+        );
+    }
 
     return Ok(metrics);
 }
@@ -302,10 +322,9 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
-fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
+fn run_lepton_decoder_threads<R: Read, P: Send>(
     lh: &LeptonHeader,
     reader: &mut R,
-    last_data_position: u64,
     _max_threads_to_use: usize,
     features: &EnabledFeatures,
     process: fn(
@@ -335,7 +354,6 @@ fn run_lepton_decoder_threads<R: Read + Seek, P: Send>(
     let mut thread_results = multiplex_read(
         reader,
         lh.thread_handoff.len(),
-        last_data_position,
         |thread_id, reader| -> Result<(Metrics, P)> {
             let cpu_time = CpuTimeMeasure::new();
 
@@ -555,11 +573,10 @@ impl LeptonHeader {
         };
     }
 
-    fn recode_jpeg<R: Read + Seek, W: Write>(
+    fn recode_jpeg<R: Read, W: Write>(
         &mut self,
         writer: &mut W,
         reader: &mut R,
-        last_data_position: u64,
         num_threads: usize,
         enabled_features: &EnabledFeatures,
     ) -> Result<Metrics, anyhow::Error> {
@@ -571,18 +588,11 @@ impl LeptonHeader {
             .context(here!())?;
 
         let metrics = if self.jpeg_header.jpeg_type == JPegType::Progressive {
-            self.recode_progressive_jpeg(
-                reader,
-                last_data_position,
-                writer,
-                num_threads,
-                enabled_features,
-            )
-            .context(here!())?
+            self.recode_progressive_jpeg(reader, writer, num_threads, enabled_features)
+                .context(here!())?
         } else {
             self.recode_baseline_jpeg(
                 reader,
-                last_data_position,
                 writer,
                 self.plain_text_size as u64
                     - self.garbage_data.len() as u64
@@ -605,10 +615,9 @@ impl LeptonHeader {
     }
 
     /// decodes the entire image and merges the results into a single set of BlockBaseImage per component
-    pub fn decode_as_single_image<R: Read + Seek>(
+    pub fn decode_as_single_image<R: Read>(
         &mut self,
         reader: &mut R,
-        last_data_position: u64,
         num_threads: usize,
         features: &EnabledFeatures,
     ) -> Result<(Vec<BlockBasedImage>, Metrics)> {
@@ -616,7 +625,6 @@ impl LeptonHeader {
         let (metrics, mut results) = run_lepton_decoder_threads(
             self,
             reader,
-            last_data_position,
             num_threads,
             features,
             |_thread_handoff, image_data, _lh| {
@@ -656,17 +664,16 @@ impl LeptonHeader {
     }
 
     /// progressive decoder, requires that the entire lepton file is processed first
-    fn recode_progressive_jpeg<R: Read + Seek, W: Write>(
+    fn recode_progressive_jpeg<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
-        last_data_position: u64,
         writer: &mut W,
         num_threads: usize,
         enabled_features: &EnabledFeatures,
     ) -> Result<Metrics> {
         // run the threads first, since we need everything before we can start decoding
         let (merged, metrics) = self
-            .decode_as_single_image(reader, last_data_position, num_threads, enabled_features)
+            .decode_as_single_image(reader, num_threads, enabled_features)
             .context(here!())?;
 
         loop {
@@ -696,10 +703,9 @@ impl LeptonHeader {
 
     // baseline decoder can run the jpeg encoder inside the worker thread vs progressive encoding which needs to get the entire set of coefficients first
     // since it runs throught it multiple times.
-    fn recode_baseline_jpeg<R: Read + Seek, W: Write>(
+    fn recode_baseline_jpeg<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
-        last_data_position: u64,
         writer: &mut W,
         size_limit: u64,
         num_threads: usize,
@@ -709,7 +715,6 @@ impl LeptonHeader {
         let (metrics, results) = run_lepton_decoder_threads(
             self,
             reader,
-            last_data_position,
             num_threads,
             enabled_features,
             |thread_handoff, image_data, lh| {
