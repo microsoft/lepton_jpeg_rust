@@ -1,5 +1,38 @@
 use std::{collections::HashMap, time::Duration};
 
+#[cfg(windows)]
+use cpu_time::ThreadTime;
+
+/// platform independent threadtime measurement
+pub struct CpuTimeMeasure {
+    #[cfg(windows)]
+    start: ThreadTime,
+    #[cfg(not(windows))]
+    start: std::time::SystemTime,
+}
+
+impl CpuTimeMeasure {
+    pub fn new() -> Self {
+        Self {
+            #[cfg(windows)]
+            start: ThreadTime::now(),
+            #[cfg(not(windows))]
+            start: std::time::SystemTime::now(),
+        }
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        #[cfg(windows)]
+        {
+            self.start.elapsed()
+        }
+        #[cfg(not(windows))]
+        {
+            self.start.elapsed().unwrap()
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone, Hash, Eq)]
 pub enum ModelSubComponent {
     Exp,

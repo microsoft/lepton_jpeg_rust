@@ -5,7 +5,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use cpu_time::ThreadTime;
 use log::{info, warn};
 use std::cmp;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
@@ -25,7 +24,7 @@ use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::ExitCode;
-use crate::metrics::Metrics;
+use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::bit_writer::BitWriter;
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegHeader;
@@ -467,7 +466,7 @@ fn decoder_thread<P>(
     features: &EnabledFeatures,
     process: fn(&ThreadHandoff, Vec<BlockBasedImage>, &LeptonHeader) -> Result<P, anyhow::Error>,
 ) -> Result<(Metrics, P), anyhow::Error> {
-    let cpu_time = ThreadTime::now();
+    let cpu_time = CpuTimeMeasure::new();
 
     let mut image_data = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
@@ -652,7 +651,7 @@ fn encode_thread_action(
     thread_handoffs: &[ThreadHandoff],
     features: &EnabledFeatures,
 ) -> std::prelude::v1::Result<Metrics, anyhow::Error> {
-    let cpu_time = ThreadTime::now();
+    let cpu_time = CpuTimeMeasure::new();
 
     let mut thread_writer = MessageSender {
         thread_id: thread_id as u8,

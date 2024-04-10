@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use std::cmp;
 use std::io::Write;
 
-use crate::consts::*;
+use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
@@ -335,10 +335,12 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
             break;
         }
 
-        let best_prior_bit_length = u16_bit_length(best_priors[zig49] as u16);
+        let coord = UNZIGZAG_49[zig49];
+
+        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
         // this should work in all cases but doesn't utilize that the zig49 is related
-        let coef = block.get_coefficient(zig49);
+        let coef = block.get_coefficient(coord as usize);
 
         model_per_color
             .write_coef(
@@ -353,7 +355,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         if coef != 0 {
             num_non_zeros_left_7x7 -= 1;
 
-            let coord = UNZIGZAG_49[zig49];
             let bx = coord & 7;
             let by = coord >> 3;
 
@@ -373,8 +374,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         qt,
         pt,
         num_non_zeros_7x7,
-        eob_x,
-        eob_y,
+        eob_x as u8,
+        eob_y as u8,
     )
     .context(here!())?;
 
@@ -489,21 +490,21 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     let mut num_non_zeros_edge;
 
     if HORIZONTAL {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient_raster(1))
-            + count_non_zero(block.get_coefficient_raster(2))
-            + count_non_zero(block.get_coefficient_raster(3))
-            + count_non_zero(block.get_coefficient_raster(4))
-            + count_non_zero(block.get_coefficient_raster(5))
-            + count_non_zero(block.get_coefficient_raster(6))
-            + count_non_zero(block.get_coefficient_raster(7));
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(1))
+            + count_non_zero(block.get_coefficient(2))
+            + count_non_zero(block.get_coefficient(3))
+            + count_non_zero(block.get_coefficient(4))
+            + count_non_zero(block.get_coefficient(5))
+            + count_non_zero(block.get_coefficient(6))
+            + count_non_zero(block.get_coefficient(7));
     } else {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient_raster(1 * 8))
-            + count_non_zero(block.get_coefficient_raster(2 * 8))
-            + count_non_zero(block.get_coefficient_raster(3 * 8))
-            + count_non_zero(block.get_coefficient_raster(4 * 8))
-            + count_non_zero(block.get_coefficient_raster(5 * 8))
-            + count_non_zero(block.get_coefficient_raster(6 * 8))
-            + count_non_zero(block.get_coefficient_raster(7 * 8));
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(1 * 8))
+            + count_non_zero(block.get_coefficient(2 * 8))
+            + count_non_zero(block.get_coefficient(3 * 8))
+            + count_non_zero(block.get_coefficient(4 * 8))
+            + count_non_zero(block.get_coefficient(5 * 8))
+            + count_non_zero(block.get_coefficient(6 * 8))
+            + count_non_zero(block.get_coefficient(7 * 8));
     }
 
     model_per_color
@@ -515,25 +516,19 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         )
         .context(here!())?;
 
-    let aligned_block_offset;
-    let log_edge_step;
     let delta;
     let mut zig15offset;
 
     if HORIZONTAL {
-        log_edge_step = LOG_TABLE_256[(RASTER_TO_ALIGNED[2] - RASTER_TO_ALIGNED[1]) as usize];
-        aligned_block_offset = RASTER_TO_ALIGNED[1];
         delta = 1;
         zig15offset = 0;
     } else {
-        log_edge_step = LOG_TABLE_256[(RASTER_TO_ALIGNED[16] - RASTER_TO_ALIGNED[8]) as usize];
-        aligned_block_offset = RASTER_TO_ALIGNED[8];
         delta = 8;
         zig15offset = 7;
     }
 
     let mut coord = delta;
-    for lane in 0..7 {
+    for _lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
         }
@@ -547,7 +542,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge,
         );
 
-        let coef = block.get_coefficient((aligned_block_offset + (lane << log_edge_step)) as usize);
+        let coef = block.get_coefficient(coord);
 
         model_per_color
             .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
