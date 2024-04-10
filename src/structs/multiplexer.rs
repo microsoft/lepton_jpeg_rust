@@ -1,3 +1,9 @@
+/// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
+///
+/// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
+/// ends up with an interleaved stream of blocks from each thread.
+///
+/// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
 use crate::{helpers::*, ExitCode};
 use anyhow::{Context, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -7,13 +13,6 @@ use std::{
     mem::swap,
     sync::mpsc::{channel, Receiver, SendError, Sender},
 };
-
-/// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
-///
-/// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
-/// ends up with an interleaved stream of blocks from each thread.
-///
-/// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
 
 /// The message that is sent between the threads
 enum Message {
