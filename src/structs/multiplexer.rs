@@ -160,9 +160,9 @@ where
     Ok(results)
 }
 
-/// used by the worker thread to read data for the given thread from the
-/// receiver. The thread_id is used only to assert that we are only
-/// getting the data that we are expecting
+/// Used by the processor thread to read data in a blocking way.
+/// The thread_id is used only to assert that we are only
+/// getting the data that we are expecting.
 pub struct MultiplexReader {
     /// the multiplexed thread stream we are processing
     thread_id: u8,
@@ -180,7 +180,7 @@ pub struct MultiplexReader {
 }
 
 impl Read for MultiplexReader {
-    /// fast path for reads. If we get zero bytes, take the slow path
+    /// fast path for reads. If we run out of data, take the slow path
     #[inline(always)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let amount_read = self.current_buffer.read(buf)?;
@@ -228,6 +228,14 @@ impl MultiplexReader {
     }
 }
 
+/// Reads data in multiplexed format and sends it to the appropriate processor, each
+/// running on its own thread. The processor function is called with the thread_id and
+/// a blocking reader that it can use to read its own data.
+///
+/// Once the multiplexed data is finished reading, we break the channel to the worker threads
+/// causing processor that is trying to read from the channel to error out and exit. After all
+/// the readers have exited, we collect the results/errors from all the processors and return a vector
+/// of the results back to the caller.
 pub fn multiplex_read<READ, FN, RESULT>(
     reader: &mut READ,
     num_threads: usize,
