@@ -55,24 +55,40 @@ impl Branch {
         Branch { counts: 0x0101 }
     }
 
-    // used for debugging
+    /// used for debugging to keep the state for hashing
     #[allow(dead_code)]
     pub fn get_u64(&self) -> u64 {
-        let mut c = self.counts;
-        if c == 0 {
-            c = 0x01ff;
-        }
-
+        let c = self.counts;
         return ((PROB_LOOKUP[self.counts as usize] as u64) << 16) + c as u64;
     }
 
+    /// Returns the probability of the next bit being a 1 as a value between 0 and 255
+    ///
+    /// Calculated by looking up the probability in a precalculated table
+    /// where a is the number of false bits and b is the number of true bits seen.
+    ///
+    /// (a * 256) / (a + b)
     #[inline(always)]
     pub fn get_probability(&self) -> u8 {
-        // 0x00ff is a special corner case which should return probability 0
-        // since 0x00ff is impossible to happen since the counts always start at 1
         PROB_LOOKUP[self.counts as usize]
     }
 
+    /// Updates the counters when we encounter a 1 or 0. If we hit 255 values, then
+    /// we normalize both counts (divide by 2), except in the case where the remaining value is 1,
+    /// in which case we don't touch. This biases the probability to get better results
+    /// when there are long runs of 1 or 0.
+    ///
+    /// This function merges updating either the true or false counter
+    /// by swapping the top and bottom byte of the 16-bit value.
+    ///
+    /// The update algorithm looks like this (with top and bottom swapped depending on the bit):
+    ///
+    /// if top_byte < 0xff {
+    ///  top_byte += 1;
+    /// } else if bottom_byte != 1 {
+    ///  top_byte = 0x81;
+    ///  bottom_byte = (bottom_byte + 1) >> 1;
+    /// }
     #[inline(always)]
     pub fn record_and_update_bit(&mut self, bit: bool) {
         // rotation is used to update either the true or false counter
@@ -93,7 +109,9 @@ impl Branch {
             // CPU branch prediction soon realizes that this section is not often executed
             // and will optimize for the common case where the counts are not 0xff.
             let mask = if orig == 0xff01 { 0xff00 } else { 0x8100 };
-            sum = ((1 + (sum & 0xff)) >> 1) | mask;
+
+            // upper byte is 0 since we incremented 0xffxx so we don't have to mask it
+            sum = ((1 + sum) >> 1) | mask;
         }
 
         self.counts = sum.rotate_left(bit as u32 * 8);
