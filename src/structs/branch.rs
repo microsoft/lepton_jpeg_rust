@@ -76,13 +76,16 @@ impl Branch {
     #[inline(always)]
     pub fn record_and_update_bit(&mut self, bit: bool) {
         // rotation is use to update either the true or false counter
-        // this allows the same code to be used without branching, which
-        // makes the CPU happy (about 20% happier)
+        // this allows the same code to be used without branching,
+        // which makes the CPU about 20% happier
         let orig = self.counts.rotate_left(bit as u32 * 8);
         let (mut sum, o) = orig.overflowing_add(0x100);
         if o {
-            // normalize, except is special case where we have 0xff same bits in a row
+            // normalize, except in special case where we have 0xff or more same bits in a row
             // in which case we want to bias the probability to get better compression
+            //
+            // Branch prediction realizes that this section is not often executed
+            // and will optimize for the common case where the counts are not 0xff.
             let mask = if orig == 0xff01 { 0xff00 } else { 0x8100 };
             sum = ((1 + (sum & 0xff)) >> 1) | mask;
         }
