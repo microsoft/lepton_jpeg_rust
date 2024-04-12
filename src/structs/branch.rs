@@ -74,30 +74,67 @@ impl Branch {
     }
 
     #[inline(always)]
-    pub fn record_and_update_true_obs(&mut self) {
-        if (self.counts & 0xff) != 0xff {
-            // non-overflow case is easy
-            self.counts += 1;
-        } else {
-            // normalize, except special case where it is all trues
-            if self.counts != 0x01ff {
-                self.counts = (((self.counts as u32 + 0x100) >> 1) & 0xff00) as u16 | 129;
-            }
+    pub fn record_and_update_bit(&mut self, bit: bool) {
+        // rotation is use to update either the true or false counter
+        // this allows the same code to be used without branching, which
+        // makes the CPU happy (about 20% happier)
+        let orig = self.counts.rotate_left(bit as u32 * 8);
+        let (mut sum, o) = orig.overflowing_add(0x100);
+        if o {
+            // normalize, except is special case where we have 0xff same bits in a row
+            // in which case we want to bias the probability to get better compression
+            let mask = if orig == 0xff01 { 0xff00 } else { 0x8100 };
+            sum = ((1 + (sum & 0xff)) >> 1) | mask;
         }
-    }
 
-    #[inline(always)]
-    pub fn record_and_update_false_obs(&mut self) {
-        let (result, overflow) = self.counts.overflowing_add(0x100);
-        if !overflow {
-            self.counts = result;
-        } else {
-            // normalize, except in special case where it is all falses
-            if self.counts != 0xff01 {
-                self.counts = ((1 + (self.counts & 0xff) as u32) >> 1) as u16 | 0x8100;
-            }
-        }
+        self.counts = sum.rotate_left(bit as u32 * 8);
     }
+}
+
+#[test]
+fn test_branch_update_false() {
+    let mut b = Branch { counts: 0x0101 };
+    b.record_and_update_bit(false);
+    assert_eq!(b.counts, 0x0201);
+
+    b.counts = 0x80ff;
+    b.record_and_update_bit(false);
+    assert_eq!(b.counts, 0x81ff);
+
+    b.counts = 0xff01;
+    b.record_and_update_bit(false);
+    assert_eq!(b.counts, 0xff01);
+
+    b.counts = 0xff02;
+    b.record_and_update_bit(false);
+    assert_eq!(b.counts, 0x8101);
+
+    b.counts = 0xffff;
+    b.record_and_update_bit(false);
+    assert_eq!(b.counts, 0x8180);
+}
+
+#[test]
+fn test_branch_update_true() {
+    let mut b = Branch { counts: 0x0101 };
+    b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0x0102);
+
+    b.counts = 0xff80;
+    b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0xff81);
+
+    b.counts = 0x01ff;
+    b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0x01ff);
+
+    b.counts = 0x02ff;
+    b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0x0181);
+
+    b.counts = 0xffff;
+    b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0x8081);
 }
 
 /// run through all the possible combinations of counts and ensure that the probability is the same
@@ -163,7 +200,7 @@ fn test_all_probabilities() {
 
         for _k in 0..10 {
             old_f.record_obs_and_update(false);
-            new_f.record_and_update_false_obs();
+            new_f.record_and_update_bit(false);
             assert_eq!(old_f.probability, new_f.get_probability());
         }
 
@@ -175,7 +212,7 @@ fn test_all_probabilities() {
 
         for _k in 0..10 {
             old_t.record_obs_and_update(true);
-            new_t.record_and_update_true_obs();
+            new_t.record_and_update_bit(true);
 
             if old_t.probability == 0 {
                 // there is a change of behavior here compared to the C++ version,

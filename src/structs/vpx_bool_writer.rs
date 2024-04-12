@@ -161,14 +161,14 @@ impl<W: Write> VPXBoolWriter<W> {
         let mut tmp_low_value = self.low_value;
 
         let mut shift;
+        branch.record_and_update_bit(value);
+
         if value {
-            branch.record_and_update_true_obs();
             tmp_low_value += split;
             tmp_range -= split;
 
             shift = (tmp_range as u8).leading_zeros() as i32;
         } else {
-            branch.record_and_update_false_obs();
             tmp_range = split;
 
             // optimizer understands that split > 0, so it can optimize this
