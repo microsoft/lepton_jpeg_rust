@@ -126,8 +126,7 @@ fn main_with_result() -> anyhow::Result<()> {
 
             (block_image, _metrics) = lh
                 .decode_as_single_image(
-                    &mut reader,
-                    filelen,
+                    &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
                     num_threads as usize,
                     &enabled_features,
                 )

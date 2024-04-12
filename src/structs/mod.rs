@@ -19,6 +19,7 @@ mod lepton_decoder;
 mod lepton_encoder;
 pub mod lepton_format;
 mod model;
+mod multiplexer;
 mod neighbor_summary;
 mod probability_tables;
 mod probability_tables_coefficient_context;
