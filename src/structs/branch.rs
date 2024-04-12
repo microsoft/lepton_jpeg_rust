@@ -77,7 +77,13 @@ impl Branch {
     pub fn record_and_update_bit(&mut self, bit: bool) {
         // rotation is used to update either the true or false counter
         // this allows the same code to be used without branching,
-        // which makes the CPU about 20% happier
+        // which makes the CPU about 20% happier.
+        //
+        // Since the bits are randomly 1/0, the CPU branch predictor does
+        // a terrible job and ends up wasting a lot of time. Normally
+        // branches are a better idea if the branch very predictable vs
+        // this case where it is better to always pay the price of the
+        // extra rotation to avoid the branch.
         let orig = self.counts.rotate_left(bit as u32 * 8);
         let (mut sum, o) = orig.overflowing_add(0x100);
         if o {
