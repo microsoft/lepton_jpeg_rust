@@ -61,7 +61,7 @@ steps:
       target\debug\lepton_jpeg_util.exe,
       target\release\lepton_jpeg.dll,
       target\release\lepton_jpeg_avx2.dll,
-      target\release\lepton_jpeg_util.exe'
+      target\release\lepton_jpeg_util.exe,
       target\release\lepton_jpeg_util_avx2.exe'
     signConfigType: 'inlineSignParams'
     inlineOperation: |
