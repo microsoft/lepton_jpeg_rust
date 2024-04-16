@@ -149,8 +149,10 @@ impl<R: Read> VPXBoolReader<R> {
         let bit = tmp_value >= big_split;
 
         let shift;
+
+        branch.record_and_update_bit(bit);
+
         if bit {
-            branch.record_and_update_true_obs();
             tmp_range -= split;
             tmp_value -= big_split;
 
@@ -166,7 +168,6 @@ impl<R: Read> VPXBoolReader<R> {
 
             shift = tmp_range.leading_zeros() as i32 - 24;
         } else {
-            branch.record_and_update_false_obs();
             tmp_range = split;
 
             // optimizer understands that split > 0
