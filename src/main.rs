@@ -20,6 +20,7 @@ use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
+use thread_priority::{set_current_thread_priority, ThreadPriority};
 
 use std::{
     env,
@@ -73,6 +74,20 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-high" {
+                let b = rayon::ThreadPoolBuilder::new();
+                b.start_handler(|_| {
+                    set_current_thread_priority(ThreadPriority::Max).unwrap();
+                })
+                .build_global()
+                .unwrap();
+            } else if args[i] == "-low" {
+                let b = rayon::ThreadPoolBuilder::new();
+                b.start_handler(|_| {
+                    set_current_thread_priority(ThreadPriority::Min).unwrap();
+                })
+                .build_global()
+                .unwrap();
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {

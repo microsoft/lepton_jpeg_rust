@@ -233,12 +233,14 @@ impl ModelPerColor {
         let length_branches = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize]
             [zig15offset][ptcc8.best_prior_bit_len as usize];
 
-        let length = bool_reader
-            .get_unary_encoded(
-                length_branches,
-                ModelComponent::Edge(ModelSubComponent::Exp),
-            )
-            .context(here!())? as i32;
+        let length = i32::from(
+            bool_reader
+                .get_unary_encoded(
+                    length_branches,
+                    ModelComponent::Edge(ModelSubComponent::Exp),
+                )
+                .context(here!())?,
+        );
 
         let mut coef = 0;
         if length != 0 {
@@ -525,17 +527,21 @@ impl Model {
             mag_cmp
         );
 
-        let length = bool_reader
-            .get_unary_encoded(magnitude_branches, mag_cmp)
-            .context(here!())?;
+        let length = usize::from(
+            bool_reader
+                .get_unary_encoded(magnitude_branches, mag_cmp)
+                .context(here!())?,
+        );
 
         let mut coef: i16 = 0;
         if length != 0 {
             let neg = !bool_reader.get(sign_branch, sign_cmp)?;
             if length > 1 {
-                coef = bool_reader
-                    .get_n_bits(length - 1, bits_branch, bits_cmp)
-                    .context(here!())? as i16;
+                coef = i16::from(
+                    bool_reader
+                        .get_n_bits(length - 1, bits_branch, bits_cmp)
+                        .context(here!())?,
+                );
             }
 
             coef |= (1 << (length - 1)) as i16;

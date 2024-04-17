@@ -99,20 +99,62 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
-        cmp: ModelComponent,
-    ) -> Result<usize> {
+        _cmp: ModelComponent,
+    ) -> std::io::Result<u8> {
         let mut value = 0;
 
-        while value != A {
-            let cur_bit = self.get(&mut branches[value], cmp)?;
-            if !cur_bit {
-                break;
+        let mut tmp_value = self.value;
+        let mut tmp_range = self.range;
+        let mut tmp_count = self.count;
+
+        let mut probability = branches[0].get_probability() as u32;
+
+        // this gets optimized away, but it avoids a range check on branches[value]
+        while value < A {
+            if tmp_count < 0 {
+                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            value += 1;
+            let split = scale_range_with_probabilty(tmp_range, probability);
+            let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
+            let bit = tmp_value >= big_split;
+
+            if bit {
+                branches[value].record_and_update_true_obs();
+
+                tmp_range -= split;
+                tmp_value -= big_split;
+
+                value += 1;
+                if value >= A {
+                    break;
+                }
+
+                probability = branches[value].get_probability() as u32;
+
+                let shift = tmp_range.leading_zeros() as i32 - 24;
+
+                tmp_value <<= shift;
+                tmp_range <<= shift;
+                tmp_count -= shift;
+            } else {
+                branches[value].record_and_update_bit(false);
+
+                tmp_range = split;
+                break;
+            }
         }
 
-        return Ok(value);
+        let shift = tmp_range.leading_zeros() as i32 - 24;
+        tmp_value <<= shift;
+        tmp_range <<= shift;
+        tmp_count -= shift;
+
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
+
+        return Ok(value as u8);
     }
 
     #[inline(never)]
@@ -121,7 +163,7 @@ impl<R: Read> VPXBoolReader<R> {
         n: usize,
         branches: &mut [Branch; A],
         cmp: ModelComponent,
-    ) -> Result<usize> {
+    ) -> Result<u8> {
         assert!(n <= branches.len());
 
         let mut coef = 0;
@@ -129,7 +171,7 @@ impl<R: Read> VPXBoolReader<R> {
             coef |= (self.get(&mut branches[i], cmp)? as usize) << i;
         }
 
-        return Ok(coef);
+        return Ok(coef as u8);
     }
 
     #[inline(always)]
@@ -142,9 +184,7 @@ impl<R: Read> VPXBoolReader<R> {
             Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
         }
 
-        let probability = branch.get_probability() as u32;
-
-        let split = 1 + (((tmp_range - 1) * probability) >> BITS_IN_BYTE);
+        let split = scale_range_with_probabilty(tmp_range, branch.get_probability() as u32);
         let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
         let bit = tmp_value >= big_split;
 
@@ -229,4 +269,9 @@ impl<R: Read> VPXBoolReader<R> {
 
         return Ok(());
     }
+}
+
+#[inline(always)]
+fn scale_range_with_probabilty(tmp_range: u32, probability: u32) -> u32 {
+    1 + (((tmp_range - 1) * probability) >> BITS_IN_BYTE)
 }

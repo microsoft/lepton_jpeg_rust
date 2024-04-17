@@ -112,6 +112,18 @@ impl Branch {
 
         self.counts = sum.rotate_left(bit as u32 * 8);
     }
+
+    #[inline(always)]
+    pub fn record_and_update_true_obs(&mut self) {
+        let mut orig = self.counts as u32 + 1;
+        if (orig & 0xff) == 0 {
+            // normalize, except special case where it is all trues
+            let mask = if self.counts == 0x01ff { 0xff } else { 0x81 };
+
+            orig = (((self.counts as u32 + 0xff) >> 1) & 0xff00) | mask;
+        }
+        self.counts = orig as u16;
+    }
 }
 
 #[test]
@@ -138,13 +150,38 @@ fn test_branch_update_false() {
 }
 
 #[test]
+fn test_true_same() {
+    for i in 0..=65535 {
+        let mut b1 = Branch { counts: i as u16 };
+        b1.record_and_update_true_obs();
+
+        let mut b2 = Branch { counts: i as u16 };
+        b2.record_and_update_bit(true);
+
+        assert_eq!(
+            b1.counts, b2.counts,
+            "i: {0:x} b1={1:x} b2={2:x}",
+            i, b1.counts, b2.counts
+        );
+    }
+}
+
+#[test]
 fn test_branch_update_true() {
     let mut b = Branch { counts: 0x0101 };
     b.record_and_update_bit(true);
     assert_eq!(b.counts, 0x0102);
 
+    b.counts = 0x0101;
+    b.record_and_update_true_obs();
+    assert_eq!(b.counts, 0x0102);
+
     b.counts = 0xff80;
     b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0xff81);
+
+    b.counts = 0xff80;
+    b.record_and_update_true_obs();
     assert_eq!(b.counts, 0xff81);
 
     b.counts = 0x01ff;
@@ -157,6 +194,10 @@ fn test_branch_update_true() {
 
     b.counts = 0xffff;
     b.record_and_update_bit(true);
+    assert_eq!(b.counts, 0x8081);
+
+    b.counts = 0xffff;
+    b.record_and_update_true_obs();
     assert_eq!(b.counts, 0x8081);
 }
 

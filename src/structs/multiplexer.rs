@@ -188,7 +188,9 @@ impl Read for MultiplexReader {
             return Ok(amount_read);
         }
 
-        self.read_slow(buf)
+        self.fill_buffer()?;
+
+        self.current_buffer.read(buf)
     }
 }
 
@@ -197,13 +199,8 @@ impl MultiplexReader {
     /// return zero if at the end of the stream
     #[cold]
     #[inline(never)]
-    fn read_slow(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        while !self.end_of_file {
-            let amount_read = self.current_buffer.read(buf)?;
-            if amount_read > 0 {
-                return Ok(amount_read);
-            }
-
+    fn fill_buffer(&mut self) -> std::io::Result<()> {
+        if !self.end_of_file {
             match self.receiver.recv() {
                 Ok(r) => match r {
                     Message::Eof => {
@@ -224,7 +221,7 @@ impl MultiplexReader {
         }
 
         // nothing if we reached the end of file
-        return Ok(0);
+        return Ok(());
     }
 }
 

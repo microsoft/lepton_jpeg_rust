@@ -292,7 +292,7 @@ fn test_roundtrip_vpxboolwriter_n_bits() {
         let read_value = reader
             .get_n_bits(MAX_N, &mut branches.branches, ModelComponent::Dummy)
             .unwrap();
-        assert_eq!(read_value, i as usize % 256);
+        assert_eq!(read_value, (i as usize % 256) as u8);
     }
 }
 
@@ -329,7 +329,7 @@ fn test_roundtrip_vpxboolwriter_unary() {
         let read_value = reader
             .get_unary_encoded(&mut branches.branches, ModelComponent::Dummy)
             .unwrap();
-        assert_eq!(read_value, i as usize % (MAX_UNARY + 1));
+        assert_eq!(read_value, (i as usize % (MAX_UNARY + 1)) as u8);
     }
 }
 
