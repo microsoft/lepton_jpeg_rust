@@ -74,20 +74,30 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
-            } else if args[i] == "-high" {
+            } else if args[i] == "-highpriority" {
+                // used to force to run on p-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
                 let b = rayon::ThreadPoolBuilder::new();
                 b.start_handler(|_| {
                     set_current_thread_priority(ThreadPriority::Max).unwrap();
                 })
                 .build_global()
                 .unwrap();
-            } else if args[i] == "-low" {
+
+                set_current_thread_priority(ThreadPriority::Max).unwrap()
+            } else if args[i] == "-lowpriority" {
+                // used to force to run on e-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
                 let b = rayon::ThreadPoolBuilder::new();
                 b.start_handler(|_| {
                     set_current_thread_priority(ThreadPriority::Min).unwrap();
                 })
                 .build_global()
                 .unwrap();
+
+                set_current_thread_priority(ThreadPriority::Min).unwrap()
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {
