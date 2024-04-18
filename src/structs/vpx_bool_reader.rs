@@ -144,8 +144,9 @@ impl<R: Read> VPXBoolReader<R> {
 
         let probability = branch.get_probability() as u32;
 
-        let big_split = ((256 - probability << (BITS_IN_VALUE_MINUS_LAST_BYTE - BITS_IN_BYTE))
-            + (tmp_range >> BITS_IN_BYTE) * probability) & (255 << BITS_IN_VALUE_MINUS_LAST_BYTE);
+        let big_split = ((tmp_range >> BITS_IN_BYTE) * probability
+            + ((256 - probability) << (BITS_IN_VALUE_MINUS_LAST_BYTE - BITS_IN_BYTE)))
+            & (255 << BITS_IN_VALUE_MINUS_LAST_BYTE);
 
         let bit = tmp_value >= big_split;
 
