@@ -20,7 +20,7 @@ use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
-use thread_priority::{set_current_thread_priority, ThreadPriority};
+use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
 use std::{
     env,
@@ -78,26 +78,36 @@ fn main_with_result() -> anyhow::Result<()> {
                 // used to force to run on p-cores, make sure this and
                 // any threadpool threads are set to the high priority
 
+                #[cfg(target_os = "windows")]
+                let priority = ThreadPriority::Os(WinAPIThreadPriority::TimeCritical.into());
+                #[cfg(not(target_os = "windows"))]
+                let priority = ThreadPriority::Max;
+
+                set_current_thread_priority(priority).unwrap();
+
                 let b = rayon::ThreadPoolBuilder::new();
-                b.start_handler(|_| {
-                    set_current_thread_priority(ThreadPriority::Max).unwrap();
+                b.start_handler(move |_| {
+                    set_current_thread_priority(priority).unwrap();
                 })
                 .build_global()
                 .unwrap();
-
-                set_current_thread_priority(ThreadPriority::Max).unwrap()
             } else if args[i] == "-lowpriority" {
                 // used to force to run on e-cores, make sure this and
                 // any threadpool threads are set to the high priority
 
+                #[cfg(target_os = "windows")]
+                let priority = ThreadPriority::Os(WinAPIThreadPriority::Idle.into());
+                #[cfg(not(target_os = "windows"))]
+                let priority = ThreadPriority::Min;
+
+                set_current_thread_priority(priority).unwrap();
+
                 let b = rayon::ThreadPoolBuilder::new();
-                b.start_handler(|_| {
-                    set_current_thread_priority(ThreadPriority::Min).unwrap();
+                b.start_handler(move |_| {
+                    set_current_thread_priority(priority).unwrap();
                 })
                 .build_global()
                 .unwrap();
-
-                set_current_thread_priority(ThreadPriority::Min).unwrap()
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {
