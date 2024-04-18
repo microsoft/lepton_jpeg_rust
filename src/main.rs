@@ -79,35 +79,35 @@ fn main_with_result() -> anyhow::Result<()> {
                 // any threadpool threads are set to the high priority
 
                 #[cfg(target_os = "windows")]
-                let priority = ThreadPriority::Os(WinAPIThreadPriority::TimeCritical.into());
-                #[cfg(not(target_os = "windows"))]
-                let priority = ThreadPriority::Max;
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::TimeCritical.into());
 
-                set_current_thread_priority(priority).unwrap();
-
-                let b = rayon::ThreadPoolBuilder::new();
-                b.start_handler(move |_| {
                     set_current_thread_priority(priority).unwrap();
-                })
-                .build_global()
-                .unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
             } else if args[i] == "-lowpriority" {
                 // used to force to run on e-cores, make sure this and
                 // any threadpool threads are set to the high priority
 
                 #[cfg(target_os = "windows")]
-                let priority = ThreadPriority::Os(WinAPIThreadPriority::Idle.into());
-                #[cfg(not(target_os = "windows"))]
-                let priority = ThreadPriority::Min;
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::Idle.into());
 
-                set_current_thread_priority(priority).unwrap();
-
-                let b = rayon::ThreadPoolBuilder::new();
-                b.start_handler(move |_| {
                     set_current_thread_priority(priority).unwrap();
-                })
-                .build_global()
-                .unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {
