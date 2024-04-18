@@ -32,12 +32,12 @@ use crate::metrics::ModelStatsCollector;
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 const BITS_IN_BYTE: i32 = 8;
-const BITS_IN_LONG: i32 = 64;
-const BITS_IN_LONG_MINUS_LAST_BYTE: i32 = BITS_IN_LONG - BITS_IN_BYTE;
+const BITS_IN_VALUE: i32 = 32;
+const BITS_IN_VALUE_MINUS_LAST_BYTE: i32 = BITS_IN_VALUE - BITS_IN_BYTE;
 
 pub struct VPXBoolReader<R> {
-    value: u64,
-    range: u32,
+    value: u32,
+    range: u32, // 128 << BITS_IN_VALUE_MINUS_LAST_BYTE <= range <= 255 << BITS_IN_VALUE_MINUS_LAST_BYTE
     count: i32,
     upstream_reader: R,
     model_statistics: Metrics,
@@ -50,7 +50,7 @@ impl<R: Read> VPXBoolReader<R> {
             upstream_reader: reader,
             value: 0,
             count: -8,
-            range: 255,
+            range: 255 << BITS_IN_VALUE_MINUS_LAST_BYTE,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
@@ -144,8 +144,9 @@ impl<R: Read> VPXBoolReader<R> {
 
         let probability = branch.get_probability() as u32;
 
-        let split = 1 + (((tmp_range - 1) * probability) >> BITS_IN_BYTE);
-        let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
+        let big_split = ((256 - probability << (BITS_IN_VALUE_MINUS_LAST_BYTE - BITS_IN_BYTE))
+            + (tmp_range >> BITS_IN_BYTE) * probability) & (255 << BITS_IN_VALUE_MINUS_LAST_BYTE);
+
         let bit = tmp_value >= big_split;
 
         let shift;
@@ -153,7 +154,7 @@ impl<R: Read> VPXBoolReader<R> {
         branch.record_and_update_bit(bit);
 
         if bit {
-            tmp_range -= split;
+            tmp_range -= big_split;
             tmp_value -= big_split;
 
             // so optimizer understands that 0 should never happen and uses a cold jump
@@ -166,12 +167,12 @@ impl<R: Read> VPXBoolReader<R> {
             ))]
             assert!(tmp_range > 0);
 
-            shift = tmp_range.leading_zeros() as i32 - 24;
+            shift = tmp_range.leading_zeros() as i32;
         } else {
-            tmp_range = split;
+            tmp_range = big_split;
 
             // optimizer understands that split > 0
-            shift = split.leading_zeros() as i32 - 24;
+            shift = big_split.leading_zeros() as i32;
         }
 
         self.value = tmp_value << shift;
@@ -208,11 +209,11 @@ impl<R: Read> VPXBoolReader<R> {
     #[cold]
     #[inline(always)]
     fn vpx_reader_fill(
-        tmp_value: &mut u64,
+        tmp_value: &mut u32,
         tmp_count: &mut i32,
         upstream_reader: &mut R,
     ) -> Result<()> {
-        let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
 
         while shift >= 0 {
             // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
@@ -222,7 +223,7 @@ impl<R: Read> VPXBoolReader<R> {
                 break;
             }
 
-            *tmp_value |= (v[0] as u64) << shift;
+            *tmp_value |= (v[0] as u32) << shift;
             shift -= BITS_IN_BYTE;
             *tmp_count += BITS_IN_BYTE;
         }
