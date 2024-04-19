@@ -149,10 +149,10 @@ impl<R: Read> VPXBoolReader<R> {
     //
     // Here some imrovements to the basic scheme are implemented. First, we store more stream bits
     // in `value` to reduce refill rate, so that 8 MSBs of `value` represent `value` of the scheme
-    // (it was already implemented in DropBox version).
+    // (it was already implemented in DropBox version, however, with shorter 16-bit `value`).
     // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
     // and it allows to reduce number of operations to compute `split` - previously `big_split` -
-    // and new `range` and `shift`).
+    // and to update `range` and `shift`).
     // Third, involved calculation scheme of `split` allows to reduce dependence chain length by 1
     //  with respect to naive initial fully serial implementation
     // `split = (1 + (((range - 1) * probability) >> BITS_IN_BYTE)) << BITS_IN_VALUE_MINUS_LAST_BYTE`

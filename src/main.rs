@@ -20,6 +20,7 @@ use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
+#[cfg(target_os = "windows")]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
 use std::{
