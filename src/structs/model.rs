@@ -41,9 +41,7 @@ const EXPONENT_COUNT_DC_BINS: usize = if NUM_NON_ZERO_BINS > NUMERIC_LENGTH_MAX 
     NUMERIC_LENGTH_MAX
 };
 
-type NumNonZerosCounts7x7T = [[[Branch; 32]; 6]; 26];
-
-type NumNonZerosCountsT = [[[[Branch; 4]; 3]; 8]; 8];
+type NumNonZerosCountsT = [[[Branch; 8]; 8]; 8];
 
 pub const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
 pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
@@ -68,7 +66,7 @@ pub struct Model {
 
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
-    num_non_zeros_counts7x7: NumNonZerosCounts7x7T,
+    num_non_zeros_counts7x7: [[Branch; 64]; NUM_NON_ZERO_BINS - 1],
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
 
@@ -412,7 +410,7 @@ impl ModelPerColor {
         &mut self,
         est_eob: u8,
         num_nonzeros: u8,
-    ) -> &mut [[Branch; 4]; 3] {
+    ) -> &mut [Branch; 8] {
         if HORIZONTAL {
             return &mut self.num_non_zeros_counts8x1[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];

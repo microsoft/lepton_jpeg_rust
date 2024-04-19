@@ -64,22 +64,23 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     #[inline(never)]
-    pub fn put_grid<const A: usize, const B: usize>(
+    pub fn put_grid<const A: usize>(
         &mut self,
         v: u8,
-        branches: &mut [[Branch; B]; A],
+        branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<()> {
-        assert!(1 << (A - 1) == B);
+        // check if A is a power of 2
+        assert!((A & (A - 1)) == 0);
 
-        let mut index = A - 1;
-        let mut serialized_so_far = 0;
+        let mut index = A.ilog2() - 1;
+        let mut serialized_so_far = 1;
 
         loop {
             let cur_bit = (v & (1 << index)) != 0;
             self.put(
                 cur_bit,
-                &mut branches[index as usize][serialized_so_far],
+                &mut branches[serialized_so_far],
                 cmp,
             )?;
             serialized_so_far <<= 1;
@@ -337,7 +338,7 @@ fn test_roundtrip_vpxboolwriter_unary() {
 fn test_roundtrip_vpxboolwriter_grid() {
     #[derive(Default)]
     struct BranchData {
-        branches: [[Branch; 8]; 4],
+        branches: [Branch; 8],
     }
 
     let mut buffer = Vec::new();
