@@ -36,6 +36,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assume"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6f9ca11400f14ef046700eb6401c706c587871303453a5e7586efb82340c3d"
+
+[[package]]
 name = "autocfg"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +326,7 @@ name = "lepton_jpeg"
 version = "0.3.5"
 dependencies = [
  "anyhow",
+ "assume",
  "bytemuck",
  "byteorder",
  "cpu-time",
