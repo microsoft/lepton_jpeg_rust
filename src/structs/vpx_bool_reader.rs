@@ -132,6 +132,31 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(coef);
     }
 
+    // Lepton uses VP8 adaptive arithmetic coding scheme, where bits are extracted from file stream
+    // by division of current 8-bit stream `value` by adaptive 8-bit `split`. Adaptation is achieved by
+    // combination of predicted probability to get false bit (`1 <= probability <= 255`, in 1/256 units),
+    // and `range` that represents maximum possible value of yet-not-decoded stream part (so that
+    // `range > value`, `128 <= range <= 256` in units of $2^{-n-8}$ for the `n` bits already decoded)
+    // by forming predictor `split = 1 + (((range - 1) * probability) >> BITS_IN_BYTE)`,
+    // `1 <= split <= range - 1`. Comparison of predictor with stream gives the next decoded bit:
+    // true for `value >= split` and false otherwise - this is effectively division step.
+    // After this we shrink `value` and `range` by `split` for true or shrink `range` to `split`
+    // for false and update `probability`. Now `range` can get out of allowable range and we restore it
+    // by shifting left both `range` and `value` with corresponding filling of `value` by further
+    // stream bits (it corresponds to bring down new digit in division). Repeat until stream ends.
+    // 
+    // Reference: https://datatracker.ietf.org/doc/html/rfc6386#section-7.
+    //
+    // Here some imrovements to the basic scheme are implemented. First, we store more stream bits
+    // in `value` to reduce refill rate, so that 8 MSBs of `value` represent `value` of the scheme
+    // (it was already implemented in DropBox version).
+    // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
+    // and it allows to reduce number of operations to compute `split` - previously `big_split` -
+    // and new `range` and `shift`).
+    // Third, involved calculation scheme of `split` allows to reduce dependence chain length by 1
+    //  with respect to naive initial fully serial implementation
+    // `split = (1 + (((range - 1) * probability) >> BITS_IN_BYTE)) << BITS_IN_VALUE_MINUS_LAST_BYTE`
+    // making use of simultaneous instruction execution on superscalar CPUs.
     #[inline(always)]
     pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
@@ -144,37 +169,32 @@ impl<R: Read> VPXBoolReader<R> {
 
         let probability = branch.get_probability() as u32;
 
-        let big_split = ((tmp_range >> BITS_IN_BYTE) * probability
+        let split = ((tmp_range >> BITS_IN_BYTE) * probability
             + ((256 - probability) << (BITS_IN_VALUE_MINUS_LAST_BYTE - BITS_IN_BYTE)))
             & (255 << BITS_IN_VALUE_MINUS_LAST_BYTE);
 
-        let bit = tmp_value >= big_split;
-
-        let shift;
+        let bit = tmp_value >= split;
 
         branch.record_and_update_bit(bit);
 
         if bit {
-            tmp_range -= big_split;
-            tmp_value -= big_split;
-
-            // so optimizer understands that 0 should never happen and uses a cold jump
-            // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-            // This is better since the branch prediction figures quickly this never happens and can run
-            // the code sequentially.
-            #[cfg(all(
-                not(target_feature = "lzcnt"),
-                any(target_arch = "x86", target_arch = "x86_64")
-            ))]
-            assert!(tmp_range > 0);
-
-            shift = tmp_range.leading_zeros() as i32;
+            tmp_range -= split;
+            tmp_value -= split;
         } else {
-            tmp_range = big_split;
-
-            // optimizer understands that split > 0
-            shift = big_split.leading_zeros() as i32;
+            tmp_range = split;
         }
+
+        // so optimizer understands that 0 should never happen and uses a cold jump
+        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
+        // This is better since the branch prediction figures quickly this never happens and can run
+        // the code sequentially.
+        #[cfg(all(
+            not(target_feature = "lzcnt"),
+            any(target_arch = "x86", target_arch = "x86_64")
+        ))]
+        assert!(tmp_range > 0);
+
+        let shift = tmp_range.leading_zeros() as i32;
 
         self.value = tmp_value << shift;
         self.range = tmp_range << shift;
