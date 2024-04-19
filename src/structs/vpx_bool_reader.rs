@@ -22,6 +22,8 @@ Neither the name of Google nor the names of its contributors may be used to endo
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+use assume::assume;
+
 use std::io::{Read, Result};
 
 use crate::metrics::{Metrics, ModelComponent};
@@ -184,15 +186,12 @@ impl<R: Read> VPXBoolReader<R> {
             tmp_range = split;
         }
 
-        // so optimizer understands that 0 should never happen and uses a cold jump
-        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-        // This is better since the branch prediction figures quickly this never happens and can run
-        // the code sequentially.
-        #[cfg(all(
-            not(target_feature = "lzcnt"),
-            any(target_arch = "x86", target_arch = "x86_64")
-        ))]
-        assert!(tmp_range > 0);
+        // so optimizer understands that 0 should never happen and uses BSR instruction
+        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero)
+        assume!(
+            unsafe: tmp_range > 0,
+            "range should always be positive",
+        );
 
         let shift = tmp_range.leading_zeros() as i32;
 

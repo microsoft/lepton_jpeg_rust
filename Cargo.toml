@@ -26,6 +26,7 @@ default = []
 compression_stats = []
 
 [dependencies]
+assume = "0.5.0"
 bytemuck = "1"
 byteorder = "1.4"
 flate2 = "1.0"
