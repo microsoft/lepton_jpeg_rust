@@ -144,7 +144,7 @@ impl<R: Read> VPXBoolReader<R> {
     // for false and update `probability`. Now `range` can get out of allowable range and we restore it
     // by shifting left both `range` and `value` with corresponding filling of `value` by further
     // stream bits (it corresponds to bring down new digit in division). Repeat until stream ends.
-    // 
+    //
     // Reference: https://datatracker.ietf.org/doc/html/rfc6386#section-7.
     //
     // Here some imrovements to the basic scheme are implemented. First, we store more stream bits
