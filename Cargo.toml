@@ -38,6 +38,7 @@ rayon = "1.10"
 
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1.0"
+thread-priority = "0.16"
 
 [dev-dependencies]
 rstest = "0.18"
