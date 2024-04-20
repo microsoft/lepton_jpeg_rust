@@ -16,7 +16,6 @@ use super::jpeg_header::JPegHeader;
 pub struct QuantizationTables {
     icos_idct_edge8192_dequantized_x: [i32; 64],
     icos_idct_edge8192_dequantized_y: [i32; 64],
-    icos_idct_linear8192_dequantized: [i32; 64],
     quantization_table: [u16; 64],
 
     /// quantization_table transposed (as 8x8 matrix rotated by 90 degrees).
@@ -32,7 +31,6 @@ impl QuantizationTables {
         let mut retval = QuantizationTables {
             icos_idct_edge8192_dequantized_x: [0; 64],
             icos_idct_edge8192_dequantized_y: [0; 64],
-            icos_idct_linear8192_dequantized: [0; 64],
             quantization_table_transposed: AlignedBlock::default(),
             quantization_table: [0; 64],
             freq_max: [0; 64],
@@ -61,9 +59,6 @@ impl QuantizationTables {
 
         for pixel_row in 0..8 {
             for i in 0..8 {
-                self.icos_idct_linear8192_dequantized[(pixel_row * 8) + i] =
-                    ICOS_IDCT_LINEAR_8192_SCALED[(pixel_row * 8) + i]
-                        * (self.quantization_table[i] as i32);
                 self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
                     [i * 8]
                     * (self.quantization_table[(i * 8) + pixel_row] as i32);
