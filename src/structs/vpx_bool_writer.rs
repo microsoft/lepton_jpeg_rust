@@ -78,11 +78,7 @@ impl<W: Write> VPXBoolWriter<W> {
 
         loop {
             let cur_bit = (v & (1 << index)) != 0;
-            self.put(
-                cur_bit,
-                &mut branches[serialized_so_far],
-                cmp,
-            )?;
+            self.put(cur_bit, &mut branches[serialized_so_far], cmp)?;
             serialized_so_far <<= 1;
             serialized_so_far |= cur_bit as usize;
 

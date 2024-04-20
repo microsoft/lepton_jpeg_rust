@@ -66,7 +66,8 @@ pub struct Model {
 
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
-    num_non_zeros_counts7x7: [[Branch; 64]; NUM_NON_ZERO_BINS - 1],
+    // as `num_non_zeros_context` cannot exceed 25, 9 is enough
+    num_non_zeros_counts7x7: [[Branch; 64]; 9],
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
 
