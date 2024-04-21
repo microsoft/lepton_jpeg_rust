@@ -216,7 +216,7 @@ impl ProbabilityTables {
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_x,
+                num_non_zeros_bin: num_non_zeros_x - 1,
                 best_prior_bit_len: 0,
             };
         }
@@ -235,7 +235,7 @@ impl ProbabilityTables {
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
-            num_non_zeros_bin: num_non_zeros_x,
+            num_non_zeros_bin: num_non_zeros_x - 1,
             best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
         };
     }

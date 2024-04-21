@@ -25,8 +25,6 @@ pub const MAX_EXPONENT: usize = 11;
 const BLOCK_TYPES: usize = 2; // setting this to 3 gives us ~1% savings.. 2/3 from BLOCK_TYPES=2
 pub const NUM_NON_ZERO_BINS: usize = 10;
 //const BsrBestPriorMax : usize = 11; // 1023 requires 11 bits to describe
-pub const BAND_DIVISOR: usize = 1;
-const COEF_BANDS: usize = 64 / BAND_DIVISOR;
 //const EntropyNodes : usize = 15;
 //const NunNonZerosEofPiors : usize = 66;
 //const ZeroOrEob : usize = 3;
@@ -35,25 +33,18 @@ const COEF_BITS: usize = MAX_EXPONENT - 1; // the last item of the length is alw
 const NUMERIC_LENGTH_MAX: usize = 12;
 //const NumericLengthBits : usize = 4;
 
-const EXPONENT_COUNT_DC_BINS: usize = if NUM_NON_ZERO_BINS > NUMERIC_LENGTH_MAX {
-    NUM_NON_ZERO_BINS
-} else {
-    NUMERIC_LENGTH_MAX
-};
+const EXPONENT_COUNT_DC_BINS: usize = NUMERIC_LENGTH_MAX;
 
-type NumNonZerosCountsT = [[[Branch; 8]; 8]; 8];
+const NON_ZERO_7X7_COUNT_BITS: usize = 49_usize.ilog2() as usize + 1;
+const NON_ZERO_EDGE_COUNT_BITS: usize = 7_usize.ilog2() as usize + 1;
+const NUM_NON_ZERO_7X7_BINS: usize = NUM_NON_ZERO_BINS - 1;
+const NUM_NON_ZERO_EDGE_BINS: usize = 7;
+
+type NumNonZerosCountsT = [[[Branch; 1 << NON_ZERO_EDGE_COUNT_BITS]; 8]; 8];
 
 pub const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
 pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
 pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
-
-pub const RESIDUAL_NOISE_COUNTS_D1: usize = COEF_BANDS;
-pub const RESIDUAL_NOISE_COUNTS_D2: usize = if NUM_NON_ZERO_BINS < 8 {
-    8
-} else {
-    NUM_NON_ZERO_BINS
-};
-pub const RESIDUAL_NOISE_COUNTS_D3: usize = COEF_BITS;
 
 #[derive(DefaultBoxed)]
 pub struct Model {
@@ -64,26 +55,33 @@ pub struct Model {
     residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
 }
 
+// Arrays are more or less in the order of access
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
-    // as `num_non_zeros_context` cannot exceed 25, 9 is enough
-    num_non_zeros_counts7x7: [[Branch; 64]; 9],
+    // `num_non_zeros_context` cannot exceed 25, see `calc_non_zero_counts_context_7x7`
+    num_non_zeros_counts7x7: [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
+
+    exponent_counts: [[[[Branch; MAX_EXPONENT]; MAX_EXPONENT]; 49]; NUM_NON_ZERO_7X7_BINS],
+    // Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
+    // Dimensions D1 and D2 are exchanged as new D1 is changing at lower rate than D2
+    // lowering cache misses frequency.
+    // D1: 0th bin corresponds to 0 non-zeros and therefore is not used for encoding/decoding,
+    // as well as 0th bins in `exponent_counts/_x`.
+    residual_noise_counts: [[[Branch; COEF_BITS]; 49]; NUM_NON_ZERO_7X7_BINS],
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
-
     num_non_zeros_counts8x1: NumNonZerosCountsT,
 
-    residual_noise_counts:
-        [[[Branch; RESIDUAL_NOISE_COUNTS_D3]; RESIDUAL_NOISE_COUNTS_D2]; RESIDUAL_NOISE_COUNTS_D1],
+    // predictors for exponents are max 11 bits wide, not 12
+    exponent_counts_x: [[[[Branch; MAX_EXPONENT]; MAX_EXPONENT]; 14]; NUM_NON_ZERO_EDGE_BINS],
+    // innermost D is from possible range of `min_threshold - 1`
+    // that is from 0 to bit_width(max(freq_max)) - RESIDUAL_NOISE_FLOOR - 1
+    residual_noise_counts_x: [[[Branch; 3]; 14]; NUM_NON_ZERO_EDGE_BINS],
 
     residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
         RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
 
-    exponent_counts: [[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 49]; NUM_NON_ZERO_BINS],
-
-    exponent_counts_x: [[[[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX]; 15]; NUM_NON_ZERO_BINS],
-
-    sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 4],
+    sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 3],
 }
 
 impl ModelPerColor {
@@ -146,14 +144,14 @@ impl ModelPerColor {
         &mut [Branch; MAX_EXPONENT - 1],
     ) {
         debug_assert!(
-            num_non_zeros_bin < RESIDUAL_NOISE_COUNTS_D2,
+            num_non_zeros_bin < self.residual_noise_counts.len(),
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
         );
 
         let exp = &mut self.exponent_counts[num_non_zeros_bin][zig49][best_prior_bit_len];
         let sign = &mut self.sign_counts[0][0];
-        let bits = &mut self.residual_noise_counts[zig49][num_non_zeros_bin];
+        let bits = &mut self.residual_noise_counts[num_non_zeros_bin][zig49];
         (exp, sign, bits)
     }
 
@@ -281,13 +279,13 @@ impl ModelPerColor {
 
                 if i >= 0 {
                     debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
+                        (ptcc8.num_non_zeros_bin as usize) < self.residual_noise_counts_x.len(),
                         "d1 {0} too high",
                         ptcc8.num_non_zeros_bin
                     );
 
-                    let res_prob = &mut self.residual_noise_counts[zig15offset + 49]
-                        [ptcc8.num_non_zeros_bin as usize];
+                    let res_prob = &mut self.residual_noise_counts_x
+                        [ptcc8.num_non_zeros_bin as usize][zig15offset];
 
                     coef |= bool_reader.get_n_bits(
                         i as usize + 1,
@@ -313,8 +311,8 @@ impl ModelPerColor {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
-            [ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize]
+            [zig15offset][ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -369,13 +367,13 @@ impl ModelPerColor {
 
                 if i >= 0 {
                     debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < RESIDUAL_NOISE_COUNTS_D2,
+                        (ptcc8.num_non_zeros_bin as usize) < self.residual_noise_counts_x.len(),
                         "d1 {0} too high",
                         ptcc8.num_non_zeros_bin
                     );
 
-                    let res_prob = &mut self.residual_noise_counts[zig15offset + 49]
-                        [ptcc8.num_non_zeros_bin as usize];
+                    let res_prob = &mut self.residual_noise_counts_x
+                        [ptcc8.num_non_zeros_bin as usize][zig15offset];
 
                     bool_writer
                         .put_n_bits(
@@ -490,15 +488,7 @@ impl Model {
             self.exponent_counts_dc[0].len() - 1,
         )];
 
-        let sign = &mut self.per_color[color_index].sign_counts[0][if uncertainty2 >= 0 {
-            if uncertainty2 == 0 {
-                3
-            } else {
-                2
-            }
-        } else {
-            1
-        }];
+        let sign = &mut self.per_color[color_index].sign_counts[0][calc_sign_index(uncertainty2 as i32) + 1];
 
         let bits = &mut self.residual_noise_counts_dc[cmp::min(
             self.residual_noise_counts_dc.len() - 1,
@@ -516,7 +506,7 @@ impl Model {
         sign_cmp: ModelComponent,
         bits_cmp: ModelComponent,
     ) -> Result<i16> {
-        assert!(
+        debug_assert!(
             A - 1 <= B,
             "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
             A,
@@ -557,7 +547,7 @@ impl Model {
         sign_cmp: ModelComponent,
         bits_cmp: ModelComponent,
     ) -> Result<()> {
-        assert!(
+        debug_assert!(
             A - 1 <= B,
             "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
             A,
@@ -581,11 +571,11 @@ impl Model {
         }
 
         if coef_bit_len > 1 {
-            assert!(
+            debug_assert!(
                 (abs_coef & (1 << (coef_bit_len - 1))) != 0,
                 "Biggest bit must be set"
             );
-            assert!(
+            debug_assert!(
                 (abs_coef & (1 << coef_bit_len)) == 0,
                 "Beyond Biggest bit must be zero"
             );

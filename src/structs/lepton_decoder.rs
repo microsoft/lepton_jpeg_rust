@@ -326,7 +326,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             .read_coef(
                 bool_reader,
                 zig49,
-                ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize,
+                ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize - 1,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;
@@ -454,9 +454,10 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_7x7)
         .context(here!())?;
 
-    if num_non_zeros_edge > 7 {
-        return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
-    }
+    // this can never happen by prev func - 3-bit value is at most 7
+    // if num_non_zeros_edge > 7 {
+    //     return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
+    // }
 
     let delta;
     let mut zig15offset;
@@ -490,12 +491,15 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
+            here_mut.set_coefficient(coord, coef);
         }
-
-        here_mut.set_coefficient(coord, coef);
 
         coord += delta;
         zig15offset += 1;
+    }
+
+    if num_non_zeros_edge != 0 {
+        return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
     }
 
     Ok(())
