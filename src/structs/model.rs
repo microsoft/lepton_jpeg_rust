@@ -37,6 +37,7 @@ const EXPONENT_COUNT_DC_BINS: usize = NUMERIC_LENGTH_MAX;
 
 const NON_ZERO_7X7_COUNT_BITS: usize = 49_usize.ilog2() as usize + 1;
 const NON_ZERO_EDGE_COUNT_BITS: usize = 7_usize.ilog2() as usize + 1;
+// 0th bin corresponds to 0 non-zeros and therefore is not used for encoding/decoding.
 const NUM_NON_ZERO_7X7_BINS: usize = NUM_NON_ZERO_BINS - 1;
 const NUM_NON_ZERO_EDGE_BINS: usize = 7;
 
@@ -50,39 +51,51 @@ pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 pub struct Model {
     per_color: [ModelPerColor; BLOCK_TYPES],
 
-    exponent_counts_dc: [[[Branch; MAX_EXPONENT]; 17]; EXPONENT_COUNT_DC_BINS],
-
-    residual_noise_counts_dc: [[Branch; COEF_BITS]; NUMERIC_LENGTH_MAX],
+    counts_dc: [CountsDC; EXPONENT_COUNT_DC_BINS],
 }
 
-// Arrays are more or less in the order of access
+// Arrays are more or less in the order of access.
+// Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
+// Some dimensions are exchanged to get lower changing rate outer, lowering cache misses frequency.
+
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
     // `num_non_zeros_context` cannot exceed 25, see `calc_non_zero_counts_context_7x7`
     num_non_zeros_counts7x7:
         [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
 
-    exponent_counts: [[[[Branch; MAX_EXPONENT]; MAX_EXPONENT]; 49]; NUM_NON_ZERO_7X7_BINS],
-    // Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
-    // Dimensions D1 and D2 are exchanged as new D1 is changing at lower rate than D2
-    // lowering cache misses frequency.
-    // D1: 0th bin corresponds to 0 non-zeros and therefore is not used for encoding/decoding,
-    // as well as 0th bins in `exponent_counts/_x`.
-    residual_noise_counts: [[[Branch; COEF_BITS]; 49]; NUM_NON_ZERO_7X7_BINS],
+    counts: [[Counts7x7; 49]; NUM_NON_ZERO_7X7_BINS],
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
     num_non_zeros_counts8x1: NumNonZerosCountsT,
 
-    // predictors for exponents are max 11 bits wide, not 12
-    exponent_counts_x: [[[[Branch; MAX_EXPONENT]; MAX_EXPONENT]; 14]; NUM_NON_ZERO_EDGE_BINS],
-    // innermost D is from possible range of `min_threshold - 1`
-    // that is from 0 to bit_width(max(freq_max)) - RESIDUAL_NOISE_FLOOR - 1
-    residual_noise_counts_x: [[[Branch; 3]; 14]; NUM_NON_ZERO_EDGE_BINS],
+    counts_x: [[CountsEdge; 14]; NUM_NON_ZERO_EDGE_BINS],
 
     residual_threshold_counts: [[[Branch; RESIDUAL_THRESHOLD_COUNTS_D3];
         RESIDUAL_THRESHOLD_COUNTS_D2]; RESIDUAL_THRESHOLD_COUNTS_D1],
 
     sign_counts: [[Branch; NUMERIC_LENGTH_MAX]; 3],
+}
+
+#[derive(DefaultBoxed)]
+pub struct Counts7x7 {
+    exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
+    residual_noise_counts: [Branch; COEF_BITS],
+}
+
+#[derive(DefaultBoxed)]
+pub struct CountsEdge {
+    // predictors for exponents are max 11 bits wide, not 12
+    exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
+    // size by possible range of `min_threshold - 1`
+    // that is from 0 up to `bit_width(max(freq_max)) - RESIDUAL_NOISE_FLOOR - 1`
+    residual_noise_counts: [Branch; 3],
+}
+
+#[derive(DefaultBoxed)]
+pub struct CountsDC {
+    exponent_counts: [[Branch; MAX_EXPONENT]; 17],
+    residual_noise_counts: [Branch; COEF_BITS],
 }
 
 impl ModelPerColor {
@@ -142,17 +155,18 @@ impl ModelPerColor {
     ) -> (
         &mut [Branch; MAX_EXPONENT],
         &mut Branch,
-        &mut [Branch; MAX_EXPONENT - 1],
+        &mut [Branch; COEF_BITS],
     ) {
         debug_assert!(
-            num_non_zeros_bin < self.residual_noise_counts.len(),
+            num_non_zeros_bin < self.counts.len(),
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
         );
 
-        let exp = &mut self.exponent_counts[num_non_zeros_bin][zig49][best_prior_bit_len];
+        let exp = &mut self.counts[num_non_zeros_bin][zig49].exponent_counts[best_prior_bit_len];
         let sign = &mut self.sign_counts[0][0];
-        let bits = &mut self.residual_noise_counts[num_non_zeros_bin][zig49];
+        let bits = &mut self.counts[num_non_zeros_bin][zig49].residual_noise_counts;
+
         (exp, sign, bits)
     }
 
@@ -228,8 +242,8 @@ impl ModelPerColor {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let length_branches = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize]
-            [zig15offset][ptcc8.best_prior_bit_len as usize];
+        let length_branches = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
+            .exponent_counts[ptcc8.best_prior_bit_len as usize];
 
         let length = bool_reader
             .get_unary_encoded(
@@ -246,7 +260,7 @@ impl ModelPerColor {
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
                 .context(here!())?;
 
-            coef = 1 << (length - 1);
+            coef = 1;
 
             if length > 1 {
                 let min_threshold: i32 = qt.get_min_noise_threshold(coord).into();
@@ -263,16 +277,12 @@ impl ModelPerColor {
                             ModelComponent::Edge(ModelSubComponent::Residual),
                         )? as i16;
 
-                        coef |= cur_bit << i;
-                        decoded_so_far <<= 1;
-
-                        if cur_bit != 0 {
-                            decoded_so_far |= 1;
-                        }
+                        coef <<= 1;
+                        coef |= cur_bit;
 
                         // since we are not strict about rejecting jpegs with out of range coefs
                         // we just make those less efficient by reusing the same probability bucket
-                        decoded_so_far = cmp::min(decoded_so_far, thresh_prob.len() - 1);
+                        decoded_so_far = cmp::min(coef as usize, thresh_prob.len() - 1);
 
                         i -= 1;
                     }
@@ -280,14 +290,16 @@ impl ModelPerColor {
 
                 if i >= 0 {
                     debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.residual_noise_counts_x.len(),
+                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
                         "d1 {0} too high",
                         ptcc8.num_non_zeros_bin
                     );
 
-                    let res_prob = &mut self.residual_noise_counts_x
-                        [ptcc8.num_non_zeros_bin as usize][zig15offset];
+                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
+                        [zig15offset]
+                        .residual_noise_counts;
 
+                    coef <<= i + 1;
                     coef |= bool_reader.get_n_bits(
                         i as usize + 1,
                         res_prob,
@@ -312,8 +324,8 @@ impl ModelPerColor {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
-            [ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
+            .exponent_counts[ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -329,7 +341,6 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
-            let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
             let sign = self.get_sign_counts_mut(ptcc8);
 
             bool_writer.put(
@@ -339,7 +350,9 @@ impl ModelPerColor {
             )?;
 
             if length > 1 {
+                let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
                 let mut i: i32 = length as i32 - 2;
+
                 if i >= min_threshold {
                     let thresh_prob =
                         self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length as i32);
@@ -368,18 +381,19 @@ impl ModelPerColor {
 
                 if i >= 0 {
                     debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.residual_noise_counts_x.len(),
+                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
                         "d1 {0} too high",
                         ptcc8.num_non_zeros_bin
                     );
 
-                    let res_prob = &mut self.residual_noise_counts_x
-                        [ptcc8.num_non_zeros_bin as usize][zig15offset];
+                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
+                        [zig15offset]
+                        .residual_noise_counts;
 
                     bool_writer
                         .put_n_bits(
                             abs_coef as usize,
-                            (i + 1) as usize,
+                            i as usize + 1,
                             res_prob,
                             ModelComponent::Edge(ModelSubComponent::Noise),
                         )
@@ -479,23 +493,21 @@ impl Model {
         uncertainty: i16,
         uncertainty2: i16,
         color_index: usize,
-    ) -> (&mut [Branch; MAX_EXPONENT], &mut Branch, &mut [Branch; 10]) {
+    ) -> (
+        &mut [Branch; MAX_EXPONENT],
+        &mut Branch,
+        &mut [Branch; COEF_BITS],
+    ) {
         let len_abs_mxm = u16_bit_length(uncertainty.unsigned_abs());
         let len_abs_offset_to_closest_edge = u16_bit_length(uncertainty2.unsigned_abs());
+        let len_abs_mxm_clamp = cmp::min(len_abs_mxm as usize, self.counts_dc.len() - 1);
 
-        let exp = &mut self.exponent_counts_dc
-            [cmp::min(len_abs_mxm as usize, self.exponent_counts_dc.len() - 1)][cmp::min(
-            len_abs_offset_to_closest_edge as usize,
-            self.exponent_counts_dc[0].len() - 1,
-        )];
-
+        let exp = &mut self.counts_dc[len_abs_mxm_clamp].exponent_counts
+            [len_abs_offset_to_closest_edge as usize];
         let sign = &mut self.per_color[color_index].sign_counts[0]
-            [calc_sign_index(uncertainty2 as i32) + 1];
+            [calc_sign_index(uncertainty2 as i32) + 1]; // +1 to separate from sign_counts[0][0]
+        let bits = &mut self.counts_dc[len_abs_mxm_clamp].residual_noise_counts;
 
-        let bits = &mut self.residual_noise_counts_dc[cmp::min(
-            self.residual_noise_counts_dc.len() - 1,
-            len_abs_mxm as usize,
-        )];
         (exp, sign, bits)
     }
 
@@ -569,7 +581,7 @@ impl Model {
 
         bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
         if coef != 0 {
-            bool_writer.put(coef >= 0, sign_branch, sign_cmp)?;
+            bool_writer.put(coef > 0, sign_branch, sign_cmp)?;
         }
 
         if coef_bit_len > 1 {
