@@ -326,7 +326,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             .read_coef(
                 bool_reader,
                 zig49,
-                ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_left_7x7) as usize - 1,
+                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;

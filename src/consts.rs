@@ -54,9 +54,15 @@ pub const FREQ_MAX: [u16; 64] = [
     1020, 1020, 1020, 854, 854, 838, 1020, 838, 1020, 838,
 ];
 
-pub const NON_ZERO_TO_BIN: [u8; 50] = [
-    0, 1, 2, 3, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-    9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
+// used to get prediction branches basing on nonzero-number predictor `num_non_zeros_context`
+pub const NON_ZERO_TO_BIN: [u8; 26] = [
+    0, 1, 2, 3, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
+];
+
+// used to get prediction branches basing on current `num_non_zeros_left_7x7`, 0th element is not used
+pub const NON_ZERO_TO_BIN_7X7: [u8; 50] = [
+    0, 0, 1, 2, 3, 3, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 ];
 
 //pub const MAX_FILE_SIZE_BYTES : i32 = 128 * 1024 * 1024;

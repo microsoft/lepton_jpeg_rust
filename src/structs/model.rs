@@ -59,7 +59,8 @@ pub struct Model {
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
     // `num_non_zeros_context` cannot exceed 25, see `calc_non_zero_counts_context_7x7`
-    num_non_zeros_counts7x7: [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
+    num_non_zeros_counts7x7:
+        [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
 
     exponent_counts: [[[[Branch; MAX_EXPONENT]; MAX_EXPONENT]; 49]; NUM_NON_ZERO_7X7_BINS],
     // Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
@@ -311,8 +312,8 @@ impl ModelPerColor {
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize]
-            [zig15offset][ptcc8.best_prior_bit_len as usize];
+        let exp_array = &mut self.exponent_counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
+            [ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -488,7 +489,8 @@ impl Model {
             self.exponent_counts_dc[0].len() - 1,
         )];
 
-        let sign = &mut self.per_color[color_index].sign_counts[0][calc_sign_index(uncertainty2 as i32) + 1];
+        let sign = &mut self.per_color[color_index].sign_counts[0]
+            [calc_sign_index(uncertainty2 as i32) + 1];
 
         let bits = &mut self.residual_noise_counts_dc[cmp::min(
             self.residual_noise_counts_dc.len() - 1,
