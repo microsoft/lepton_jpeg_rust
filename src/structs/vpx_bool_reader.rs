@@ -78,10 +78,10 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut decoded_so_far = 1;
 
-        while decoded_so_far < A {
+        for _index in 0..A.ilog2() {
             let cur_bit = self.get(&mut branches[decoded_so_far], cmp)? as usize;
             decoded_so_far <<= 1;
-            decoded_so_far |= cur_bit as usize;
+            decoded_so_far |= cur_bit;
         }
 
         // remove set leading bit
