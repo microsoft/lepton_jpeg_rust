@@ -169,6 +169,8 @@ impl<R: Read> VPXBoolReader<R> {
             & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
             + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE);
 
+        assert!(tmp_range - split > 0);
+
         let bit = tmp_value >= split;
 
         branch.record_and_update_bit(bit);
@@ -179,18 +181,6 @@ impl<R: Read> VPXBoolReader<R> {
         } else {
             tmp_range = split;
         }
-
-        // So optimizer understands that 0 should never happen and uses a cold jump
-        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-        // This is better since the branch prediction figures quickly this never happens and can run
-        // the code sequentially.
-        // #[cfg(all(
-        //     not(target_feature = "lzcnt"),
-        //     any(target_arch = "x86", target_arch = "x86_64")
-        // ))]
-        // debug_assert!(tmp_range > 0,
-        //     "range should always be positive",
-        // );
 
         let shift = tmp_range.leading_zeros() as i32;
 
