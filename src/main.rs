@@ -20,6 +20,8 @@ use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
+#[cfg(target_os = "windows")]
+use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
 use std::{
     env,
@@ -73,6 +75,40 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-highpriority" {
+                // used to force to run on p-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
+                #[cfg(target_os = "windows")]
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::TimeCritical.into());
+
+                    set_current_thread_priority(priority).unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
+            } else if args[i] == "-lowpriority" {
+                // used to force to run on e-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
+                #[cfg(target_os = "windows")]
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::Idle.into());
+
+                    set_current_thread_priority(priority).unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {

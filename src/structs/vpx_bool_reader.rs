@@ -32,12 +32,12 @@ use crate::metrics::ModelStatsCollector;
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 const BITS_IN_BYTE: i32 = 8;
-const BITS_IN_LONG: i32 = 64;
-const BITS_IN_LONG_MINUS_LAST_BYTE: i32 = BITS_IN_LONG - BITS_IN_BYTE;
+const BITS_IN_VALUE: i32 = 32;
+const BITS_IN_VALUE_MINUS_LAST_BYTE: i32 = BITS_IN_VALUE - BITS_IN_BYTE;
 
 pub struct VPXBoolReader<R> {
-    value: u64,
-    range: u32,
+    value: u32,
+    range: u32, // 128 << BITS_IN_VALUE_MINUS_LAST_BYTE <= range <= 255 << BITS_IN_VALUE_MINUS_LAST_BYTE
     count: i32,
     upstream_reader: R,
     model_statistics: Metrics,
@@ -50,7 +50,7 @@ impl<R: Read> VPXBoolReader<R> {
             upstream_reader: reader,
             value: 0,
             count: -8,
-            range: 255,
+            range: 255 << BITS_IN_VALUE_MINUS_LAST_BYTE,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
@@ -127,6 +127,27 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(coef);
     }
 
+    // Lepton uses VP8 adaptive arithmetic coding scheme, where bits are extracted from file stream
+    // by division of current 8-bit stream `value` by adaptive 8-bit `split`. Adaptation is achieved by
+    // combination of predicted probability to get false bit (`1 <= probability <= 255`, in 1/256 units),
+    // and `range` that represents maximum possible value of yet-not-decoded stream part (so that
+    // `range > value`, `128 <= range <= 256` in units of $2^{-n-8}$ for the `n` bits already decoded)
+    // by forming predictor `split = 1 + (((range - 1) * probability) >> BITS_IN_BYTE)`,
+    // `1 <= split <= range - 1`. Comparison of predictor with stream gives the next decoded bit:
+    // true for `value >= split` and false otherwise - this is effectively division step.
+    // After this we shrink `value` and `range` by `split` for true or shrink `range` to `split`
+    // for false and update `probability`. Now `range` can get out of allowable range and we restore it
+    // by shifting left both `range` and `value` with corresponding filling of `value` by further
+    // stream bits (it corresponds to bring down new digit in division). Repeat until stream ends.
+    //
+    // Reference: https://datatracker.ietf.org/doc/html/rfc6386#section-7.
+    //
+    // Here some imrovements to the basic scheme are implemented. First, we store more stream bits
+    // in `value` to reduce refill rate, so that 8 MSBs of `value` represent `value` of the scheme
+    // (it was already implemented in DropBox version, however, with shorter 16-bit `value`).
+    // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
+    // and it allows to reduce number of operations to compute `split` - previously `big_split` -
+    // and to update `range` and `shift`).
     #[inline(always)]
     pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
@@ -139,35 +160,32 @@ impl<R: Read> VPXBoolReader<R> {
 
         let probability = branch.get_probability() as u32;
 
-        let split = 1 + (((tmp_range - 1) * probability) >> BITS_IN_BYTE);
-        let big_split = (split as u64) << BITS_IN_LONG_MINUS_LAST_BYTE;
-        let bit = tmp_value >= big_split;
+        let split = ((((tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
+            & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
+            + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE);
 
-        let shift;
+        // So optimizer understands that 0 should never happen and uses a cold jump
+        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
+        // This is better since the branch prediction figures quickly this never happens and can run
+        // the code sequentially.
+        #[cfg(all(
+            not(target_feature = "lzcnt"),
+            any(target_arch = "x86", target_arch = "x86_64")
+        ))]
+        assert!(tmp_range - split > 0);
+
+        let bit = tmp_value >= split;
 
         branch.record_and_update_bit(bit);
 
         if bit {
             tmp_range -= split;
-            tmp_value -= big_split;
-
-            // so optimizer understands that 0 should never happen and uses a cold jump
-            // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-            // This is better since the branch prediction figures quickly this never happens and can run
-            // the code sequentially.
-            #[cfg(all(
-                not(target_feature = "lzcnt"),
-                any(target_arch = "x86", target_arch = "x86_64")
-            ))]
-            assert!(tmp_range > 0);
-
-            shift = tmp_range.leading_zeros() as i32 - 24;
+            tmp_value -= split;
         } else {
             tmp_range = split;
-
-            // optimizer understands that split > 0
-            shift = split.leading_zeros() as i32 - 24;
         }
+
+        let shift = tmp_range.leading_zeros() as i32;
 
         self.value = tmp_value << shift;
         self.range = tmp_range << shift;
@@ -203,11 +221,11 @@ impl<R: Read> VPXBoolReader<R> {
     #[cold]
     #[inline(always)]
     fn vpx_reader_fill(
-        tmp_value: &mut u64,
+        tmp_value: &mut u32,
         tmp_count: &mut i32,
         upstream_reader: &mut R,
     ) -> Result<()> {
-        let mut shift = BITS_IN_LONG_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
 
         while shift >= 0 {
             // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
@@ -217,7 +235,7 @@ impl<R: Read> VPXBoolReader<R> {
                 break;
             }
 
-            *tmp_value |= (v[0] as u64) << shift;
+            *tmp_value |= (v[0] as u32) << shift;
             shift -= BITS_IN_BYTE;
             *tmp_count += BITS_IN_BYTE;
         }
