@@ -26,7 +26,6 @@ default = []
 compression_stats = []
 
 [dependencies]
-assume = "0.5.0"
 bytemuck = "1"
 byteorder = "1.4"
 flate2 = "1.0"
@@ -39,10 +38,10 @@ rayon = "1.10"
 
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1.0"
-thread-priority = "0.16"
+thread-priority = "1.0.0"
 
 [dev-dependencies]
-rstest = "0.18"
+rstest = "0.19"
 rand = "0.8"
 
 [[bin]]
