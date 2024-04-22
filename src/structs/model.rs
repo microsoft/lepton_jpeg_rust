@@ -21,37 +21,29 @@ use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
 
-pub const MAX_EXPONENT: usize = 11;
 const BLOCK_TYPES: usize = 2; // setting this to 3 gives us ~1% savings.. 2/3 from BLOCK_TYPES=2
-pub const NUM_NON_ZERO_BINS: usize = 10;
-//const BsrBestPriorMax : usize = 11; // 1023 requires 11 bits to describe
-//const EntropyNodes : usize = 15;
-//const NunNonZerosEofPiors : usize = 66;
-//const ZeroOrEob : usize = 3;
-const COEF_BITS: usize = MAX_EXPONENT - 1; // the last item of the length is always 1
 
 const NUMERIC_LENGTH_MAX: usize = 12;
-//const NumericLengthBits : usize = 4;
-
-const EXPONENT_COUNT_DC_BINS: usize = NUMERIC_LENGTH_MAX;
+pub const MAX_EXPONENT: usize = 11; // range from 0 to 1023 requires 11 bins to describe
+const COEF_BITS: usize = MAX_EXPONENT - 1; // the MSB of the value is always 1
 
 const NON_ZERO_7X7_COUNT_BITS: usize = 49_usize.ilog2() as usize + 1;
 const NON_ZERO_EDGE_COUNT_BITS: usize = 7_usize.ilog2() as usize + 1;
 // 0th bin corresponds to 0 non-zeros and therefore is not used for encoding/decoding.
-const NUM_NON_ZERO_7X7_BINS: usize = NUM_NON_ZERO_BINS - 1;
+const NUM_NON_ZERO_7X7_BINS: usize = 9;
 const NUM_NON_ZERO_EDGE_BINS: usize = 7;
 
 type NumNonZerosCountsT = [[[Branch; 1 << NON_ZERO_EDGE_COUNT_BITS]; 8]; 8];
 
-pub const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
-pub const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
-pub const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
+const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
+const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
+const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
 #[derive(DefaultBoxed)]
 pub struct Model {
     per_color: [ModelPerColor; BLOCK_TYPES],
 
-    counts_dc: [CountsDC; EXPONENT_COUNT_DC_BINS],
+    counts_dc: [CountsDC; NUMERIC_LENGTH_MAX],
 }
 
 // Arrays are more or less in the order of access.
@@ -78,13 +70,13 @@ pub struct ModelPerColor {
 }
 
 #[derive(DefaultBoxed)]
-pub struct Counts7x7 {
+struct Counts7x7 {
     exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
     residual_noise_counts: [Branch; COEF_BITS],
 }
 
 #[derive(DefaultBoxed)]
-pub struct CountsEdge {
+struct CountsEdge {
     // predictors for exponents are max 11 bits wide, not 12
     exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
     // size by possible range of `min_threshold - 1`
@@ -93,7 +85,7 @@ pub struct CountsEdge {
 }
 
 #[derive(DefaultBoxed)]
-pub struct CountsDC {
+struct CountsDC {
     exponent_counts: [[Branch; MAX_EXPONENT]; 17],
     residual_noise_counts: [Branch; COEF_BITS],
 }
