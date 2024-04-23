@@ -54,9 +54,9 @@ pub struct Model {
     counts_dc: [CountsDC; EXPONENT_COUNT_DC_BINS],
 }
 
-// Arrays are more or less in the order of access.
-// Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
-// Some dimensions are exchanged to get lower changing rate outer, lowering cache misses frequency.
+/// Arrays are more or less in the order of access.
+/// Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
+/// Some dimensions are exchanged to get lower changing rate outer, lowering cache misses frequency.
 
 #[derive(DefaultBoxed)]
 pub struct ModelPerColor {
@@ -64,7 +64,12 @@ pub struct ModelPerColor {
     num_non_zeros_counts7x7:
         [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
 
-    counts: [Counts7x7; 49 * NUM_NON_ZERO_7X7_BINS],
+    /// 0th bin corresponds to zeros which are common for 7x7 blocks. Zeros in
+    /// a row are common, in which case we access memory sequentially
+    exponent_counts_7x7_z: [[Branch; MAX_EXPONENT]; 49 * NUM_NON_ZERO_7X7_BINS],
+
+    /// all bins except the zero one, which means it is small enough to become 256 aligned which is all goodness
+    counts_7x7: [Counts7x7; 49 * NUM_NON_ZERO_7X7_BINS],
 
     num_non_zeros_counts1x8: NumNonZerosCountsT,
     num_non_zeros_counts8x1: NumNonZerosCountsT,
@@ -78,10 +83,17 @@ pub struct ModelPerColor {
 }
 
 #[derive(DefaultBoxed)]
+#[repr(align(256))]
 pub struct Counts7x7 {
-    exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
+    /// all exponent counts except in the case of zero best prior bit len. We keep those
+    /// seperately for 2 reasons:
+    /// - they are accessed sequentially in many cases where there is a run of zeros
+    /// - we make this structure slightly smaller so it fits into 256 bytes and is aligned
+    ///   (otherwise the structure ends up 256+6 bytes which is annoying)
+    exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT - 1],
+
+    /// residual count in all cases
     residual_noise_counts: [Branch; COEF_BITS],
-    _padding: [u8; 2],
 }
 
 #[derive(DefaultBoxed)]
@@ -156,15 +168,31 @@ impl ModelPerColor {
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        debug_assert!(
-            nz_zig49 < self.counts.len(),
+        // assert prior to bounds checks on the arrays
+        // this allows the array bounds checks to be optimized out
+        // and lets array access code be moved around by the optimizer
+        // since the order of operations is not important if we've already
+        // asserted that no bounds checks are going to fail.
+        assert!(
+            nz_zig49 < self.counts_7x7.len(),
             "nz_zig49 {0} too high",
             nz_zig49
         );
+        assert!(
+            best_prior_bit_len < MAX_EXPONENT,
+            "best_prior_bit_len {0} too high",
+            best_prior_bit_len
+        );
 
-        let exp = &mut self.counts[nz_zig49].exponent_counts[best_prior_bit_len];
+        // 0th bin corresponds to zeros which are common for 7x7 blocks
+        let exp = if best_prior_bit_len == 0 {
+            &mut self.exponent_counts_7x7_z[nz_zig49]
+        } else {
+            &mut self.counts_7x7[nz_zig49].exponent_counts[best_prior_bit_len - 1]
+        };
+
         let sign = &mut self.sign_counts[0][0];
-        let bits = &mut self.counts[nz_zig49].residual_noise_counts;
+        let bits = &mut self.counts_7x7[nz_zig49].residual_noise_counts;
 
         (exp, sign, bits)
     }
