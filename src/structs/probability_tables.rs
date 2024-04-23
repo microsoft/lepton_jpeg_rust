@@ -83,7 +83,11 @@ impl ProbabilityTables {
     }
 
     pub fn num_non_zeros_to_bin(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN[NUM_NON_ZERO_BINS - 1][num_non_zeros as usize];
+        return NON_ZERO_TO_BIN[num_non_zeros as usize];
+    }
+
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: u8) -> u8 {
+        return NON_ZERO_TO_BIN_7X7[num_non_zeros as usize];
     }
 
     pub fn calc_non_zero_counts_context_7x7<const ALL_PRESENT: bool>(
@@ -123,12 +127,12 @@ impl ProbabilityTables {
         left: &AlignedBlock,
         above: &AlignedBlock,
         above_left: &AlignedBlock,
-    ) -> [i16; 49] {
-        let mut best_prior = [0; 49];
+    ) -> [i16; 64] {
+        let mut best_prior = [0; 64];
 
         if ALL_PRESENT {
             // compiler does a pretty amazing job with SSE/AVX2 here
-            for i in 0..49 {
+            for i in 8..64 {
                 // approximate average of 3 without a divide with double the weight for left/top vs diagonal
                 best_prior[i] = (((left.get_coefficient(i).abs() as u32
                     + above.get_coefficient(i).abs() as u32)
@@ -140,11 +144,11 @@ impl ProbabilityTables {
             // handle edge case :) where we are on the top or left edge
 
             if self.left_present {
-                for i in 0..49 {
+                for i in 8..64 {
                     best_prior[i] = left.get_coefficient(i).abs();
                 }
             } else if self.above_present {
-                for i in 0..49 {
+                for i in 8..64 {
                     best_prior[i] = above.get_coefficient(i).abs();
                 }
             }
@@ -177,7 +181,7 @@ impl ProbabilityTables {
             // so no need to complicate the code by doing anything manual
 
             for i in 0..8 {
-                let cur_coef = usize::from(RASTER_TO_ALIGNED[usize::from(coefficient + (i * 8))]);
+                let cur_coef = coefficient + (i * 8);
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
@@ -200,7 +204,7 @@ impl ProbabilityTables {
             // so no need to complicate the code by doing anything manual
 
             for i in 0..8 {
-                let cur_coef = usize::from(RASTER_TO_ALIGNED[usize::from(coefficient + i)]);
+                let cur_coef = coefficient + i;
 
                 let sign = if (i & 1) != 0 { -1 } else { 1 };
 
@@ -216,7 +220,7 @@ impl ProbabilityTables {
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_x,
+                num_non_zeros_bin: num_non_zeros_x - 1,
                 best_prior_bit_len: 0,
             };
         }
@@ -235,7 +239,7 @@ impl ProbabilityTables {
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
-            num_non_zeros_bin: num_non_zeros_x,
+            num_non_zeros_bin: num_non_zeros_x - 1,
             best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
         };
     }

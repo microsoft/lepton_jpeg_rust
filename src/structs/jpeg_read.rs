@@ -419,9 +419,9 @@ fn decode_baseline_rst<R: Read>(
         lastdc[state.get_cmp()] = block[0];
 
         // prepare zigzagged block
-        let mut zzblock = [0i16; 64];
+        let mut zzblock = AlignedBlock::default();
         for bpos in 0..eob {
-            AlignedBlock::set_coefficient_zigzag_block(&mut zzblock, bpos as u8, block[bpos]);
+            zzblock.set_coefficient_zigzag(bpos, block[bpos]);
         }
 
         // set block data

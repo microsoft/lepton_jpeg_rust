@@ -6,7 +6,7 @@
 
 use log::info;
 
-use crate::consts::{ALIGNED_BLOCK_INDEX_DC_INDEX, RASTER_TO_ALIGNED, ZIGZAG_TO_ALIGNED};
+use crate::consts::ZIGZAG_TO_RASTER;
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
 
@@ -148,11 +148,9 @@ impl BlockBasedImage {
         }
     }
 
-    pub fn set_block_data(&mut self, dpos: i32, block_data: &[i16; 64]) {
+    pub fn set_block_data(&mut self, dpos: i32, block_data: &AlignedBlock) {
         self.fill_up_to_dpos(dpos);
-        self.image[(dpos - self.dpos_offset) as usize] = AlignedBlock {
-            raw_data: *block_data,
-        };
+        *self.image[(dpos - self.dpos_offset) as usize].get_block_mut() = *block_data.get_block();
     }
 
     pub fn get_block(&self, dpos: i32) -> &AlignedBlock {
@@ -199,15 +197,11 @@ impl AlignedBlock {
     }
 
     pub fn get_dc(&self) -> i16 {
-        return self.raw_data[ALIGNED_BLOCK_INDEX_DC_INDEX];
+        return self.raw_data[0];
     }
 
     pub fn set_dc(&mut self, value: i16) {
-        self.raw_data[ALIGNED_BLOCK_INDEX_DC_INDEX] = value
-    }
-
-    pub fn set_coefficient_zigzag_block(block_data: &mut [i16; 64], index: u8, value: i16) {
-        block_data[usize::from(crate::consts::ZIGZAG_TO_ALIGNED[usize::from(index)])] = value;
+        self.raw_data[0] = value
     }
 
     /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
@@ -215,7 +209,7 @@ impl AlignedBlock {
     pub fn zigzag(&self) -> AlignedBlock {
         let mut block = AlignedBlock::default();
         for i in 0..64 {
-            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_ALIGNED[i])];
+            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_RASTER[i])];
         }
         return block;
     }
@@ -243,10 +237,9 @@ impl AlignedBlock {
     }
 
     pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
-        // with aligned (zigzag) arrangement, the 7x7 data is located in offsets 0..48
         let mut num_non_zeros7x7: u8 = 0;
-        for index in 0..49 {
-            if self.raw_data[index] != 0 {
+        for index in 9..64 {
+            if index & 0x7 != 0 && self.raw_data[index] != 0 {
                 num_non_zeros7x7 += 1;
             }
         }
@@ -263,14 +256,10 @@ impl AlignedBlock {
     }
 
     pub fn set_coefficient_zigzag(&mut self, index: usize, v: i16) {
-        self.raw_data[usize::from(ZIGZAG_TO_ALIGNED[index])] = v;
-    }
-
-    pub fn get_coefficient_raster(&self, index: usize) -> i16 {
-        return self.raw_data[usize::from(RASTER_TO_ALIGNED[index])];
+        self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])] = v;
     }
 
     pub fn get_coefficient_zigzag(&self, index: usize) -> i16 {
-        return self.raw_data[usize::from(ZIGZAG_TO_ALIGNED[index])];
+        return self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])];
     }
 }
