@@ -83,7 +83,11 @@ impl ProbabilityTables {
     }
 
     pub fn num_non_zeros_to_bin(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN[NUM_NON_ZERO_BINS - 1][num_non_zeros as usize];
+        return NON_ZERO_TO_BIN[num_non_zeros as usize];
+    }
+
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: u8) -> u8 {
+        return NON_ZERO_TO_BIN_7X7[num_non_zeros as usize];
     }
 
     pub fn calc_non_zero_counts_context_7x7<const ALL_PRESENT: bool>(
@@ -216,7 +220,7 @@ impl ProbabilityTables {
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_x,
+                num_non_zeros_bin: num_non_zeros_x - 1,
                 best_prior_bit_len: 0,
             };
         }
@@ -235,7 +239,7 @@ impl ProbabilityTables {
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
-            num_non_zeros_bin: num_non_zeros_x,
+            num_non_zeros_bin: num_non_zeros_x - 1,
             best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
         };
     }
