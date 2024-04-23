@@ -65,6 +65,16 @@ pub const NON_ZERO_TO_BIN_7X7: [u8; 50] = [
     8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 ];
 
+pub const NON_ZERO_TO_BIN_7X7_X49: [u16; 50] = {
+    let mut arr = [0; 50];
+    let mut i = 0;
+    while i < 50 {
+        arr[i] = NON_ZERO_TO_BIN_7X7[i] as u16 * 49;
+        i += 1;
+    }
+    arr
+};
+
 //pub const MAX_FILE_SIZE_BYTES : i32 = 128 * 1024 * 1024;
 pub const MAX_THREADS: usize = 8;
 

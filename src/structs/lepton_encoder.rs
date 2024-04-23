@@ -330,6 +330,9 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
+    let mut non_zero_bin =
+        ProbabilityTables::num_non_zeros_to_bin_7x7_x49(num_non_zeros_left_7x7) as usize;
+
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -346,14 +349,15 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
             .write_coef(
                 bool_writer,
                 coef,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
+                zig49 + non_zero_bin,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;
 
         if coef != 0 {
             num_non_zeros_left_7x7 -= 1;
+            non_zero_bin =
+                ProbabilityTables::num_non_zeros_to_bin_7x7_x49(num_non_zeros_left_7x7) as usize;
 
             let bx = coord & 7;
             let by = coord >> 3;
@@ -534,18 +538,21 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            qt,
-            coord,
-            &block,
-            &above,
-            &left,
-            num_non_zeros_edge,
+            qt, coord, &block, &above, &left,
         );
 
         let coef = block.get_coefficient(coord);
 
         model_per_color
-            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
+            .write_edge_coefficient(
+                bool_writer,
+                qt,
+                coef,
+                coord,
+                zig15offset,
+                num_non_zeros_edge - 1,
+                &ptcc8,
+            )
             .context(here!())?;
 
         if coef != 0 {

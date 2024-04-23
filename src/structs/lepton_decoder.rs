@@ -313,6 +313,9 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
 
+    let mut non_zero_bin =
+        ProbabilityTables::num_non_zeros_to_bin_7x7_x49(num_non_zeros_left_7x7) as usize;
+
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -325,8 +328,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         let coef = model_per_color
             .read_coef(
                 bool_reader,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
+                zig49 + non_zero_bin,
                 best_prior_bit_length as usize,
             )
             .context(here!())?;
@@ -343,6 +345,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             eob_x = cmp::max(eob_x, b_x);
             eob_y = cmp::max(eob_y, b_y);
             num_non_zeros_left_7x7 -= 1;
+            non_zero_bin =
+                ProbabilityTables::num_non_zeros_to_bin_7x7_x49(num_non_zeros_left_7x7) as usize;
 
             output.set_coefficient(coord as usize, coef);
         }
@@ -478,16 +482,17 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            qt,
-            coord,
-            here_mut,
-            above,
-            left,
-            num_non_zeros_edge,
+            qt, coord, here_mut, above, left,
         );
 
-        let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
+        let coef = model_per_color.read_edge_coefficient(
+            bool_reader,
+            qt,
+            coord,
+            zig15offset,
+            num_non_zeros_edge - 1,
+            &ptcc8,
+        )?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
