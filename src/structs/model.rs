@@ -46,6 +46,80 @@ pub struct Model {
     counts_dc: [CountsDC; NUMERIC_LENGTH_MAX],
 }
 
+impl Model {
+    /// walks through the model and applies the walker function to each branch
+    /// This is used by testing to randomize the model so we can detect
+    /// any mismatches in the way that updates are handled
+    #[cfg(test)]
+    pub fn walk(&mut self, mut walker: impl FnMut(&mut Branch)) {
+        for x in self.per_color.iter_mut() {
+            for y in x.num_non_zeros_counts7x7.iter_mut() {
+                for z in y.iter_mut() {
+                    walker(z);
+                }
+            }
+
+            for y in x.counts.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.exponent_counts.iter_mut() {
+                        for q in w.iter_mut() {
+                            walker(q);
+                        }
+                    }
+
+                    for w in z.residual_noise_counts.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.num_non_zeros_counts1x8.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.num_non_zeros_counts8x1.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.counts_x.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.exponent_counts.iter_mut() {
+                        for q in w.iter_mut() {
+                            walker(q);
+                        }
+                    }
+
+                    for w in z.residual_noise_counts.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.residual_threshold_counts.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.sign_counts.iter_mut() {
+                for z in y.iter_mut() {
+                    walker(z);
+                }
+            }
+        }
+    }
+}
+
 // Arrays are more or less in the order of access.
 // Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
 // Some dimensions are exchanged to get lower changing rate outer, lowering cache misses frequency.

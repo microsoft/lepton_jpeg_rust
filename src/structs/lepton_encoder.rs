@@ -609,6 +609,20 @@ fn roundtrip_read_write_coefficients_all(
     }
 }
 
+/// randomizes the branches of the model so that we don't start with a
+/// state where all the branches are in the same state. This is important
+/// to catch any misaligment in the model state between reading and writing.
+#[cfg(test)]
+fn make_random_model() -> Box<Model> {
+    let mut model = Model::default_boxed();
+    let mut count = 1;
+    model.walk(|x| {
+        x.set_count(count);
+        count = count.wrapping_add(1);
+    });
+    model
+}
+
 #[cfg(test)]
 fn roundtrip_read_write_coefficients(
     left_present: bool,
@@ -625,7 +639,7 @@ fn roundtrip_read_write_coefficients(
 
     let pt = ProbabilityTables::new(0, left_present, above_present);
 
-    let mut write_model = Model::default_boxed();
+    let mut write_model = make_random_model();
 
     let mut buffer = Vec::new();
 
@@ -698,7 +712,7 @@ fn roundtrip_read_write_coefficients(
 
     bool_writer.finish().unwrap();
 
-    let mut read_model = Model::default_boxed();
+    let mut read_model = make_random_model();
     let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
 
     // use the version with ALL_PRESENT is both above and left neighbors are present
