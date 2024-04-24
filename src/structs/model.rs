@@ -118,6 +118,19 @@ impl Model {
             }
         }
     }
+
+    /// calculates a checksum of the model so we can compare two models for equality
+    #[cfg(test)]
+    pub fn model_checksum(&mut self) -> u64 {
+        use std::hash::{DefaultHasher, Hasher};
+
+        let mut h = DefaultHasher::new();
+        self.walk(|x| {
+            h.write_u16(x.get_count());
+        });
+
+        h.finish()
+    }
 }
 
 // Arrays are more or less in the order of access.
