@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use super::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
-use super::neighbor_summary::NeighborSummary;
+use super::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use super::probability_tables::ProbabilityTables;
 
 pub struct BlockContext {
@@ -16,6 +16,13 @@ pub struct BlockContext {
 
     cur_num_non_zeros_index: i32,
     above_num_non_zero_index: i32,
+}
+pub struct NeighborData<'a> {
+    pub above: &'a AlignedBlock,
+    pub left: &'a AlignedBlock,
+    pub above_left: &'a AlignedBlock,
+    pub neighbor_context_above: &'a NeighborSummary,
+    pub neighbor_context_left: &'a NeighborSummary,
 }
 
 impl BlockContext {
@@ -72,40 +79,40 @@ impl BlockContext {
         return retval;
     }
 
-    pub fn get_neighbors<'a, const ALL_PRESENT: bool>(
+    pub fn get_neighbor_data<'a, const ALL_PRESENT: bool>(
         &self,
         image_data: &'a BlockBasedImage,
+        context: &BlockContext,
+        num_non_zeros: &'a [NeighborSummary],
         pt: &ProbabilityTables,
-    ) -> (&'a AlignedBlock, &'a AlignedBlock, &'a AlignedBlock) {
-        (
-            if ALL_PRESENT {
+    ) -> NeighborData<'a> {
+        NeighborData::<'a> {
+            above_left: if ALL_PRESENT {
                 image_data.get_block(self.above_block_index - 1)
             } else {
                 &EMPTY_BLOCK
             },
-            if ALL_PRESENT || pt.is_above_present() {
+            above: if ALL_PRESENT || pt.is_above_present() {
                 image_data.get_block(self.above_block_index)
             } else {
                 &EMPTY_BLOCK
             },
-            if ALL_PRESENT || pt.is_left_present() {
+            left: if ALL_PRESENT || pt.is_left_present() {
                 image_data.get_block(self.cur_block_index - 1)
             } else {
                 &EMPTY_BLOCK
             },
-        )
-    }
-
-    pub fn non_zeros_here(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[self.cur_num_non_zeros_index as usize].get_num_non_zeros();
-    }
-
-    pub fn get_non_zeros_above(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[self.above_num_non_zero_index as usize].get_num_non_zeros();
-    }
-
-    pub fn get_non_zeros_left(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[(self.cur_num_non_zeros_index - 1) as usize].get_num_non_zeros();
+            neighbor_context_above: if ALL_PRESENT || pt.is_above_present() {
+                context.neighbor_context_above(num_non_zeros)
+            } else {
+                &NEIGHBOR_DATA_EMPTY
+            },
+            neighbor_context_left: if ALL_PRESENT || pt.is_left_present() {
+                context.neighbor_context_left(num_non_zeros)
+            } else {
+                &NEIGHBOR_DATA_EMPTY
+            },
+        }
     }
 
     pub fn neighbor_context_here<'a>(

@@ -25,6 +25,8 @@ use crate::structs::{
 
 use default_boxed::DefaultBoxed;
 
+use super::block_context::NeighborData;
+
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
     pts: &ProbabilityTablesSet,
@@ -190,10 +192,6 @@ fn process_row<W: Write>(
     features: &EnabledFeatures,
 ) -> Result<()> {
     if block_width > 0 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         serialize_tokens::<W, false>(
             state,
             qt,
@@ -213,10 +211,6 @@ fn process_row<W: Write>(
     }
 
     for _jpeg_x in 1..block_width - 1 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
         if middle_model.is_all_present() {
             serialize_tokens::<W, true>(
@@ -252,10 +246,6 @@ fn process_row<W: Write>(
     }
 
     if block_width > 1 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         if right_model.is_all_present() {
             serialize_tokens::<W, true>(
                 state,
@@ -300,25 +290,10 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 ) -> Result<()> {
     debug_assert!(ALL_PRESENT == pt.is_all_present());
 
-    let num_non_zeros_7x7 = context.non_zeros_here(&num_non_zeros);
-
-    let model_per_color = model.get_per_color(pt);
-
-    model_per_color
-        .write_non_zero_7x7_count(
-            bool_writer,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
-            num_non_zeros_7x7,
-        )
-        .context(here!())?;
-
-    let mut eob_x = 0;
-    let mut eob_y = 0;
-    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7;
-
     let block = context.here(image_data);
 
-    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, context, num_non_zeros, pt);
 
     #[cfg(feature = "detailed_tracing")]
     trace!(
@@ -327,8 +302,50 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         block.get_hash()
     );
 
-    let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
+    let ns = write_coefficients::<ALL_PRESENT, W>(
+        pt,
+        &neighbors,
+        block,
+        model,
+        bool_writer,
+        qt,
+        features,
+    )?;
+
+    *context.neighbor_context_here(num_non_zeros) = ns;
+
+    Ok(())
+}
+
+pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
+    pt: &ProbabilityTables,
+    neighbors_data: &NeighborData,
+    here: &AlignedBlock,
+    model: &mut Model,
+    bool_writer: &mut VPXBoolWriter<W>,
+    qt: &QuantizationTables,
+    features: &EnabledFeatures,
+) -> Result<NeighborSummary> {
+    let model_per_color = model.get_per_color(pt);
+
+    let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
+
+    let predicted_num_non_zeros_7x7 =
+        pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(neighbors_data);
+
+    model_per_color
+        .write_non_zero_7x7_count(bool_writer, predicted_num_non_zeros_7x7, num_non_zeros_7x7)
+        .context(here!())?;
+
+    let mut eob_x = 0;
+    let mut eob_y = 0;
+    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7;
+
+    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+        &neighbors_data.left,
+        &neighbors_data.above,
+        &neighbors_data.above_left,
+    );
 
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
@@ -340,7 +357,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
         // this should work in all cases but doesn't utilize that the zig49 is related
-        let coef = block.get_coefficient(coord as usize);
+        let coef = here.get_coefficient(coord as usize);
 
         model_per_color
             .write_coef(
@@ -364,11 +381,10 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
             eob_y = cmp::max(eob_y, by);
         }
     }
-
     encode_edge::<W, ALL_PRESENT>(
-        left,
-        above,
-        block,
+        neighbors_data.left,
+        neighbors_data.above,
+        here,
         model_per_color,
         bool_writer,
         qt,
@@ -379,16 +395,15 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, &num_non_zeros, features);
+    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&here, qt, neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
-        block.get_dc(),
+        here.get_dc(),
         false,
         predicted_val.predicted_dc.into(),
     );
 
-    if block.get_dc() as i32
+    if here.get_dc() as i32
         != ProbabilityTables::adv_predict_or_unpredict_dc(
             avg_predicted_dc as i16,
             true,
@@ -397,8 +412,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     {
         return err_exit_code(ExitCode::CoefficientOutOfRange, "BlockDC mismatch");
     }
-
-    // do DC
     model
         .write_dc(
             bool_writer,
@@ -409,23 +422,15 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         )
         .context(here!())?;
 
-    let here = context.neighbor_context_here(num_non_zeros);
-
-    here.set_horizontal(
-        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        block.get_dc(),
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+        &predicted_val.advanced_predict_dc_pixels_sans_dc,
+        qt,
+        here,
+        num_non_zeros_7x7,
         features,
     );
 
-    here.set_vertical(
-        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        block.get_dc(),
-        features,
-    );
-
-    Ok(())
+    Ok(neighbor_summary)
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
@@ -557,4 +562,169 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     Ok(())
+}
+
+#[test]
+fn roundtrip_corner() {
+    let left = AlignedBlock::new([1; 64]);
+    let above = AlignedBlock::new([1; 64]);
+    let here = AlignedBlock::new([1; 64]);
+
+    roundtrip_read_write_coefficients_all(&left, &above, &here);
+}
+
+#[test]
+fn roundtrip_corner_large_coef() {
+    let left = AlignedBlock::new([1023; 64]);
+    let above = AlignedBlock::new([1023; 64]);
+    let here = AlignedBlock::new([1023; 64]);
+
+    roundtrip_read_write_coefficients_all(&left, &above, &here);
+}
+
+#[test]
+fn roundtrip_corner_unique() {
+    let mut arr = [0; 64];
+    for i in 0..64 {
+        arr[i] = i as i16;
+    }
+
+    let left = AlignedBlock::new(arr);
+    let above = AlignedBlock::new(arr.map(|x| x + 64));
+    let here = AlignedBlock::new(arr.map(|x| x + 128));
+
+    roundtrip_read_write_coefficients_all(&left, &above, &here);
+}
+
+#[cfg(test)]
+fn roundtrip_read_write_coefficients_all(
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here: &AlignedBlock,
+) {
+    for (left_present, above_present) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        roundtrip_read_write_coefficients(left_present, above_present, left, above, here);
+    }
+}
+
+#[cfg(test)]
+fn roundtrip_read_write_coefficients(
+    left_present: bool,
+    above_present: bool,
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here: &AlignedBlock,
+) {
+    use crate::structs::idct::run_idct;
+    use crate::structs::lepton_decoder::read_coefficients;
+    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
+    use crate::structs::vpx_bool_reader::VPXBoolReader;
+    use std::io::Cursor;
+
+    let pt = ProbabilityTables::new(0, left_present, above_present);
+
+    let mut write_model = Model::default_boxed();
+
+    let mut buffer = Vec::new();
+
+    let mut bool_writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let qt = QuantizationTables::new_from_table(&[1; 64]);
+    let features = EnabledFeatures::compat_lepton_vector_read();
+
+    // calculate the neighbor values. Normally this is done by recycling the previous results
+    // but since we are testing a one-off here, manually calculate the values
+    let above_neighbor = if above_present {
+        let idct_above = run_idct::<true>(above, qt.get_quantization_table_transposed());
+
+        NeighborSummary::calculate_neighbor_summary(
+            &idct_above,
+            &qt,
+            &above,
+            above.get_count_of_non_zeros_7x7(),
+            &features,
+        )
+    } else {
+        NEIGHBOR_DATA_EMPTY
+    };
+
+    let left_neighbor = if left_present {
+        let idct_left = run_idct::<true>(left, qt.get_quantization_table_transposed());
+
+        NeighborSummary::calculate_neighbor_summary(
+            &idct_left,
+            &qt,
+            &left,
+            left.get_count_of_non_zeros_7x7(),
+            &features,
+        )
+    } else {
+        NEIGHBOR_DATA_EMPTY
+    };
+
+    let neighbors = NeighborData {
+        above: &above,
+        left: &left,
+        above_left: &above,
+        neighbor_context_above: &above_neighbor,
+        neighbor_context_left: &left_neighbor,
+    };
+
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+    let ns_read = if left_present && above_present {
+        write_coefficients::<true, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+    } else {
+        write_coefficients::<false, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+    }
+    .unwrap();
+
+    bool_writer.finish().unwrap();
+
+    let mut read_model = Model::default_boxed();
+    let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
+
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+    let (output, ns_write) = if left_present && above_present {
+        read_coefficients::<true, _>(
+            &pt,
+            &neighbors,
+            &mut read_model,
+            &mut bool_reader,
+            &qt,
+            &features,
+        )
+    } else {
+        read_coefficients::<false, _>(
+            &pt,
+            &neighbors,
+            &mut read_model,
+            &mut bool_reader,
+            &qt,
+            &features,
+        )
+    }
+    .unwrap();
+
+    assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
+    assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
+    assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
+    assert_eq!(output.get_block(), here.get_block());
 }

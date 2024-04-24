@@ -24,7 +24,7 @@ use crate::structs::{
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
 
-use super::block_context::BlockContext;
+use super::block_context::{BlockContext, NeighborData};
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -289,30 +289,49 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, context, num_non_zeros, pt);
+
+    let (output, ns) =
+        read_coefficients::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
+
+    *context.neighbor_context_here(num_non_zeros) = ns;
+
+    image_data.append_block(output);
+
+    Ok(())
+}
+
+pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
+    pt: &ProbabilityTables,
+    neighbor_data: &NeighborData,
+    model: &mut Model,
+    bool_reader: &mut VPXBoolReader<R>,
+    qt: &QuantizationTables,
+    features: &EnabledFeatures,
+) -> Result<(AlignedBlock, NeighborSummary)> {
     let model_per_color = model.get_per_color(pt);
 
+    let predicted_num_non_zeros_7x7 =
+        pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(neighbor_data);
+
     let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(
-            bool_reader,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
-        )
+        .read_non_zero_7x7_count(bool_reader, predicted_num_non_zeros_7x7)
         .context(here!())?;
 
     if num_non_zeros_7x7 > 49 {
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
-    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
-
     let mut output = AlignedBlock::default();
-
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
     let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
-
-    let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
-
+    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+        &neighbor_data.left,
+        &neighbor_data.above,
+        &neighbor_data.above_left,
+    );
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -347,12 +366,11 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             output.set_coefficient(coord as usize, coef);
         }
     }
-
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        &left,
-        &above,
+        &neighbor_data.left,
+        &neighbor_data.above,
         &mut output,
         qt,
         pt,
@@ -360,10 +378,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         eob_x,
         eob_y,
     )?;
-
-    let predicted_dc =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros, features);
-
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, &neighbor_data, features);
     let coef = model
         .read_dc(
             bool_reader,
@@ -372,33 +387,20 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             predicted_dc.uncertainty2,
         )
         .context(here!())?;
-
     output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
         predicted_dc.predicted_dc,
     ) as i16);
 
-    let here = context.neighbor_context_here(num_non_zeros);
-    here.set_num_non_zeros(num_non_zeros_7x7);
-
-    here.set_horizontal(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+        &predicted_dc.advanced_predict_dc_pixels_sans_dc,
+        qt,
+        &output,
+        num_non_zeros_7x7,
         features,
     );
-
-    here.set_vertical(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
-        features,
-    );
-
-    image_data.append_block(output);
-
-    Ok(())
+    Ok((output, neighbor_summary))
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
