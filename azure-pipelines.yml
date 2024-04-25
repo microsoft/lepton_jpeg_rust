@@ -14,7 +14,7 @@ steps:
 - task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
   displayName: 'Install Rust '
   inputs:
-    rustVersion: 'ms-1.70'
+    rustVersion: 'ms-1.77'
     additionalTargets: 'i686-pc-windows-msvc'
     toolchainFeed: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustTools/nuget/v3/index.json
     cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
@@ -35,8 +35,62 @@ steps:
   inputs:
     mergeTestResults: true
 
-- script: 'cargo build --locked --release 2>&1'
+- script: |
+   set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
+   cargo build --locked --release 2>&1
+   copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
+   copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
+   copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
+   copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
+   set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
+   cargo build --locked --release 2>&1
+
   displayName: 'Build Release'
+
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '6.x'
+
+- task: EsrpCodeSigning@4
+  inputs:
+    ConnectedServiceName: 'ESRP CodeSigning'
+    FolderPath: '$(Build.SourcesDirectory)'
+    Pattern: '
+      target\debug\lepton_jpeg.dll,
+      target\debug\lepton_jpeg_util.exe,
+      target\release\lepton_jpeg.dll,
+      target\release\lepton_jpeg_avx2.dll,
+      target\release\lepton_jpeg_util.exe,
+      target\release\lepton_jpeg_util_avx2.exe'
+    signConfigType: 'inlineSignParams'
+    inlineOperation: |
+      [
+       {
+        "KeyCode": "CP-401405",
+        "OperationCode": "SigntoolSign",
+        "ToolName": "sign",
+        "ToolVersion": "1.0",
+        "Parameters": {
+         "OpusName": "Microsoft",
+         "OpusInfo": "https://www.microsoft.com",
+         "FileDigest": "/fd SHA256",
+         "PageHash": "/NPH",
+         "TimeStamp": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+        }
+       },
+       {
+        "KeyCode": "CP-401405",
+        "OperationCode": "SigntoolVerify",
+        "ToolName": "sign",
+        "ToolVersion": "1.0",
+        "Parameters": {}
+       }
+      ]
+    SessionTimeout: '60'
+    MaxConcurrency: '50'
+    MaxRetryAttempts: '5'
+    PendingAnalysisWaitTimeoutMinutes: '5'
 
 - task: CopyFiles@2
   displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'

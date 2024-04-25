@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
     <id>Lepton.Jpeg.Rust</id>
-    <version>0.3.4</version>
+    <version>0.3.5.0</version>
     <title>Lepton JPEG Compression Rust version binaries and libraries</title>
     <authors>kristofr</authors>
     <owners>kristofr</owners>
@@ -18,7 +18,11 @@
 
     <file src="..\target\release\lepton_jpeg_util.exe" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg_util.pdb" target="exe\release\x64" />
+    <file src="..\target\release\lepton_jpeg_util_avx2.exe" target="exe\release\x64" />
+    <file src="..\target\release\lepton_jpeg_util_avx2.pdb" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg.dll" target="lib\release\x64" />
     <file src="..\target\release\lepton_jpeg.pdb" target="lib\release\x64" />
+    <file src="..\target\release\lepton_jpeg_avx2.dll" target="lib\release\x64" />
+    <file src="..\target\release\lepton_jpeg_avx2.pdb" target="lib\release\x64" />
   </files>
 </package>

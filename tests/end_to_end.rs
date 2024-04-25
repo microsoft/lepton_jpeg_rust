@@ -16,7 +16,7 @@ use lepton_jpeg::{
     lepton_error::{ExitCode, LeptonError},
     EnabledFeatures,
 };
-use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage};
+use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx};
 
 use rstest::rstest;
 
@@ -83,11 +83,103 @@ fn verify_decode(
         &mut Cursor::new(input),
         &mut output,
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
 
     assert!(output[..] == expected[..]);
+}
+
+/// verifies that the decode will accept existing Lepton files and generate
+/// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
+#[test]
+fn verify_decode_scalar_overflow() {
+    let file = "mathoverflow_scalar";
+
+    println!("decoding {0:?}", file);
+
+    let input = read_file(file, ".lep");
+    let expected = read_file(file, ".jpg");
+
+    let mut output = Vec::new();
+
+    let features = EnabledFeatures::compat_lepton_scalar_read();
+
+    decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+
+    assert!(output[..] == expected[..]);
+}
+
+/// Verifies that the decode will accept existing Lepton files and generate
+/// exactly the same jpeg from them when called by an external interface
+/// with use_16bit_dc_estimate=true for C++ backward compatibility.
+/// Used to detect unexpected divergences in coding format.
+#[rstest]
+fn verify_decode_external_interface_with_use_16bit_dc_estimate(
+    #[values(
+        "mathoverflow_16",
+        "android",
+        "androidcrop",
+        "androidcropoptions",
+        "androidprogressive",
+        "androidprogressive_garbage",
+        "androidtrail",
+        "colorswap",
+        "gray2sf",
+        "grayscale",
+        "hq",
+        "iphone",
+        "iphonecity",
+        "iphonecity_with_16KGarbage",
+        "iphonecity_with_1MGarbage",
+        "iphonecrop",
+        "iphonecrop2",
+        "iphoneprogressive",
+        "iphoneprogressive2",
+        "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
+        "out_of_order_dqt",     // image with quanatization table dqt that comes after image definition SOF
+        "narrowrst",
+        "nofsync",
+        "slrcity",
+        "slrhills",
+        "slrindoor",
+        "tiny",
+        "trailingrst",
+        "trailingrst2",
+        "trunc",
+        "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
+        "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
+    )]
+    file: &str,
+) {
+    println!("decoding {0:?}", file);
+
+    let compressed = read_file(file, ".lep");
+    let jpg_file_name = match file {
+        "mathoverflow_16" => "mathoverflow",
+        _ => file,
+    };
+    let input = read_file(jpg_file_name, ".jpg");
+
+    let mut original = Vec::new();
+    original.resize(input.len() + 10000, 0);
+
+    let mut original_size: u64 = 0;
+    unsafe {
+        let retval = WrapperDecompressImageEx(
+            compressed[..].as_ptr(),
+            compressed.len() as u64,
+            original[..].as_mut_ptr(),
+            original.len() as u64,
+            8,
+            (&mut original_size) as *mut u64,
+            true, // use_16bit_dc_estimate
+        );
+
+        assert_eq!(retval, 0);
+    }
+    assert_eq!(input.len() as u64, original_size);
+    assert_eq!(input[..], original[..(original_size as usize)]);
 }
 
 /// encodes as LEP and codes back to JPG to mostly test the encoder. Can't check against
@@ -136,7 +228,7 @@ fn verify_encode(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_write(),
     )
     .unwrap();
 
@@ -144,7 +236,7 @@ fn verify_encode(
         &mut Cursor::new(lepton),
         &mut output,
         8,
-        &EnabledFeatures::all(),
+        &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
 
@@ -160,8 +252,7 @@ fn verify_16bitmath() {
 
         let mut output = Vec::new();
 
-        let mut features = EnabledFeatures::all();
-        features.use_16bit_dc_estimate = true;
+        let features = EnabledFeatures::compat_lepton_vector_read();
 
         decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
 
@@ -175,7 +266,7 @@ fn verify_16bitmath() {
 
         let mut output = Vec::new();
 
-        let mut features = EnabledFeatures::all();
+        let mut features = EnabledFeatures::compat_lepton_vector_read();
         features.use_16bit_dc_estimate = false;
 
         decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
@@ -218,7 +309,12 @@ fn verify_extern_16bit_math_retry() {
 fn verify_encode_verify(#[values("slrcity")] file: &str) {
     let input = read_file(file, ".jpg");
 
-    encode_lepton_verify(&input[..], 8, &EnabledFeatures::all()).unwrap();
+    encode_lepton_verify(
+        &input[..],
+        8,
+        &EnabledFeatures::compat_lepton_vector_write(),
+    )
+    .unwrap();
 }
 
 fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
@@ -245,7 +341,7 @@ fn verify_encode_progressive_false(
             8,
             &EnabledFeatures {
                 progressive: false,
-                ..Default::default()
+                ..EnabledFeatures::compat_lepton_vector_write()
             },
         ),
     );
@@ -263,7 +359,7 @@ fn verify_nonoptimal() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            &EnabledFeatures::all(),
+            &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
 }
@@ -273,13 +369,14 @@ fn verify_nonoptimal() {
 fn verify_encode_image_with_zeros_in_dqt_tables() {
     let input = read_file("zeros_in_dqt_tables", ".jpg");
     let mut lepton = Vec::new();
+
     assert_exception(
         ExitCode::UnsupportedJpeg,
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             8,
-            &EnabledFeatures::all(),
+            &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
 }

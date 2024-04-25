@@ -14,12 +14,14 @@ mod structs;
 
 use anyhow;
 use anyhow::Context;
-use cpu_time::ThreadTime;
 use helpers::err_exit_code;
 use lepton_error::{ExitCode, LeptonError};
+use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::lepton_format::read_jpeg;
+#[cfg(target_os = "windows")]
+use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
 use std::{
     env,
@@ -52,7 +54,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut dump = false;
     let mut all = false;
     let mut overwrite = false;
-    let mut enabled_features = EnabledFeatures::default();
+    let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
     if stdout().is_terminal() {
@@ -65,16 +67,64 @@ fn main_with_result() -> anyhow::Result<()> {
                 num_threads = x;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-iter:") {
                 iterations = x;
+            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-width:") {
+                enabled_features.max_jpeg_width = x;
+            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-height:") {
+                enabled_features.max_jpeg_height = x;
             } else if args[i] == "-dump" {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-highpriority" {
+                // used to force to run on p-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
+                #[cfg(target_os = "windows")]
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::TimeCritical.into());
+
+                    set_current_thread_priority(priority).unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
+            } else if args[i] == "-lowpriority" {
+                // used to force to run on e-cores, make sure this and
+                // any threadpool threads are set to the high priority
+
+                #[cfg(target_os = "windows")]
+                {
+                    let priority = ThreadPriority::Os(WinAPIThreadPriority::Idle.into());
+
+                    set_current_thread_priority(priority).unwrap();
+
+                    let b = rayon::ThreadPoolBuilder::new();
+                    b.start_handler(move |_| {
+                        set_current_thread_priority(priority).unwrap();
+                    })
+                    .build_global()
+                    .unwrap();
+                }
             } else if args[i] == "-overwrite" {
                 overwrite = true;
             } else if args[i] == "-noprogressive" {
                 enabled_features.progressive = false;
             } else if args[i] == "-acceptdqtswithzeros" {
                 enabled_features.reject_dqts_with_zeros = false;
+            } else if args[i] == "-use16bitdc" {
+                enabled_features.use_16bit_dc_estimate = true;
+            } else if args[i] == "-useleptonscalar" {
+                // lepton files that were encoded by the dropbox c++ version compiled in scalar mode
+                enabled_features.use_16bit_adv_predict = false;
+                enabled_features.use_16bit_dc_estimate = false;
+            } else if args[i] == "-useleptonvector" {
+                // lepton files that were encoded by the dropbox c++ version compiled in AVX2/SSE2 mode
+                enabled_features.use_16bit_adv_predict = true;
+                enabled_features.use_16bit_dc_estimate = true;
             } else {
                 return err_exit_code(
                     ExitCode::SyntaxError,
@@ -105,15 +155,14 @@ fn main_with_result() -> anyhow::Result<()> {
                 .context(here!())?;
         } else {
             lh = LeptonHeader::new();
-            lh.read_lepton_header(&mut reader, &enabled_features)
+            lh.read_lepton_header(&mut reader, &mut enabled_features)
                 .context(here!())?;
 
             let _metrics;
 
             (block_image, _metrics) = lh
                 .decode_as_single_image(
-                    &mut reader,
-                    filelen,
+                    &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
                     num_threads as usize,
                     &enabled_features,
                 )
@@ -125,7 +174,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
 
                 if !lh
-                    .advance_next_header_segment(&EnabledFeatures::default())
+                    .advance_next_header_segment(&enabled_features)
                     .context(here!())?
                 {
                     break;
@@ -190,7 +239,7 @@ fn main_with_result() -> anyhow::Result<()> {
 
     let mut current_iteration = 0;
     loop {
-        let thread_cpu = ThreadTime::now();
+        let thread_cpu = CpuTimeMeasure::new();
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results
