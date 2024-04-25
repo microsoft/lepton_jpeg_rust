@@ -45,7 +45,7 @@ pub fn lepton_decode_row_range<R: Read>(
     let max_coded_heights = trunc.get_max_coded_heights();
 
     let mut is_top_row = Vec::new();
-    let mut num_non_zeros = Vec::new();
+    let mut neighbor_summary_cache = Vec::new();
 
     // Init helper structures
     for i in 0..image_data.len() {
@@ -56,7 +56,7 @@ pub fn lepton_decode_row_range<R: Read>(
         let mut num_non_zero_list = Vec::new();
         num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
 
-        num_non_zeros.push(num_non_zero_list);
+        neighbor_summary_cache.push(num_non_zero_list);
     }
 
     let mut model = Model::default_boxed();
@@ -95,7 +95,7 @@ pub fn lepton_decode_row_range<R: Read>(
             pts,
             &mut image_data[cur_row.component],
             &qt[cur_row.component],
-            &mut num_non_zeros[cur_row.component],
+            &mut neighbor_summary_cache[cur_row.component],
             &mut is_top_row[..],
             &component_size_in_blocks[..],
             cur_row.component,
@@ -114,7 +114,7 @@ fn decode_row_wrapper<R: Read>(
     pts: &ProbabilityTablesSet,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
-    num_non_zeros: &mut Vec<NeighborSummary>,
+    neighbor_summary_cache: &mut Vec<NeighborSummary>,
     is_top_row: &mut [bool],
     component_size_in_blocks: &[i32],
     component: usize,
@@ -135,7 +135,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.top[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -151,7 +151,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.mid_right[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -167,7 +167,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.width_one[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -186,7 +186,7 @@ fn decode_row<R: Read>(
     right_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     block_context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     component_size_in_blocks: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
@@ -197,7 +197,7 @@ fn decode_row<R: Read>(
             bool_reader,
             image_data,
             block_context,
-            num_non_zeros,
+            neighbor_summary_cache,
             qt,
             left_model,
             features,
@@ -217,7 +217,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -229,7 +229,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -251,7 +251,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -263,7 +263,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -282,19 +282,20 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
-    let neighbors = context.get_neighbor_data::<ALL_PRESENT>(image_data, num_non_zeros, pt);
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     let (output, ns) =
         read_coefficients::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
 
-    context.set_neighbor_summary_here(num_non_zeros, ns);
+    context.set_neighbor_summary_here(neighbor_summary_cache, ns);
 
     image_data.append_block(output);
 

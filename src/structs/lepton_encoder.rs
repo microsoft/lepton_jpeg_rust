@@ -45,7 +45,7 @@ pub fn lepton_encode_row_range<W: Write>(
     let mut bool_writer = VPXBoolWriter::new(writer)?;
 
     let mut is_top_row = Vec::new();
-    let mut num_non_zeros = Vec::new();
+    let mut neighbor_summary_cache = Vec::new();
 
     // Init helper structures
     for i in 0..image_data.len() {
@@ -53,10 +53,10 @@ pub fn lepton_encode_row_range<W: Write>(
 
         let num_non_zeros_length = (image_data[i].get_block_width() << 1) as usize;
 
-        let mut num_non_zero_list = Vec::new();
-        num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
+        let mut neighbor_summary_component = Vec::new();
+        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::new());
 
-        num_non_zeros.push(num_non_zero_list);
+        neighbor_summary_cache.push(neighbor_summary_component);
     }
 
     let component_size_in_blocks = colldata.get_component_sizes_in_blocks();
@@ -107,7 +107,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.top[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
@@ -124,7 +124,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.mid_right[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
@@ -142,7 +142,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.width_one[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
