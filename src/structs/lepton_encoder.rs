@@ -773,7 +773,9 @@ fn roundtrip_read_write_coefficients(
     use crate::structs::lepton_decoder::read_coefficients;
     use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
     use crate::structs::vpx_bool_reader::VPXBoolReader;
-    use std::hash::{DefaultHasher, Hasher};
+
+    use siphasher::sip::SipHasher13;
+    use std::hash::Hasher;
     use std::io::Cursor;
 
     let pt = ProbabilityTables::new(0, left_present, above_present);
@@ -881,7 +883,7 @@ fn roundtrip_read_write_coefficients(
     assert_eq!(output.get_block(), here.get_block());
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 
-    let mut h = DefaultHasher::new();
+    let mut h = SipHasher13::new();
     h.write(&buffer);
     h.write_u64(write_model.model_checksum());
     let hash = h.finish();

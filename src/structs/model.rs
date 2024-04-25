@@ -49,7 +49,12 @@ pub struct Model {
 impl Model {
     /// walks through the model and applies the walker function to each branch
     /// This is used by testing to randomize the model so we can detect
-    /// any mismatches in the way that updates are handled
+    /// any mismatches in the way that updates are handled.
+    ///
+    /// This is not used in the normal operation of the codec.
+    ///
+    /// Note: the order of the branch walking must be maintained between the model and the walker,
+    /// otherwise you will break the unit tests.
     #[cfg(test)]
     pub fn walk(&mut self, mut walker: impl FnMut(&mut Branch)) {
         for x in self.per_color.iter_mut() {
@@ -122,9 +127,10 @@ impl Model {
     /// calculates a checksum of the model so we can compare two models for equality
     #[cfg(test)]
     pub fn model_checksum(&mut self) -> u64 {
-        use std::hash::{DefaultHasher, Hasher};
+        use siphasher::sip::SipHasher13;
+        use std::hash::Hasher;
 
-        let mut h = DefaultHasher::new();
+        let mut h = SipHasher13::new();
         self.walk(|x| {
             h.write_u16(x.get_count());
         });
