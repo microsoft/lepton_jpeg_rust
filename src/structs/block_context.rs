@@ -82,8 +82,7 @@ impl BlockContext {
     pub fn get_neighbor_data<'a, const ALL_PRESENT: bool>(
         &self,
         image_data: &'a BlockBasedImage,
-        context: &BlockContext,
-        num_non_zeros: &'a [NeighborSummary],
+        neighbor_summary: &'a [NeighborSummary],
         pt: &ProbabilityTables,
     ) -> NeighborData<'a> {
         NeighborData::<'a> {
@@ -103,36 +102,23 @@ impl BlockContext {
                 &EMPTY_BLOCK
             },
             neighbor_context_above: if ALL_PRESENT || pt.is_above_present() {
-                context.neighbor_context_above(num_non_zeros)
+                &neighbor_summary[self.above_num_non_zero_index as usize]
             } else {
                 &NEIGHBOR_DATA_EMPTY
             },
             neighbor_context_left: if ALL_PRESENT || pt.is_left_present() {
-                context.neighbor_context_left(num_non_zeros)
+                &neighbor_summary[(self.cur_num_non_zeros_index - 1) as usize]
             } else {
                 &NEIGHBOR_DATA_EMPTY
             },
         }
     }
 
-    pub fn neighbor_context_here<'a>(
+    pub fn set_neighbor_summary_here(
         &mut self,
-        num_non_zeros: &'a mut [NeighborSummary],
-    ) -> &'a mut NeighborSummary {
-        return &mut num_non_zeros[self.cur_num_non_zeros_index as usize];
-    }
-
-    pub fn neighbor_context_above<'a>(
-        &self,
-        num_non_zeros: &'a [NeighborSummary],
-    ) -> &'a NeighborSummary {
-        return &num_non_zeros[self.above_num_non_zero_index as usize];
-    }
-
-    pub fn neighbor_context_left<'a>(
-        &self,
-        num_non_zeros: &'a [NeighborSummary],
-    ) -> &'a NeighborSummary {
-        return &num_non_zeros[(self.cur_num_non_zeros_index - 1) as usize];
+        neighbor_summary_cache: &mut [NeighborSummary],
+        neighbor_summary: NeighborSummary,
+    ) {
+        neighbor_summary_cache[self.cur_num_non_zeros_index as usize] = neighbor_summary;
     }
 }

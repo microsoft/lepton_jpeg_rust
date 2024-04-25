@@ -289,13 +289,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
-    let neighbors =
-        context.get_neighbor_data::<ALL_PRESENT>(image_data, context, num_non_zeros, pt);
+    let neighbors = context.get_neighbor_data::<ALL_PRESENT>(image_data, num_non_zeros, pt);
 
     let (output, ns) =
         read_coefficients::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
 
-    *context.neighbor_context_here(num_non_zeros) = ns;
+    context.set_neighbor_summary_here(num_non_zeros, ns);
 
     image_data.append_block(output);
 

@@ -186,7 +186,7 @@ fn process_row<W: Write>(
     right_model: &ProbabilityTables,
     _colldata: &TruncateComponents,
     state: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     block_width: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
@@ -198,7 +198,7 @@ fn process_row<W: Write>(
             left_model,
             model,
             image_data,
-            num_non_zeros,
+            neighbor_summary_cache,
             bool_writer,
             features,
         )
@@ -219,7 +219,7 @@ fn process_row<W: Write>(
                 middle_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -231,7 +231,7 @@ fn process_row<W: Write>(
                 middle_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -253,7 +253,7 @@ fn process_row<W: Write>(
                 right_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -265,7 +265,7 @@ fn process_row<W: Write>(
                 right_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -284,7 +284,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     model: &mut Model,
     image_data: &BlockBasedImage,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
     features: &EnabledFeatures,
 ) -> Result<()> {
@@ -293,7 +293,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     let block = context.here(image_data);
 
     let neighbors =
-        context.get_neighbor_data::<ALL_PRESENT>(image_data, context, num_non_zeros, pt);
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     #[cfg(feature = "detailed_tracing")]
     trace!(
@@ -312,7 +312,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         features,
     )?;
 
-    *context.neighbor_context_here(num_non_zeros) = ns;
+    context.set_neighbor_summary_here(neighbor_summary_cache, ns);
 
     Ok(())
 }
