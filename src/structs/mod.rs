@@ -4,6 +4,10 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+ // Don't allow any unsafe code by default. Since this code has to potentially deal with
+ // badly/maliciously formatted images, we want this extra level of safety. 
+ #![forbid(unsafe_code)]
+
 mod bit_reader;
 mod bit_writer;
 mod block_based_image;
