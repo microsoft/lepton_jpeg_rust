@@ -47,7 +47,7 @@ pub struct Model {
 }
 
 impl Model {
-    /// walks through the model and applies the walker function to each branch
+    /// Walks through the model and applies the walker function to each branch
     /// This is used by testing to randomize the model so we can detect
     /// any mismatches in the way that updates are handled.
     ///
