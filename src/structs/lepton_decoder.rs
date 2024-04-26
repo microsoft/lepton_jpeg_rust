@@ -347,39 +347,49 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         &neighbor_data.above_left,
     );
 
-    // now loop through the coefficients, terminating once we hit the number of non-zeros
-    for zig49 in 0..49 {
-        if num_non_zeros_left_7x7 == 0 {
-            break;
-        }
+    if num_non_zeros_left_7x7 > 0 {
+        // calculate the bin we are using for the number of non-zeros
+        let mut num_non_zeros_bin =
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
 
-        let coord = UNZIGZAG_49[zig49];
+        // now loop through the coefficients, terminating once we hit the number of non-zeros
+        for zig49 in 0..49 {
+            // coordinates are processed in zigzag order
+            let coord = UNZIGZAG_49[zig49];
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
-        let coef = model_per_color
-            .read_coef(
-                bool_reader,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
-                best_prior_bit_length as usize,
-            )
-            .context(here!())?;
+            let coef = model_per_color
+                .read_coef(
+                    bool_reader,
+                    zig49,
+                    num_non_zeros_bin,
+                    best_prior_bit_length as usize,
+                )
+                .context(here!())?;
 
-        if coef != 0 {
-            debug_assert!(
-                (coord & 7) > 0 && (coord >> 3) > 0,
-                "this does the DC and the lower 7x7 AC"
-            );
+            if coef != 0 {
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                let bx = coord & 7;
+                let by = coord >> 3;
 
-            let b_x = coord & 7;
-            let b_y = coord >> 3;
+                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
-            eob_x = cmp::max(eob_x, b_x);
-            eob_y = cmp::max(eob_y, b_y);
-            num_non_zeros_left_7x7 -= 1;
+                eob_x = cmp::max(eob_x, bx);
+                eob_y = cmp::max(eob_y, by);
 
-            output.set_coefficient(coord as usize, coef);
+                output.set_coefficient(coord as usize, coef);
+
+                num_non_zeros_left_7x7 -= 1;
+                if num_non_zeros_left_7x7 == 0 {
+                    break;
+                }
+
+                // update the bin since we've chance the number of non-zeros
+                num_non_zeros_bin =
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
+            }
         }
     }
 
