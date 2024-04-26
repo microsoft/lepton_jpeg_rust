@@ -302,7 +302,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         block.get_hash()
     );
 
-    let ns = write_coefficients::<ALL_PRESENT, W>(
+    let ns = write_coefficient_block::<ALL_PRESENT, W>(
         pt,
         &neighbors,
         block,
@@ -317,7 +317,12 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     Ok(())
 }
 
-pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
+/// Writes the 8x8 coefficient block to the bit writer, taking into account the neighboring
+/// blocks, probability tables and model.
+///
+/// This function is designed to be independently callable without needing to know the context,
+/// image data, etc so it can be extensively unit tested.
+pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     pt: &ProbabilityTables,
     neighbors_data: &NeighborData,
     here: &AlignedBlock,
@@ -328,6 +333,7 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
 ) -> Result<NeighborSummary> {
     let model_per_color = model.get_per_color(pt);
 
+    // first we encode the 49 inner coefficients
     let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
 
     let predicted_num_non_zeros_7x7 =
@@ -337,8 +343,10 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
         .write_non_zero_7x7_count(bool_writer, predicted_num_non_zeros_7x7, num_non_zeros_7x7)
         .context(here!())?;
 
+    // these are used as predictors for the number of non-zero edge coefficients
     let mut eob_x = 0;
     let mut eob_y = 0;
+
     let mut num_non_zeros_left_7x7 = num_non_zeros_7x7;
 
     let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
@@ -381,6 +389,8 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
             eob_y = cmp::max(eob_y, by);
         }
     }
+
+    // next step is the edge coefficients
     encode_edge::<W, ALL_PRESENT>(
         neighbors_data.left,
         neighbors_data.above,
@@ -395,6 +405,7 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
     )
     .context(here!())?;
 
+    // finally the DC coefficient (at 0,0)
     let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&here, qt, neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
@@ -412,6 +423,7 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
     {
         return err_exit_code(ExitCode::CoefficientOutOfRange, "BlockDC mismatch");
     }
+
     model
         .write_dc(
             bool_writer,
@@ -422,6 +434,7 @@ pub fn write_coefficients<const ALL_PRESENT: bool, W: Write>(
         )
         .context(here!())?;
 
+    // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         qt,
@@ -770,7 +783,7 @@ fn roundtrip_read_write_coefficients(
     features: &EnabledFeatures,
 ) {
     use crate::structs::idct::run_idct;
-    use crate::structs::lepton_decoder::read_coefficients;
+    use crate::structs::lepton_decoder::read_coefficient_block;
     use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
     use crate::structs::vpx_bool_reader::VPXBoolReader;
 
@@ -828,7 +841,7 @@ fn roundtrip_read_write_coefficients(
 
     // use the version with ALL_PRESENT is both above and left neighbors are present
     let ns_read = if left_present && above_present {
-        write_coefficients::<true, _>(
+        write_coefficient_block::<true, _>(
             &pt,
             &neighbors,
             &here,
@@ -838,7 +851,7 @@ fn roundtrip_read_write_coefficients(
             &features,
         )
     } else {
-        write_coefficients::<false, _>(
+        write_coefficient_block::<false, _>(
             &pt,
             &neighbors,
             &here,
@@ -857,7 +870,7 @@ fn roundtrip_read_write_coefficients(
 
     // use the version with ALL_PRESENT is both above and left neighbors are present
     let (output, ns_write) = if left_present && above_present {
-        read_coefficients::<true, _>(
+        read_coefficient_block::<true, _>(
             &pt,
             &neighbors,
             &mut read_model,
@@ -866,7 +879,7 @@ fn roundtrip_read_write_coefficients(
             &features,
         )
     } else {
-        read_coefficients::<false, _>(
+        read_coefficient_block::<false, _>(
             &pt,
             &neighbors,
             &mut read_model,

@@ -293,7 +293,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     let (output, ns) =
-        read_coefficients::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
+        read_coefficient_block::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
 
     context.set_neighbor_summary_here(neighbor_summary_cache, ns);
 
@@ -302,7 +302,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     Ok(())
 }
 
-pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
+/// Reads the 8x8 coefficient block from the bit reader, taking into account the neighboring
+/// blocks, probability tables and model.
+///
+/// This function is designed to be independently callable without needing to know the context,
+/// image data, etc so it can be extensively unit tested.
+pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     pt: &ProbabilityTables,
     neighbor_data: &NeighborData,
     model: &mut Model,
@@ -312,6 +317,10 @@ pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
 ) -> Result<(AlignedBlock, NeighborSummary)> {
     let model_per_color = model.get_per_color(pt);
 
+    // First we read the 49 inner coefficients
+
+    // figure out how many of these are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
     let predicted_num_non_zeros_7x7 =
         pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(neighbor_data);
 
@@ -320,18 +329,25 @@ pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
         .context(here!())?;
 
     if num_non_zeros_7x7 > 49 {
+        // most likely a stream or model synchronization error
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
     let mut output = AlignedBlock::default();
+
+    // these are used as predictors for the number of non-zero edge coefficients
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
+
     let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
+
     let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
         &neighbor_data.left,
         &neighbor_data.above,
         &neighbor_data.above_left,
     );
+
+    // now loop through the coefficients, terminating once we hit the number of non-zeros
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
             break;
@@ -366,6 +382,8 @@ pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
             output.set_coefficient(coord as usize, coef);
         }
     }
+
+    // step 2, read the edge coefficients
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
@@ -378,6 +396,8 @@ pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
         eob_x,
         eob_y,
     )?;
+
+    // step 3, read the DC coefficient (0,0 of the block)
     let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, &neighbor_data, features);
     let coef = model
         .read_dc(
@@ -393,6 +413,7 @@ pub fn read_coefficients<const ALL_PRESENT: bool, R: Read>(
         predicted_dc.predicted_dc,
     ) as i16);
 
+    // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt,
