@@ -35,6 +35,7 @@ wide = "0.7"
 log = "0.4"
 simple_logger ="4.0"
 rayon = "1.10"
+const_ranged_int = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1.0"

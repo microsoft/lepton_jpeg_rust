@@ -350,11 +350,11 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     if num_non_zeros_left_7x7 > 0 {
         // calculate the bin we are using for the number of non-zeros
         let mut num_non_zeros_bin =
-            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+            let best_prior_bit_length = u16_bit_length(best_priors[coord.value() as usize] as u16);
 
             let coef = model_per_color
                 .read_coef(
@@ -368,15 +368,15 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let bx = coord & 7;
-                let by = coord >> 3;
+                let bx = coord.value() & 7;
+                let by = coord.value() >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
                 eob_x = cmp::max(eob_x, bx);
                 eob_y = cmp::max(eob_y, by);
 
-                output.set_coefficient(coord as usize, coef);
+                output.set_coefficient(coord.value() as usize, coef);
 
                 num_non_zeros_left_7x7 -= 1;
                 if num_non_zeros_left_7x7 == 0 {
@@ -385,7 +385,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
                 // update the bin since we've chance the number of non-zeros
                 num_non_zeros_bin =
-                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
             }
         }
     }
