@@ -4,8 +4,6 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::cmp;
-
 #[derive(PartialEq, Debug)]
 pub enum JPegDecodeStatus {
     DecodeInProgress,
