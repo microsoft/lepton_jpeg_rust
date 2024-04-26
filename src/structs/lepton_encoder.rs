@@ -362,9 +362,9 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord.value() as usize] as u16);
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
-            let coef = here.get_coefficient(coord.value() as usize);
+            let coef = here.get_coefficient(coord as usize);
 
             model_per_color
                 .write_coef(
@@ -379,8 +379,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let bx = coord.value() & 7;
-                let by = coord.value() >> 3;
+                let bx = coord & 7;
+                let by = coord >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
