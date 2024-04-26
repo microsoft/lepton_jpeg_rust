@@ -939,8 +939,7 @@ impl LeptonHeader {
 
         let hdrs = header_reader.read_u32::<LittleEndian>()? as usize;
 
-        let mut hdr_data = Vec::new();
-        hdr_data.resize(hdrs, 0);
+        let mut hdr_data = vec![0; hdrs];
         header_reader.read_exact(&mut hdr_data)?;
 
         if self.garbage_data.len() == 0 {
@@ -996,8 +995,7 @@ impl LeptonHeader {
                 // read number of false set RST markers per scan from file
                 let rst_err_count = header_reader.read_u32::<LittleEndian>()? as usize;
 
-                let mut rst_err_data = Vec::<u8>::new();
-                rst_err_data.resize(rst_err_count, 0);
+                let mut rst_err_data = vec![0; rst_err_count];
 
                 header_reader.read_exact(&mut rst_err_data)?;
 
@@ -1010,8 +1008,7 @@ impl LeptonHeader {
                 // read garbage (data after end of JPG) from file
                 let garbage_size = header_reader.read_u32::<LittleEndian>()? as usize;
 
-                let mut garbage_data_array = Vec::<u8>::new();
-                garbage_data_array.resize(garbage_size, 0);
+                let mut garbage_data_array = vec![0; garbage_size];
 
                 header_reader.read_exact(&mut garbage_data_array)?;
                 self.garbage_data = garbage_data_array;
