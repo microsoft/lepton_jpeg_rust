@@ -347,7 +347,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     let mut eob_x = 0;
     let mut eob_y = 0;
 
-    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7;
+    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7 as usize;
 
     let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
         &neighbors_data.left,
@@ -358,12 +358,10 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     if num_non_zeros_left_7x7 > 0 {
         // calculate the bin we are using for the number of non-zeros
         let mut num_non_zeros_bin =
-            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
 
-        for zig49 in 0..49 {
-            // coordinates are processed in zigzag order
-            let coord = UNZIGZAG_49[zig49];
-
+        // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
+        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
             let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
             let coef = here.get_coefficient(coord as usize);
@@ -396,7 +394,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
                 // update the bin since the number of non-zeros has changed
                 num_non_zeros_bin =
-                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize;
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
             }
         }
     }

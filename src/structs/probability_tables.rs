@@ -85,8 +85,8 @@ impl ProbabilityTables {
         return NON_ZERO_TO_BIN[num_non_zeros as usize];
     }
 
-    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN_7X7[num_non_zeros as usize];
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
+        return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
     }
 
     pub fn calc_non_zero_counts_context_7x7<const ALL_PRESENT: bool>(
