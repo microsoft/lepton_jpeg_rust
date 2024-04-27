@@ -257,11 +257,11 @@ impl ModelPerColor {
     pub fn write_non_zero_7x7_count<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        num_non_zeros_context: u8,
+        num_non_zeros_7x7_context_bin: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+        let num_non_zeros_prob =
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
         return bool_writer
             .put_grid(
@@ -294,10 +294,10 @@ impl ModelPerColor {
     pub fn read_non_zero_7x7_count<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        num_non_zeros_context: u8,
+        num_non_zeros_7x7_context_bin: u8,
     ) -> Result<u8> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+        let num_non_zeros_prob =
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
         return Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)

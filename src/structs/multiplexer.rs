@@ -308,8 +308,8 @@ where
 
             //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
 
-            let mut buffer = Vec::<u8>::new();
-            buffer.resize(data_length as usize, 0);
+            let mut buffer = vec![0; data_length as usize];
+
             reader
                 .read_exact(&mut buffer)
                 .with_context(|| format!("reading {0} bytes", buffer.len()))?;

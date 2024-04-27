@@ -319,13 +319,14 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // First we read the 49 inner coefficients
 
-    // figure out how many of these are non-zero, which is used both
-    // to terminate the loop early and as a predictor for the model
-    let predicted_num_non_zeros_7x7 =
-        pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(neighbor_data);
+    // calculate the predictor context bin based on the neighbors
+    let num_non_zeros_7x7_context_bin =
+        pt.calc_num_non_zeros_7x7_context_bin::<ALL_PRESENT>(neighbor_data);
 
+    // read how many of these are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
     let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(bool_reader, predicted_num_non_zeros_7x7)
+        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)
         .context(here!())?;
 
     if num_non_zeros_7x7 > 49 {
@@ -339,18 +340,18 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
 
-    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7 as usize;
+    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
     let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
-        &neighbor_data.left,
-        &neighbor_data.above,
-        &neighbor_data.above_left,
+        neighbor_data.left,
+        neighbor_data.above,
+        neighbor_data.above_left,
     );
 
-    if num_non_zeros_left_7x7 > 0 {
+    if num_non_zeros_7x7_remaining > 0 {
         // calculate the bin we are using for the number of non-zeros
         let mut num_non_zeros_bin =
-            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
@@ -378,14 +379,14 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
                 output.set_coefficient(coord as usize, coef);
 
-                num_non_zeros_left_7x7 -= 1;
-                if num_non_zeros_left_7x7 == 0 {
+                num_non_zeros_7x7_remaining -= 1;
+                if num_non_zeros_7x7_remaining == 0 {
                     break;
                 }
 
                 // update the bin since we've chance the number of non-zeros
                 num_non_zeros_bin =
-                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
             }
         }
     }
@@ -394,8 +395,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        &neighbor_data.left,
-        &neighbor_data.above,
+        neighbor_data.left,
+        neighbor_data.above,
         &mut output,
         qt,
         pt,

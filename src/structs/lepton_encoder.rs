@@ -333,32 +333,40 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 ) -> Result<NeighborSummary> {
     let model_per_color = model.get_per_color(pt);
 
-    // first we encode the 49 inner coefficients
+    // First we encode the 49 inner coefficients
+
+    // calculate the predictor context bin based on the neighbors
+    let num_non_zeros_7x7_context_bin =
+        pt.calc_num_non_zeros_7x7_context_bin::<ALL_PRESENT>(neighbors_data);
+
+    // store how many of these coefficients are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
     let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
 
-    let predicted_num_non_zeros_7x7 =
-        pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(neighbors_data);
-
     model_per_color
-        .write_non_zero_7x7_count(bool_writer, predicted_num_non_zeros_7x7, num_non_zeros_7x7)
+        .write_non_zero_7x7_count(
+            bool_writer,
+            num_non_zeros_7x7_context_bin,
+            num_non_zeros_7x7,
+        )
         .context(here!())?;
 
     // these are used as predictors for the number of non-zero edge coefficients
     let mut eob_x = 0;
     let mut eob_y = 0;
 
-    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7 as usize;
+    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
     let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
-        &neighbors_data.left,
-        &neighbors_data.above,
-        &neighbors_data.above_left,
+        neighbors_data.left,
+        neighbors_data.above,
+        neighbors_data.above_left,
     );
 
-    if num_non_zeros_left_7x7 > 0 {
+    if num_non_zeros_7x7_remaining > 0 {
         // calculate the bin we are using for the number of non-zeros
-        let mut num_non_zeros_bin =
-            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+        let mut num_non_zeros_remaining_bin =
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
@@ -371,7 +379,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                     bool_writer,
                     coef,
                     zig49,
-                    num_non_zeros_bin,
+                    num_non_zeros_remaining_bin,
                     best_prior_bit_length as usize,
                 )
                 .context(here!())?;
@@ -387,14 +395,14 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                 eob_x = cmp::max(eob_x, bx);
                 eob_y = cmp::max(eob_y, by);
 
-                num_non_zeros_left_7x7 -= 1;
-                if num_non_zeros_left_7x7 == 0 {
+                num_non_zeros_7x7_remaining -= 1;
+                if num_non_zeros_7x7_remaining == 0 {
                     break;
                 }
 
                 // update the bin since the number of non-zeros has changed
-                num_non_zeros_bin =
-                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7);
+                num_non_zeros_remaining_bin =
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
             }
         }
     }
@@ -409,8 +417,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         qt,
         pt,
         num_non_zeros_7x7,
-        eob_x as u8,
-        eob_y as u8,
+        eob_x,
+        eob_y,
     )
     .context(here!())?;
 
@@ -420,14 +428,14 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         here.get_dc(),
         false,
-        predicted_val.predicted_dc.into(),
+        predicted_val.predicted_dc,
     );
 
     if here.get_dc() as i32
         != ProbabilityTables::adv_predict_or_unpredict_dc(
             avg_predicted_dc as i16,
             true,
-            predicted_val.predicted_dc.into(),
+            predicted_val.predicted_dc,
         )
     {
         return err_exit_code(ExitCode::CoefficientOutOfRange, "BlockDC mismatch");
