@@ -370,7 +370,7 @@ fn encode_block_seq(
         bpos += 1;
 
         if tmp == 0 {
-            let mut z = 1;
+            let mut z = 16;
 
             loop {
                 if bpos == 64 {
@@ -383,15 +383,15 @@ fn encode_block_seq(
 
                 if tmp != 0 {
                     // if we have 16 or more zero, we need to write them in blocks of 16
-                    while z >= 16 {
+                    while z >= 256 {
                         huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                        z -= 16;
+                        z -= 256;
                     }
                     write_coef(huffw, tmp, z, actbl);
                     break;
                 }
 
-                z += 1;
+                z += 16;
             }
         } else {
             write_coef(huffw, tmp, 0, actbl);
@@ -408,11 +408,11 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
 
     // compiler is smart enough to figure out that this will never be >= 256,
     // so no bounds check
-    let hc = ((z << 4) | s) as usize;
+    let hc = (z | s) as usize;
 
     // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[hc]) << s) | n;
-    let new_bits = u32::from(tbl.c_len[hc]) + s;
+    let val = tbl.c_val_shift_s[hc] | n;
+    let new_bits = u32::from(tbl.c_len_plus_s[hc]);
     huffw.write(val, new_bits);
 }
 
@@ -434,9 +434,9 @@ fn encode_ac_prg_fs(
             // encode eobrun
             encode_eobrun(huffw, actbl, state);
             // write remaining zeroes
-            while z >= 16 {
+            while z >= 256 {
                 huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                z -= 16;
+                z -= 256;
             }
 
             // vli encode
@@ -446,7 +446,7 @@ fn encode_ac_prg_fs(
             z = 0;
         } else {
             // increment zero counter
-            z += 1;
+            z += 16;
         }
     }
 
@@ -508,8 +508,8 @@ fn encode_ac_prg_sa(
         let tmp = block[usize::from(bpos)];
         // if zero is encountered
         if tmp == 0 {
-            z += 1; // increment zero counter
-            if z == 16 {
+            z += 16; // increment zero counter
+            if z == 256 {
                 // write zeroes if needed
                 huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
 

@@ -49,6 +49,8 @@ use super::component_info::ComponentInfo;
 pub struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u16; 256],
+    pub c_len_plus_s: [u8; 256],
+    pub c_val_shift_s: [u32; 256],
     pub max_eob_run: u16,
 }
 
@@ -57,6 +59,8 @@ impl HuffCodes {
         HuffCodes {
             c_val: [0; 256],
             c_len: [0; 256],
+            c_len_plus_s: [0; 256],
+            c_val_shift_s: [0; 256],
             max_eob_run: 0,
         }
     }
@@ -733,6 +737,11 @@ impl JPegHeader {
             }
 
             code = code << 1;
+        }
+
+        for i in 0..256 {
+            hc.c_len_plus_s[i] = (hc.c_len[i] + (i as u16 & 0xf)) as u8;
+            hc.c_val_shift_s[i] = (hc.c_val[i] as u32) << (i as u32 & 0xf);
         }
 
         // find out eobrun (runs of all zero blocks) max value. This is used encoding/decoding progressive files.
