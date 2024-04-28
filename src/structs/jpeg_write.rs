@@ -402,14 +402,17 @@ fn encode_block_seq(
 /// encodes a coefficient which is a huffman code specifying the size followed
 /// by the coefficient itself
 #[inline(always)]
-fn write_coef(huffw: &mut BitWriter, coef: i16, z: u8, tbl: &HuffCodes) {
+fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     // vli encode
     let (n, s) = envli(coef);
-    let hc = ((z & 0xf) << 4) + s;
+
+    // compiler is smart enough to figure out that this will never be >= 256,
+    // so no bounds check
+    let hc = ((z << 4) | s) as usize;
 
     // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[usize::from(hc)]) << s) | u32::from(n);
-    let new_bits = u32::from(tbl.c_len[usize::from(hc)]) + u32::from(s);
+    let val = (u32::from(tbl.c_val[hc]) << s) | n;
+    let new_bits = u32::from(tbl.c_len[hc]) + s;
     huffw.write(val, new_bits);
 }
 
@@ -596,17 +599,20 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
-fn envli(v: i16) -> (u16, u8) {
+fn envli(v: i16) -> (u32, u32) {
     // since this is inlined, in the main case the compiler figures out that v cannot be zero
     if let Some(nz) = NonZeroI16::new(v) {
-        let leading_zeros = nz.unsigned_abs().leading_zeros() as u8;
+        // Extend to 32 bits. This doubles the speed since it since modern
+        // processors emulate 16 bit math by extending/masking to 32 bits anyway.
+        let i = i32::from(nz.get());
+        let leading_zeros = i.unsigned_abs().leading_zeros();
 
         // first shift right signed by 15 to make everything 1 if negative,
         // then shift right unsigned to make the leading bits 0
-        let adjustment = ((nz.get() >> 15) as u16) >> leading_zeros;
+        let adjustment = ((i >> 31) as u32) >> leading_zeros;
 
-        let n = (nz.get() as u16).wrapping_add(adjustment); // turn v into a 2s complement of s bits
-        let s = 16 - leading_zeros;
+        let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
+        let s = 32 - leading_zeros;
 
         return (n, s);
     } else {
@@ -624,9 +630,9 @@ fn test_envli() {
     for i in -16383..=16385 {
         let (n, s) = envli(i);
 
-        assert_eq!(s, u16_bit_length(i.unsigned_abs()));
+        assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
         let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
-        assert_eq!(n, n2, "s={0}", s);
+        assert_eq!(n, n2 as u32, "s={0}", s);
     }
 }
