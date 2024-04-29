@@ -737,6 +737,37 @@ fn roundtrip_unique() {
     );
 }
 
+/// tests a pattern to check the non-zero counting
+#[test]
+fn roundtrip_non_zeros_counts() {
+    let mut arr = [0; 64];
+
+    // upper left corner is all 50, the rest is 0
+    for i in 0..64 {
+        arr[i] = if (i & 7) < 4 || (i >> 3) < 4 { 50 } else { 0 };
+    }
+
+    let block = AlignedBlock::new(arr);
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0xa781963bb25ecfa3,
+        0x4158c01c97aa07d4,
+        0x7744eda601c31332,
+        0x16740ad27fa899fc,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &block,
+        &block,
+        &block,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
 /// does all combinations of corner blocks being present or not
 #[cfg(test)]
 fn roundtrip_read_write_coefficients_all(
