@@ -45,7 +45,7 @@ use crate::{
     structs::block_based_image::AlignedBlock,
 };
 
-use std::{io::Write, num::NonZeroI16};
+use std::io::Write;
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
@@ -606,24 +606,22 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
 fn envli(v: i16) -> (u32, u32) {
-    // since this is inlined, in the main case the compiler figures out that v cannot be zero
-    if let Some(nz) = NonZeroI16::new(v) {
-        // Extend to 32 bits. This doubles the speed since it since modern
-        // processors emulate 16 bit math by extending/masking to 32 bits anyway.
-        let i = i32::from(nz.get());
-        let leading_zeros = i.unsigned_abs().leading_zeros();
+    // Extend to 32 bits. This results in better performance on modern processors
+    // since the operations are emitted as 32 bit operations anyway,
+    // and the compiler can optimize the code better if it doesn't have to
+    // pretend that the values are 16 bit integers.
+    let i = i32::from(v);
 
-        // first shift right signed by 15 to make everything 1 if negative,
-        // then shift right unsigned to make the leading bits 0
-        let adjustment = ((i >> 31) as u32) >> leading_zeros;
+    let leading_zeros = i.unsigned_abs().leading_zeros();
 
-        let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
-        let s = 32 - leading_zeros;
+    // first shift right signed by 15 to make everything 1 if negative,
+    // then shift right unsigned to make the leading bits 0
+    let adjustment = ((i >> 31) as u32).wrapping_shr(leading_zeros);
 
-        return (n, s);
-    } else {
-        return (0, 0);
-    }
+    let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
+    let s = 32 - leading_zeros;
+
+    return (n, s);
 }
 
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
