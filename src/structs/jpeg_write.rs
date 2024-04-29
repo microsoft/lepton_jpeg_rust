@@ -364,16 +364,22 @@ fn encode_block_seq(
 
     let mut bpos = 1;
 
+    // using SIMD instructions, construct a 64 bit mask of all
+    // the non-zero coefficients in the block. This can be used
+    // to efficiently skip zero blocks using trailing zero scan.
     let b: &[i16x16; 4] = cast_ref(block.get_block());
     let mut mask = (b[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
         | ((b[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
         | ((b[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
         | ((b[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
 
+    // flip the bits since cmp_eq returns 0xffff for zero coefficients
     mask = !mask;
-    mask >>= 1; // already processed one coefficient
 
-    // encode AC
+    // already processed DC coefficient, so skip it
+    mask >>= 1;
+
+    // encode ACs
     while mask != 0 {
         let mut zeros = mask.trailing_zeros();
 
