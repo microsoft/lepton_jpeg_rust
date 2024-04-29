@@ -608,7 +608,14 @@ fn div_pow2(v: i16, p: u8) -> i16 {
     (if v < 0 { v + ((1 << p) - 1) } else { v }) >> p
 }
 
-/// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
+/// Prepares a coefficient for encoding, returning the bits and bit length.
+///
+/// The bitlength is the bit length of the absolute value of the coefficient.
+///
+/// The remainder is the coefficient with the leading bits removed, but with
+/// one added in the case of being negative.
+///
+/// This is equivalent to adding adding (1 << bitlength) - 1 if the number is negative
 #[inline(always)]
 fn envli(v: i16) -> (u32, u32) {
     // Extend to 32 bits. This results in better performance on modern processors
@@ -641,7 +648,7 @@ fn test_envli() {
 
         assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
-        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
+        let n2 = if i >= 0 { i } else { i + ((1 << s) - 1) } as u16;
         assert_eq!(n, n2 as u32, "s={0}", s);
     }
 }
