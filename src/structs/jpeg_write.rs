@@ -362,8 +362,6 @@ fn encode_block_seq(
     // encode DC
     write_coef(huffw, block.get_coefficient(0), 0, dctbl);
 
-    let mut bpos = 1;
-
     // using SIMD instructions, construct a 64 bit mask of all
     // the non-zero coefficients in the block. This can be used
     // to efficiently skip zero blocks using trailing zero scan.
@@ -378,6 +376,7 @@ fn encode_block_seq(
 
     // already processed DC coefficient, so skip it
     mask >>= 1;
+    let mut bpos = 1;
 
     // encode ACs
     while mask != 0 {
