@@ -45,7 +45,7 @@ use crate::{
     structs::block_based_image::AlignedBlock,
 };
 
-use std::io::Write;
+use std::{io::Write, num::NonZeroI16};
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
@@ -379,8 +379,8 @@ fn encode_block_seq(
 
         if zeros > 15 {
             // JPEG encoding only supports 15 zeros in a row. Most implementations
-            // write 0xf0 codes for 16 zeros in a row, but we don't need 
-            // a special case since write_coef with a zero coefficient 
+            // write 0xf0 codes for 16 zeros in a row, but we don't need
+            // a special case since write_coef with a zero coefficient
             // and a 0xf zero count will write the correct code.
             zeros = 15;
         }
@@ -388,7 +388,12 @@ fn encode_block_seq(
         bpos += zeros + 1;
         mask >>= zeros + 1;
 
-        write_coef(huffw, block.get_coefficient((bpos - 1) as usize), zeros, actbl);
+        write_coef(
+            huffw,
+            block.get_coefficient((bpos - 1) as usize),
+            zeros,
+            actbl,
+        );
 
         if bpos >= 64 {
             // if we get all 64 coefficients, we're done and don't need an EOB
@@ -406,15 +411,15 @@ fn encode_block_seq(
 fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     // vli encode
     let (n, s) = envli(coef);
-    let hc = ((z << 4) | s) as usize;
 
-    // combine into single write
-    // c_val_shift is already shifted left by s
-    let val = tbl.c_val_shift[hc] | u32::from(n);
-    let new_bits = u32::from(tbl.c_len[hc]) + u32::from(s);
+    // compiler is smart enough to figure out that this will never be >= 256,
+    // so no bounds check
+    let hc = (z << 4 | s) as usize;
 
-    // write everything to bitwriter
-    huffw.write(val as u64, new_bits);
+    // write to huffman writer (combine into single write)
+    let val = tbl.c_val_shift_s[hc] | n;
+    let new_bits = u32::from(tbl.c_len_plus_s[hc]);
+    huffw.write(u64::from(val), new_bits);
 }
 
 /// progressive AC encoding (first pass)
@@ -600,13 +605,25 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 
 /// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
 #[inline(always)]
-fn envli(vs: i16) -> (u32, u32) {
-    let v = i32::from(vs);
-    let mask = v >> 31;
-    let temp = v + mask;
-    let s = 32 - (mask ^ temp).leading_zeros();
-    let n = temp & ((1 << s) - 1);
-    return (n as u32, s);
+fn envli(v: i16) -> (u32, u32) {
+    // since this is inlined, in the main case the compiler figures out that v cannot be zero
+    if let Some(nz) = NonZeroI16::new(v) {
+        // Extend to 32 bits. This doubles the speed since it since modern
+        // processors emulate 16 bit math by extending/masking to 32 bits anyway.
+        let i = i32::from(nz.get());
+        let leading_zeros = i.unsigned_abs().leading_zeros();
+
+        // first shift right signed by 15 to make everything 1 if negative,
+        // then shift right unsigned to make the leading bits 0
+        let adjustment = ((i >> 31) as u32) >> leading_zeros;
+
+        let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
+        let s = 32 - leading_zeros;
+
+        return (n, s);
+    } else {
+        return (0, 0);
+    }
 }
 
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.

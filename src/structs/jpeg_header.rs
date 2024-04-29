@@ -50,6 +50,8 @@ pub struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_val_shift: [u32; 256],
     pub c_len: [u16; 256],
+    pub c_len_plus_s: [u8; 256],
+    pub c_val_shift_s: [u32; 256],
     pub max_eob_run: u16,
 }
 
@@ -59,6 +61,8 @@ impl HuffCodes {
             c_val: [0; 256],
             c_val_shift: [0; 256],
             c_len: [0; 256],
+            c_len_plus_s: [0; 256],
+            c_val_shift_s: [0; 256],
             max_eob_run: 0,
         }
     }
@@ -73,7 +77,16 @@ impl HuffCodes {
             retval.c_val_shift[i] = (retval.c_val[i] as u32) << (i & 0xf);
         }
 
+        retval.init_fast_lookups();
+
         retval
+    }
+
+    fn init_fast_lookups(&mut self) {
+        for i in 0..256 {
+            self.c_len_plus_s[i] = (self.c_len[i] + (i as u16 & 0xf)) as u8;
+            self.c_val_shift_s[i] = (self.c_val[i] as u32) << (i as u32 & 0xf);
+        }
     }
 }
 
@@ -749,6 +762,8 @@ impl JPegHeader {
 
             code = code << 1;
         }
+
+        hc.init_fast_lookups();
 
         // find out eobrun (runs of all zero blocks) max value. This is used encoding/decoding progressive files.
         //
