@@ -230,7 +230,7 @@ fn recode_one_mcu_row<W: Write>(
 
                     // fetch bit from current bitplane
                     huffw.write(
-                        ((current_block.get_coefficient_zigzag(0) >> jf.cs_sal) & 1) as u64,
+                        ((current_block.get_coefficient_zigzag(0) >> jf.cs_sal) & 1) as u32,
                         1,
                     );
                 }
@@ -419,7 +419,7 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     // write to huffman writer (combine into single write)
     let val = tbl.c_val_shift_s[hc] | n;
     let new_bits = u32::from(tbl.c_len_plus_s[hc]);
-    huffw.write(u64::from(val), new_bits);
+    huffw.write(val, new_bits);
 }
 
 /// progressive AC encoding (first pass)
@@ -586,7 +586,7 @@ fn encode_eobrun(huffw: &mut BitWriter, actbl: &HuffCodes, state: &mut JpegPosit
             actbl.c_val[usize::from(hc)].into(),
             actbl.c_len[usize::from(hc)].into(),
         );
-        huffw.write(u64::from(n), u32::from(s));
+        huffw.write(u32::from(n), u32::from(s));
         state.eobrun = 0;
     }
 }
@@ -594,7 +594,7 @@ fn encode_eobrun(huffw: &mut BitWriter, actbl: &HuffCodes, state: &mut JpegPosit
 /// encodes the correction bits, which are simply encoded as a vector of single bit values
 fn encode_crbits(huffw: &mut BitWriter, correction_bits: &mut Vec<u8>) {
     for x in correction_bits.drain(..) {
-        huffw.write(u64::from(x), 1);
+        huffw.write(u32::from(x), 1);
     }
 }
 
@@ -633,13 +633,13 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 
 #[test]
 fn test_envli() {
-    for i in -1023..=1023 {
+    for i in -16383..=16385 {
         let (n, s) = envli(i);
 
         assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
-        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u32;
-        assert_eq!(n, n2, "i={} s={}", i, s);
+        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
+        assert_eq!(n, n2 as u32, "s={0}", s);
     }
 }
 

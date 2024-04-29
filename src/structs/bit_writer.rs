@@ -39,7 +39,7 @@ impl BitWriter {
     }
 
     #[inline(always)]
-    pub fn write(&mut self, val: u64, new_bits: u32) {
+    pub fn write(&mut self, val: u32, new_bits: u32) {
         /// this is the slow path that is rarely called but generates a lot of code inlined
         /// so we move it out of the main function to keep the main function small with few branches.
         ///
@@ -222,7 +222,7 @@ fn roundtrip_randombits() {
 
         let mut b = BitWriter::new();
         for i in &test_data {
-            b.write(i.0 as u64, i.1 as u32);
+            b.write(i.0 as u32, i.1 as u32);
 
             // randomly flush the buffer
             if rng.gen_range(0..50) == 0 {

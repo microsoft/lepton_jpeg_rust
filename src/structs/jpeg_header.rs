@@ -82,6 +82,9 @@ impl HuffCodes {
         retval
     }
 
+    /// Lookup tables used for fast encoding since we already
+    /// know the length of the code and the value when we write
+    /// the code + bits to the bitstream
     fn init_fast_lookups(&mut self) {
         for i in 0..256 {
             self.c_len_plus_s[i] = (self.c_len[i] + (i as u16 & 0xf)) as u8;
