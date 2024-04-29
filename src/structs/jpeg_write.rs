@@ -359,114 +359,45 @@ fn encode_block_seq(
     actbl: &HuffCodes,
     block: &AlignedBlock,
 ) {
-    // process the array of coefficients as a 4 x 16 = 64 bit integer
-    let block64: &[i16x16; 4] = cast_ref(block.get_block());
-
-    // write the DC coefficent (which is the first one in the zigzag order)
+    // encode DC
     write_coef(huffw, block.get_coefficient(0), 0, dctbl);
 
-    // process the AC coefficients, keeping track of the number of bits left in the current 64 bit block
-    // we used up the first 16 bits for the DC coefficient, so start shift right and keep track of the number of bits left
+    let mut bpos = 1;
 
-    let zero = i16x16::splat(0);
+    let b: &[i16x16; 4] = cast_ref(block.get_block());
+    let mut mask = (b[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
+        | ((b[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
+        | ((b[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
+        | ((b[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
 
-    let mask_array = [
-        block64[0].cmp_eq(zero).move_mask() | 1,
-        block64[1].cmp_eq(zero).move_mask(),
-        block64[2].cmp_eq(zero).move_mask(),
-        block64[3].cmp_eq(zero).move_mask(),
-    ];
+    mask = !mask;
+    mask >>= 1; // already processed one coefficient
 
-    let mut z: i32 = -16; // number of zeros in a row * 16 (shifted because this is that way the coefficients are encoded later on)
+    // encode AC
+    while mask != 0 {
+        let mut zeros = mask.trailing_zeros();
 
-    for i in 0..4 {
-        let mask = mask_array[i];
-
-        if mask == 0xffff {
-            z += 16 * 16;
-            continue;
+        if zeros > 15 {
+            // JPEG encoding only supports 15 zeros in a row. Most implementations
+            // write 0xf0 codes for 16 zeros in a row, but we don't need 
+            // a special case since write_coef with a zero coefficient 
+            // and a 0xf zero count will write the correct code.
+            zeros = 15;
         }
 
-        let current_value = block64[i];
+        bpos += zeros + 1;
+        mask >>= zeros + 1;
 
-        if z <= 0 {
-            simpleiter(mask, &mut z, current_value, huffw, actbl);
-        } else {
-            complexiter(mask, &mut z, current_value, huffw, actbl);
-        }
-    }
+        write_coef(huffw, block.get_coefficient((bpos - 1) as usize), zeros, actbl);
 
-    // if there were trailing zeros, then write end-of-block code, otherwise unnecessary since we wrote 64 coefficients
-    if z != 0 {
-        huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
-    }
-}
-
-fn complexiter(
-    mask: i32,
-    z: &mut i32,
-    current_value: i16x16,
-    huffw: &mut BitWriter,
-    actbl: &HuffCodes,
-) {
-    for j in 0..16 {
-        if mask & (1 << j) != 0 {
-            *z += 16;
-            continue;
-        }
-
-        let tmp = current_value.as_array_ref()[j];
-
-        // if we have 16 or more zero, we need to write them in blocks of 16
-        while *z >= 256 {
-            huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-            *z -= 256;
-        }
-
-        // write the non-zero coefficient we found
-        write_coef(huffw, tmp, *z as u32, actbl);
-        *z = 0;
-    }
-}
-
-#[unroll::unroll_for_loops]
-fn simpleiter(
-    mask: i32,
-    z: &mut i32,
-    current_value: i16x16,
-    huffw: &mut BitWriter,
-    actbl: &HuffCodes,
-) {
-    let vmask: i16x16 = current_value >> 15;
-    let vtemp = current_value + vmask;
-    let xor: i16x16 = vmask ^ vtemp;
-    let lz = xor.as_array_ref().map(|x| 16 - x.leading_zeros() as i16);
-    let vsh = i16x16::new(lz.map(|x| (1 << x) - 1));
-    let vn = vtemp & vsh;
-    let mut tz = *z;
-
-    for j in 0..16 {
-        if mask & (1 << j) != 0 {
-            tz += 16;
-        } else {
-            // vli encode
-            let s = lz[j];
-            let n = vn.as_array_ref()[j];
-
-            let hc = ((tz as u32 | s as u32) & 0xff) as usize;
-
-            // combine into single write
-            // c_val_shift is already shifted left by s
-            let val = actbl.c_val_shift[hc] | (n as u32);
-            let new_bits = u32::from(actbl.c_len[hc]) + s as u32;
-
-            // write everything to bitwriter
-            huffw.write(val as u64, new_bits);
-            tz = 0;
+        if bpos >= 64 {
+            // if we get all 64 coefficients, we're done and don't need an EOB
+            return;
         }
     }
 
-    *z = tz;
+    // write EOB since we didn't get all 64 coefficients
+    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
 }
 
 /// encodes a coefficient which is a huffman code specifying the size followed
@@ -475,7 +406,7 @@ fn simpleiter(
 fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
     // vli encode
     let (n, s) = envli(coef);
-    let hc = (z | s) as usize;
+    let hc = ((z << 4) | s) as usize;
 
     // combine into single write
     // c_val_shift is already shifted left by s
@@ -510,7 +441,7 @@ fn encode_ac_prg_fs(
             }
 
             // vli encode
-            write_coef(huffw, tmp, z << 4, actbl);
+            write_coef(huffw, tmp, z, actbl);
 
             // reset zeroes
             z = 0;
@@ -590,7 +521,7 @@ fn encode_ac_prg_sa(
         // if nonzero is encountered
         else if (tmp == 1) || (tmp == -1) {
             // vli encode
-            write_coef(huffw, tmp, z << 4, actbl);
+            write_coef(huffw, tmp, z, actbl);
 
             // write correction bits
             encode_crbits(huffw, correction_bits);
