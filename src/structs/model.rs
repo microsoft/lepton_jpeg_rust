@@ -98,7 +98,7 @@ impl ModelPerColor {
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
-    ) -> Result<i16> {
+    ) -> std::io::Result<i16> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
@@ -110,8 +110,7 @@ impl ModelPerColor {
             ModelComponent::Coef(ModelSubComponent::Exp),
             ModelComponent::Coef(ModelSubComponent::Sign),
             ModelComponent::Coef(ModelSubComponent::Noise),
-        )
-        .context(here!());
+        );
     }
 
     #[inline(never)]
@@ -139,6 +138,7 @@ impl ModelPerColor {
         .context(here!());
     }
 
+    #[inline(always)]
     fn get_coef_branches(
         &mut self,
         num_non_zeros_bin: usize,
@@ -149,10 +149,19 @@ impl ModelPerColor {
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        debug_assert!(
-            num_non_zeros_bin < self.counts.len(),
+        // these bounds checks happen anyway, but we can provide more helpful error messages
+        // and it also means that the compiler can move the actual array references around
+        // if it helps with performance
+        assert!(
+            num_non_zeros_bin < NUM_NON_ZERO_7X7_BINS,
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
+        );
+        assert!(zig49 < 49, "zig49 {0} too high", num_non_zeros_bin);
+        assert!(
+            best_prior_bit_len < MAX_EXPONENT,
+            "best_prior_bit_len {0} too high",
+            best_prior_bit_len
         );
 
         let exp = &mut self.counts[num_non_zeros_bin][zig49].exponent_counts[best_prior_bit_len];
@@ -503,6 +512,7 @@ impl Model {
         (exp, sign, bits)
     }
 
+    #[inline(always)]
     fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
         bool_reader: &mut VPXBoolReader<R>,
         magnitude_branches: &mut [Branch; A],
@@ -511,7 +521,7 @@ impl Model {
         mag_cmp: ModelComponent,
         sign_cmp: ModelComponent,
         bits_cmp: ModelComponent,
-    ) -> Result<i16> {
+    ) -> std::io::Result<i16> {
         debug_assert!(
             A - 1 <= B,
             "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
@@ -520,17 +530,13 @@ impl Model {
             mag_cmp
         );
 
-        let length = bool_reader
-            .get_unary_encoded(magnitude_branches, mag_cmp)
-            .context(here!())?;
+        let length = bool_reader.get_unary_encoded(magnitude_branches, mag_cmp)?;
 
         let mut coef: i16 = 0;
         if length != 0 {
             let neg = !bool_reader.get(sign_branch, sign_cmp)?;
             if length > 1 {
-                coef = bool_reader
-                    .get_n_bits(length - 1, bits_branch, bits_cmp)
-                    .context(here!())? as i16;
+                coef = bool_reader.get_n_bits(length - 1, bits_branch, bits_cmp)? as i16;
             }
 
             coef |= (1 << (length - 1)) as i16;
