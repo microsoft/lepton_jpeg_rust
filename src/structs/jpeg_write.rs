@@ -33,7 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use anyhow::{Context, Result};
-use bytemuck::cast_ref;
+use bytemuck::{cast, cast_ref};
 use byteorder::WriteBytesExt;
 use wide::{i16x16, CmpEq};
 
@@ -224,7 +224,13 @@ fn recode_one_mcu_row<W: Write>(
                     lastdc[state.get_cmp()] = tmp;
 
                     // encode dc
-                    write_coef(huffw, v, 0, jf.get_huff_dc_codes(state.get_cmp()));
+                    write_coef(
+                        huffw,
+                        v,
+                        v.unsigned_abs(),
+                        0,
+                        jf.get_huff_dc_codes(state.get_cmp()),
+                    );
                 } else {
                     // ---> succesive approximation later stage <---
 
@@ -359,17 +365,21 @@ fn encode_block_seq(
     actbl: &HuffCodes,
     block: &AlignedBlock,
 ) {
-    // encode DC
-    write_coef(huffw, block.get_coefficient(0), 0, dctbl);
-
     // using SIMD instructions, construct a 64 bit mask of all
     // the non-zero coefficients in the block. This can be used
     // to efficiently skip zero blocks using trailing zero scan.
-    let b: &[i16x16; 4] = cast_ref(block.get_block());
-    let mut mask = (b[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
-        | ((b[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
-        | ((b[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
-        | ((b[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
+    let block_simd: &[i16x16; 4] = cast_ref(block.get_block());
+    let mut mask = (block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
+        | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
+        | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
+        | ((block_simd[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
+
+    // abs value of all coefficients. Super fast to calculate here
+    // for everything, even if it is zero and not needed.
+    let abs_value: [u16; 64] = cast(block_simd.map(|x| x.abs()));
+
+    // encode DC
+    write_coef(huffw, block.get_coefficient(0), abs_value[0], 0, dctbl);
 
     // flip the bits since cmp_eq returns 0xffff for zero coefficients
     mask = !mask;
@@ -396,6 +406,7 @@ fn encode_block_seq(
         write_coef(
             huffw,
             block.get_coefficient((bpos - 1) as usize),
+            abs_value[(bpos - 1) as usize] as u16,
             zeros,
             actbl,
         );
@@ -413,9 +424,9 @@ fn encode_block_seq(
 /// encodes a coefficient which is a huffman code specifying the size followed
 /// by the coefficient itself
 #[inline(always)]
-fn write_coef(huffw: &mut BitWriter, coef: i16, z: u32, tbl: &HuffCodes) {
+fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &HuffCodes) {
     // vli encode
-    let (n, s) = envli(coef);
+    let (n, s) = envli(coef, abs_coef);
 
     // compiler is smart enough to figure out that this will never be >= 256,
     // so no bounds check
@@ -451,7 +462,7 @@ fn encode_ac_prg_fs(
             }
 
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp, tmp.unsigned_abs(), z, actbl);
 
             // reset zeroes
             z = 0;
@@ -531,7 +542,7 @@ fn encode_ac_prg_sa(
         // if nonzero is encountered
         else if (tmp == 1) || (tmp == -1) {
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp, tmp.unsigned_abs(), z, actbl);
 
             // write correction bits
             encode_crbits(huffw, correction_bits);
@@ -617,17 +628,16 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 ///
 /// This is equivalent to adding adding (1 << bitlength) - 1 if the number is negative
 #[inline(always)]
-fn envli(v: i16) -> (u32, u32) {
-    // Extend to 32 bits. This results in better performance on modern processors
-    // since the operations are emitted as 32 bit operations anyway,
+fn envli(v: i16, v_abs: u16) -> (u32, u32) {
+    // Extend everything to 32 bits. This results in better performance on modern processors
+    // since the operations are implemented as 32 bit operations anyway,
     // and the compiler can optimize the code better if it doesn't have to
     // pretend that the values are 16 bit integers.
-    let i = i32::from(v);
+    let leading_zeros = u32::from(v_abs).leading_zeros();
 
-    let leading_zeros = i.unsigned_abs().leading_zeros();
-
-    // first shift right signed by 15 to make everything 1 if negative,
+    // first shift right signed by 31 to make everything 1 if negative,
     // then shift right unsigned to make the leading bits 0
+    let i = i32::from(v);
     let adjustment = ((i >> 31) as u32).wrapping_shr(leading_zeros);
 
     let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
@@ -644,7 +654,7 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 #[test]
 fn test_envli() {
     for i in -16383..=16385 {
-        let (n, s) = envli(i);
+        let (n, s) = envli(i, i.unsigned_abs());
 
         assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
 
