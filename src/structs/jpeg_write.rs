@@ -626,7 +626,7 @@ fn div_pow2(v: i16, p: u8) -> i16 {
 /// The remainder is the coefficient with the leading bits removed, but with
 /// one added in the case of being negative.
 ///
-/// This is equivalent to adding adding (1 << bitlength) - 1 if the number is negative
+/// This is equivalent to adding (1 << bitlength) - 1 if the number is negative
 #[inline(always)]
 fn envli(v: i16, v_abs: u16) -> (u32, u32) {
     // Extend everything to 32 bits. This results in better performance on modern processors
