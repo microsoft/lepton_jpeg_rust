@@ -49,7 +49,7 @@ use super::component_info::ComponentInfo;
 pub struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u8; 256],
-    pub c_val_shift_s: [u32; 256],
+    pub c_val_shift_s: [u32; 512],
     pub max_eob_run: u16,
 }
 
@@ -58,7 +58,7 @@ impl HuffCodes {
         HuffCodes {
             c_val: [0; 256],
             c_len: [0; 256],
-            c_val_shift_s: [0; 256],
+            c_val_shift_s: [0; 512],
             max_eob_run: 0,
         }
     }
@@ -83,7 +83,9 @@ impl HuffCodes {
     fn init_fast_lookups(&mut self) {
         for i in 0..256 {
             let s = i as u32 & 0xF;
-            self.c_val_shift_s[i] = (((self.c_len[i] as u32) + s) << 27) | ((self.c_val[i] as u32) << s);
+            let code = (((self.c_len[i] as u32) + s) << 27) | ((self.c_val[i] as u32) << s);
+            self.c_val_shift_s[2 * i] = code;
+            self.c_val_shift_s[2 * i + 1] = code | ((1 << s) - 1);
         }
     }
 }
