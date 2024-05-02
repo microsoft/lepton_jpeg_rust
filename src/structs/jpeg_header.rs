@@ -89,6 +89,8 @@ impl HuffCodes {
             let s = i & 0xf;
             self.c_len_plus_s[i] = (self.c_len[i] + (s as u16)) as u8;
             self.c_val_shift_s[i] = (self.c_val[i] as u32) << s;
+
+            // calculate the value for negative coefficients, which compensates for the sign bit
             self.c_val_shift_s_neg[i] = ((self.c_val[i] as u32) << s).wrapping_add((1u32 << s) - 1);
         }
     }

@@ -431,8 +431,20 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
     // so no bounds check
     let hc = (z << 4 | s) as usize;
 
-    //let (n, s) = envli(coef, abs_coef);
-    // write to huffman writer (combine into single write)
+    // JPEG stores the coefficient with an implied sign bit, since once we know the
+    // number of bits, we can infer the sign.
+    //
+    // Eg, if the bitlength of the absolute value is 4,
+    //
+    // 0..7 are negative (corresponding to -15..-8)
+    // 8..15 are positive
+    //
+    // This is equivalent to adding (1 << bitlength) - 1 if the number is negative, so
+    // what we do is store this adjustment in c_val_shift_s_neg so that we don't need
+    // to calculate it separately.
+    //
+    // Tried more "optimal" ways like have a single lookup table with the lower bit
+    // as a sign, but compiler is smarter and things ended up slower.
     let val = if coef < 0 {
         tbl.c_val_shift_s_neg[hc]
     } else {
@@ -440,9 +452,9 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
     }
     .wrapping_add(i32::from(coef) as u32);
 
-    //assert_eq!(val, tbl.c_val_shift_s[hc] | n);
-
     let new_bits = u32::from(tbl.c_len_plus_s[hc]);
+
+    // write to huffman writer (combine hufmman code and coefficient bits into single write)
     huffw.write(val, new_bits);
 }
 
@@ -627,48 +639,9 @@ fn div_pow2(v: i16, p: u8) -> i16 {
     (if v < 0 { v + ((1 << p) - 1) } else { v }) >> p
 }
 
-/// Prepares a coefficient for encoding, returning the bits and bit length.
-///
-/// The bitlength is the bit length of the absolute value of the coefficient.
-///
-/// The remainder is the coefficient with the leading bits removed, but with
-/// one added in the case of being negative.
-///
-/// This is equivalent to adding (1 << bitlength) - 1 if the number is negative
-#[inline(always)]
-fn envli(v: i16, v_abs: u16) -> (u32, u32) {
-    // Extend everything to 32 bits. This results in better performance on modern processors
-    // since the operations are implemented as 32 bit operations anyway,
-    // and the compiler can optimize the code better if it doesn't have to
-    // pretend that the values are 16 bit integers.
-    let leading_zeros = u32::from(v_abs).leading_zeros();
-
-    // first shift right signed by 31 to make everything 1 if negative,
-    // then shift right unsigned to make the leading bits 0
-    let i = i32::from(v);
-    let adjustment = ((i >> 31) as u32).wrapping_shr(leading_zeros);
-
-    let n = (i as u32).wrapping_add(adjustment); // turn v into a 2s complement of s bits
-    let s = 32 - leading_zeros;
-
-    return (n, s);
-}
-
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
 fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
-}
-
-#[test]
-fn test_envli() {
-    for i in -16383..=16385 {
-        let (n, s) = envli(i, i.unsigned_abs());
-
-        assert_eq!(s, u16_bit_length(i.unsigned_abs()) as u32);
-
-        let n2 = if i >= 0 { i } else { i + ((1 << s) - 1) } as u16;
-        assert_eq!(n, n2 as u32, "s={0}", s);
-    }
 }
 
 #[test]
