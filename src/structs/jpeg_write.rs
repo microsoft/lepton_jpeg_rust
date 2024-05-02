@@ -439,7 +439,7 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
     // 0..7 are negative (corresponding to -15..-8)
     // 8..15 are positive
     //
-    // This is equivalent to adding (1 << bitlength) - 1 if the number is negative, so
+    // This is equivalent to absolute value XOR (1 << bitlength) - 1 if the number is negative, so
     // what we do is store this adjustment in c_val_shift_s_neg so that we don't need
     // to calculate it separately.
     //
@@ -449,8 +449,7 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
         tbl.c_val_shift_s_neg[hc]
     } else {
         tbl.c_val_shift_s[hc]
-    }
-    .wrapping_add(i32::from(coef) as u32);
+    } ^ u32::from(abs_coef);
 
     let new_bits = u32::from(tbl.c_len_plus_s[hc]);
 
