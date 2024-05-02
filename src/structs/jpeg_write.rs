@@ -425,15 +425,23 @@ fn encode_block_seq(
 /// by the coefficient itself
 #[inline(always)]
 fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &HuffCodes) {
-    // vli encode
-    let (n, s) = envli(coef, abs_coef);
+    let s = 32 - u32::from(abs_coef).leading_zeros();
 
     // compiler is smart enough to figure out that this will never be >= 256,
     // so no bounds check
     let hc = (z << 4 | s) as usize;
 
+    //let (n, s) = envli(coef, abs_coef);
     // write to huffman writer (combine into single write)
-    let val = tbl.c_val_shift_s[hc] | n;
+    let val = if coef < 0 {
+        tbl.c_val_shift_s_neg[hc]
+    } else {
+        tbl.c_val_shift_s[hc]
+    }
+    .wrapping_add(i32::from(coef) as u32);
+
+    //assert_eq!(val, tbl.c_val_shift_s[hc] | n);
+
     let new_bits = u32::from(tbl.c_len_plus_s[hc]);
     huffw.write(val, new_bits);
 }

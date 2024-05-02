@@ -51,6 +51,7 @@ pub struct HuffCodes {
     pub c_len: [u16; 256],
     pub c_len_plus_s: [u8; 256],
     pub c_val_shift_s: [u32; 256],
+    pub c_val_shift_s_neg: [u32; 256],
     pub max_eob_run: u16,
 }
 
@@ -61,6 +62,7 @@ impl HuffCodes {
             c_len: [0; 256],
             c_len_plus_s: [0; 256],
             c_val_shift_s: [0; 256],
+            c_val_shift_s_neg: [0; 256],
             max_eob_run: 0,
         }
     }
@@ -84,8 +86,10 @@ impl HuffCodes {
     /// the code + bits to the bitstream
     fn init_fast_lookups(&mut self) {
         for i in 0..256 {
-            self.c_len_plus_s[i] = (self.c_len[i] + (i as u16 & 0xf)) as u8;
-            self.c_val_shift_s[i] = (self.c_val[i] as u32) << (i as u32 & 0xf);
+            let s = i & 0xf;
+            self.c_len_plus_s[i] = (self.c_len[i] + (s as u16)) as u8;
+            self.c_val_shift_s[i] = (self.c_val[i] as u32) << s;
+            self.c_val_shift_s_neg[i] = ((self.c_val[i] as u32) << s).wrapping_add((1u32 << s) - 1);
         }
     }
 }
