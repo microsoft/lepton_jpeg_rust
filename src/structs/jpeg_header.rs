@@ -48,8 +48,7 @@ use super::component_info::ComponentInfo;
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
     pub c_val: [u16; 256],
-    pub c_len: [u16; 256],
-    pub c_len_plus_s: [u8; 256],
+    pub c_len: [u8; 256],
     pub c_val_shift_s: [u32; 256],
     pub max_eob_run: u16,
 }
@@ -59,7 +58,6 @@ impl HuffCodes {
         HuffCodes {
             c_val: [0; 256],
             c_len: [0; 256],
-            c_len_plus_s: [0; 256],
             c_val_shift_s: [0; 256],
             max_eob_run: 0,
         }
@@ -81,11 +79,11 @@ impl HuffCodes {
 
     /// Lookup tables used for fast encoding since we already
     /// know the length of the code and the value when we write
-    /// the code + bits to the bitstream
+    /// the code + bits to the bitstream. Length is stored in 5 MSBs
     fn init_fast_lookups(&mut self) {
         for i in 0..256 {
-            self.c_len_plus_s[i] = (self.c_len[i] + (i as u16 & 0xf)) as u8;
-            self.c_val_shift_s[i] = (self.c_val[i] as u32) << (i as u32 & 0xf);
+            let s = i as u32 & 0xF;
+            self.c_val_shift_s[i] = (((self.c_len[i] as u32) + s) << 27) | ((self.c_val[i] as u32) << s);
         }
     }
 }
@@ -739,7 +737,7 @@ impl JPegHeader {
             while j < segment[clen_offset + (i & 0xff)] {
                 ensure_space(segment, cval_offset, k + 1).context(here!())?;
 
-                let len = (1 + i) as u16;
+                let len = (1 + i) as u8;
 
                 if u32::from(code) >= (1u32 << len) {
                     return err_exit_code(
@@ -798,7 +796,7 @@ impl JPegHeader {
 
             // go through each code & store path
             if hc.c_len[i] > 0 {
-                let mut j = hc.c_len[i] - 1;
+                let mut j = hc.c_len[i] as u16 - 1;
                 while j > 0 {
                     if node <= 0xff {
                         if bitn(hc.c_val[i], j) == 1 {

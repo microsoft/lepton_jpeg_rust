@@ -418,7 +418,7 @@ fn encode_block_seq(
     }
 
     // write EOB since we didn't get all 64 coefficients
-    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
+    huffw.write_code(actbl.c_val_shift_s[0x00]);
 }
 
 /// encodes a coefficient which is a huffman code specifying the size followed
@@ -434,8 +434,7 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
 
     // write to huffman writer (combine into single write)
     let val = tbl.c_val_shift_s[hc] | n;
-    let new_bits = u32::from(tbl.c_len_plus_s[hc]);
-    huffw.write(val, new_bits);
+    huffw.write_code(val);
 }
 
 /// progressive AC encoding (first pass)
