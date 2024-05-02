@@ -406,7 +406,7 @@ fn encode_block_seq(
         write_coef(
             huffw,
             block.get_coefficient((bpos - 1) as usize),
-            abs_value[(bpos - 1) as usize] as u16,
+            abs_value[(bpos - 1) as usize],
             zeros,
             actbl,
         );
@@ -429,7 +429,8 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
     // since the operations are implemented as 32 bit operations anyway,
     // and the compiler can optimize the code better if it doesn't have to
     // pretend that the values are 16 bit integers.
-    let bit_width = 32 - u32::from(abs_coef).leading_zeros();
+    let abs = u32::from(abs_coef);
+    let bit_width = 32 - abs.leading_zeros();
     // compiler is smart enough to figure out that this will never be >= 256,
     // so no bounds check
     let hc = (z << 4 | bit_width) as usize;
@@ -444,7 +445,7 @@ fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &Huf
     // XOR produces VLI-encoding: for positive values XOR with 0 is a no-op,
     // for negative XOR of abs with `(1 << bitlength) - 1` is equivalent to
     // adding `(1 << bitlength) - 1`.
-    let val = code ^ abs_coef as u32;
+    let val = code ^ abs;
     huffw.write_code(val);
 }
 
