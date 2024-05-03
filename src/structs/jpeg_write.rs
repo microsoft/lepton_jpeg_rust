@@ -381,6 +381,8 @@ fn encode_block_seq(
     let is_neg: [u16; 64] = cast(block_simd.map(|x| x >> 15));
 
     // encode DC
+    // & 256 is bit faster all the bits are 1s and since it allows the optimizer
+    //   to convert << 8 (inside this function) to a single AND
     write_coef(huffw, (is_neg[0] & 256) != 0, abs_value[0], 0, dctbl);
 
     // flip the bits since cmp_eq returns 0xffff for zero coefficients
