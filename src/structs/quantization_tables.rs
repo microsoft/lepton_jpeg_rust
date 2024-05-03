@@ -4,25 +4,16 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use bytemuck::cast;
-use wide::i16x8;
-
 use crate::consts::*;
 use crate::helpers::*;
 
-use super::block_based_image::AlignedBlock;
 use super::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
     icos_idct_edge8192_dequantized_x: [i32; 64],
     icos_idct_edge8192_dequantized_y: [i32; 64],
     quantization_table: [u16; 64],
-
-    /// quantization_table transposed (as 8x8 matrix rotated by 90 degrees).
-    /// Important that this is am AlignedBlock so that the compiler can use SIMD instructions
-    quantization_table_transposed: AlignedBlock,
     freq_max: [u16; 64],
-    bit_len_freq_max: [u8; 64],
     min_noise_threshold: [u8; 64],
 }
 
@@ -31,10 +22,8 @@ impl QuantizationTables {
         let mut retval = QuantizationTables {
             icos_idct_edge8192_dequantized_x: [0; 64],
             icos_idct_edge8192_dequantized_y: [0; 64],
-            quantization_table_transposed: AlignedBlock::default(),
             quantization_table: [0; 64],
             freq_max: [0; 64],
-            bit_len_freq_max: [0; 64],
             min_noise_threshold: [0; 64],
         };
 
@@ -50,12 +39,6 @@ impl QuantizationTables {
         for i in 0..64 {
             self.quantization_table[i] = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
         }
-
-        // transpose the quantization table as an 8x8 block.
-        // i16x8 has a transpose method for doing this with an array of 8 i16x8s, so
-        // cast it as that and then cast the result back to an AlignedBlock
-        self.quantization_table_transposed =
-            AlignedBlock::new(cast(i16x8::transpose(cast(self.quantization_table))));
 
         for pixel_row in 0..8 {
             for i in 0..8 {
@@ -75,7 +58,6 @@ impl QuantizationTables {
             }
 
             let max_len = u16_bit_length(self.freq_max[coord]) as u8;
-            self.bit_len_freq_max[coord] = max_len;
             if max_len > RESIDUAL_NOISE_FLOOR as u8 {
                 self.min_noise_threshold[coord] = max_len - RESIDUAL_NOISE_FLOOR as u8;
             }
@@ -92,10 +74,6 @@ impl QuantizationTables {
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
         &self.quantization_table
-    }
-
-    pub fn get_quantization_table_transposed(&self) -> &AlignedBlock {
-        &self.quantization_table_transposed
     }
 
     pub fn get_min_noise_threshold(&self, coef: usize) -> u8 {

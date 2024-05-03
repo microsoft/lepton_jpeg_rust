@@ -366,8 +366,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     }
 
     encode_edge::<W, ALL_PRESENT>(
-        left,
-        above,
         context.neighbor_context_above(neighbor_summary),
         context.neighbor_context_left(neighbor_summary),
         block,
@@ -432,8 +430,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
-    left: &AlignedBlock,
-    above: &AlignedBlock,
     summary_above: &NeighborSummary,
     summary_left: &NeighborSummary,
     here: &AlignedBlock,
@@ -446,8 +442,6 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     eob_y: u8,
 ) -> Result<()> {
     encode_one_edge::<W, ALL_PRESENT, true>(
-        left,
-        above,
         summary_above,
         summary_left,
         here,
@@ -460,8 +454,6 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
     encode_one_edge::<W, ALL_PRESENT, false>(
-        left,
-        above,
         summary_above,
         summary_left,
         here,
@@ -485,8 +477,6 @@ fn count_non_zero(v: i16) -> u8 {
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
-    left: &AlignedBlock,
-    above: &AlignedBlock,
     summary_above: &NeighborSummary,
     summary_left: &NeighborSummary,
     block: &AlignedBlock,
@@ -547,8 +537,6 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             qt,
             coord,
             &block,
-            &above,
-            &left,
             summary_above,
             summary_left,
             num_non_zeros_edge,

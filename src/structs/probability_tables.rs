@@ -165,62 +165,47 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         coefficient: usize,
         here: &AlignedBlock,
-        above: &AlignedBlock,
-        left: &AlignedBlock,
         summary_above: &NeighborSummary,
         summary_left: &NeighborSummary,
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
-        let mut compute_lak_coeffs_a: [i32; 8] = [0; 8];
 
         debug_assert_eq!(HORIZONTAL, (coefficient & 7) != 0);
 
-        let coef_idct;
+        let coef_idct; // have 0 in 0th element
         if HORIZONTAL && (ALL_PRESENT || self.above_present) {
             assert!(coefficient < 8); // avoid bounds check later
 
             // y == 0: we're the x
+
+            coef_idct = &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
+            //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8].try_into().unwrap());
+
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
-            for i in 0..8 {
+            for i in 1..8 {
                 let cur_coef = coefficient + (i * 8);
 
-                //let sign = if (i & 1) != 0 { -1 } else { 1 };
-
-                compute_lak_coeffs_x[i] = if i != 0 {
-                    here.get_coefficient(cur_coef).into()
-                } else {
-                    0
-                };
-                compute_lak_coeffs_a[i] = (above.get_coefficient(cur_coef)).into();
+                compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
             }
-
-            coef_idct =
-                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
         } else if !HORIZONTAL && (ALL_PRESENT || self.left_present) {
             assert!(coefficient <= 56); // avoid bounds check later
 
             // x == 0: we're the y
 
+            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
+            //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8].try_into().unwrap());
+
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
-            for i in 0..8 {
+            for i in 1..8 {
                 let cur_coef = coefficient + i;
 
-                //let sign = if (i & 1) != 0 { -1 } else { 1 };
-
-                compute_lak_coeffs_x[i] = if i != 0 {
-                    here.get_coefficient(cur_coef).into()
-                } else {
-                    0
-                };
-                compute_lak_coeffs_a[i] = (left.get_coefficient(cur_coef)).into();
+                compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
             }
-
-            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
@@ -229,54 +214,23 @@ impl ProbabilityTables {
             };
         }
 
-        let mut prior: i32 = 0;
-        for i in 0..8 {
-            // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-            //prior = prior.wrapping_add(coef_idct[i].wrapping_mul(compute_lak_coeffs_a[i]));
-            prior = prior.wrapping_add(
-                if !HORIZONTAL {
-                    (qt.get_quantization_table())[coefficient + i] as i32
-                        * left.get_coefficient(coefficient + i) as i32
-                } else {
-                    (qt.get_quantization_table())[coefficient + i * 8] as i32
-                        * above.get_coefficient(coefficient + i * 8) as i32
-                }
-                .wrapping_mul(ICOS_BASED_8192_SCALED_PM[i]),
-            );
-            // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        }
-
         let mut best_prior: i32 = if HORIZONTAL {
             summary_above.get_horizontal_coef()[coefficient]
         } else {
             summary_left.get_vertical_coef()[coefficient >> 3]
         };
-        assert_eq!(prior, best_prior);
-        // for i in 1..8 {
-        //     // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-        //     // best_prior += coef_idct[i] * (a[i] - x[i])
-        //     best_prior =
-        //         best_prior.wrapping_sub(coef_idct[i].wrapping_mul(compute_lak_coeffs_x[i]));
-        //     // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        // }
+        // // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
+        // best_prior = best_prior.wrapping_sub((coef_idct * i32x8::new(compute_lak_coeffs_x)).reduce_add());
+        // // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
+        // //best_prior /= (qt.get_quantization_table()[coefficient] as i32) << 13;
+        // best_prior /= coef_idct.to_array()[0];
 
-        // best_prior = 0;
-        // for i in 0..8 {
-        //     // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-        //     best_prior = best_prior.wrapping_add(
-        //         coef_idct[i]
-        //             .wrapping_mul(compute_lak_coeffs_a[i].wrapping_sub(compute_lak_coeffs_x[i])),
-        //     );
-        //     // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        // }
-        best_prior = prior;
-        for i in 0..8 {
+        for i in 1..8 {
             // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
             best_prior =
                 best_prior.wrapping_sub(coef_idct[i].wrapping_mul(compute_lak_coeffs_x[i]));
             // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
         }
-
         best_prior /= coef_idct[0];
 
         return ProbabilityTablesCoefficientContext {

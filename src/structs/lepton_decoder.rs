@@ -351,8 +351,6 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        &left,
-        &above,
         context.neighbor_context_above(neighbor_summary),
         context.neighbor_context_left(neighbor_summary),
         &mut output,
@@ -407,8 +405,6 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    left: &AlignedBlock,
-    above: &AlignedBlock,
     summary_above: &NeighborSummary,
     summary_left: &NeighborSummary,
     here_mut: &mut AlignedBlock,
@@ -421,8 +417,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        left,
-        above,
         summary_above,
         summary_left,
         here_mut,
@@ -434,8 +428,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        left,
-        above,
         summary_above,
         summary_left,
         here_mut,
@@ -450,8 +442,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    left: &AlignedBlock,
-    above: &AlignedBlock,
     summary_above: &NeighborSummary,
     summary_left: &NeighborSummary,
     here_mut: &mut AlignedBlock,
@@ -491,8 +481,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             qt,
             coord,
             here_mut,
-            above,
-            left,
             summary_above,
             summary_left,
             num_non_zeros_edge,
