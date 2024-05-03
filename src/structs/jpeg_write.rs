@@ -659,8 +659,9 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
 
     encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
 
-    bitwriter.flush_with_escape(&mut buf).unwrap();
     bitwriter.pad(0);
+
+    bitwriter.flush_with_escape(&mut buf).unwrap();
 
     assert_eq!(buf, expected);
 
@@ -734,7 +735,7 @@ fn test_encode_block_zero_runs() {
     let expected = [
         0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 248, 34, 132, 20, 0, 207, 131, 60, 12,
         232, 51, 128, 205, 131, 52, 12, 200, 51, 0, 203, 131, 44, 12, 168, 50, 128, 201, 131, 36,
-        12, 136, 50, 0, 199, 131, 28, 13, 144, 54, 96,
+        12, 136, 50, 0, 199, 131, 28, 13, 144, 54, 96, 0,
     ];
 
     round_trip_block(&block, &expected);
@@ -748,9 +749,9 @@ fn test_encode_block_long_zero_cnt() {
     block.get_block_mut()[63] = 1;
 
     //let expected = [0, 240, 240, 240, 237, 145];
-    let expected = [0, 240, 240, 240, 225];
+    let expected = [0, 240, 240, 240, 225, 128];
 
-    //round_trip_block(&block, &expected);
+    round_trip_block(&block, &expected);
 }
 
 #[test]
