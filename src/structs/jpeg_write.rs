@@ -445,9 +445,8 @@ fn write_coef(huffw: &mut BitWriter, is_neg: bool, abs_coef: u16, z: u32, tbl: &
     // what we do is store this adjustment in c_val_shift_s so that we don't need
     // to calculate it separately.
     //
-    // is_neg is 1 if we were negative, which allows us to quickly look up the correct
-    // value to XOR with
-    let val = tbl.c_val_shift_s[(hc + ((is_neg as u32) << 8)) as usize] ^ u32::from(abs_coef);
+    // is_neg indicates whether we want the value with the bits set.
+    let val = tbl.c_val_shift_s[(hc | ((is_neg as u32) << 8)) as usize] ^ u32::from(abs_coef);
 
     let new_bits = u32::from(tbl.c_len_plus_s[hc as usize]);
 
