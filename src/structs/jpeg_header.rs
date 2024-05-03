@@ -50,8 +50,7 @@ pub struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u16; 256],
     pub c_len_plus_s: [u8; 256],
-    pub c_val_shift_s: [u32; 256],
-    pub c_val_shift_s_neg: [u32; 256],
+    pub c_val_shift_s: [u32; 512],
     pub max_eob_run: u16,
 }
 
@@ -61,8 +60,7 @@ impl HuffCodes {
             c_val: [0; 256],
             c_len: [0; 256],
             c_len_plus_s: [0; 256],
-            c_val_shift_s: [0; 256],
-            c_val_shift_s_neg: [0; 256],
+            c_val_shift_s: [0; 512],
             max_eob_run: 0,
         }
     }
@@ -91,7 +89,7 @@ impl HuffCodes {
             self.c_val_shift_s[i] = (self.c_val[i] as u32) << s;
 
             // calculate the value for negative coefficients, which compensates for the sign bit
-            self.c_val_shift_s_neg[i] = ((self.c_val[i] as u32) << s) | ((1u32 << s) - 1);
+            self.c_val_shift_s[i + 256] = ((self.c_val[i] as u32) << s) | ((1u32 << s) - 1);
         }
     }
 }
