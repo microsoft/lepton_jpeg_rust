@@ -536,7 +536,7 @@ fn read_dc<R: Read>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i1
     }
 }
 
-#[inline(always)]
+//#[inline(always)]
 fn read_coef<R: Read>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,

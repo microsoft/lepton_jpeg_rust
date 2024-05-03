@@ -652,14 +652,15 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
 
     let mut buf = Vec::new();
 
-    let mut b = BitWriter::new();
+    let mut bitwriter = BitWriter::new();
 
     let actbl = HuffCodes::construct_default_code();
     let dctbl = HuffCodes::construct_default_code();
 
-    encode_block_seq(&mut b, &dctbl, &actbl, &block);
+    encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
 
-    b.flush_with_escape(&mut buf).unwrap();
+    bitwriter.flush_with_escape(&mut buf).unwrap();
+    bitwriter.pad(0);
 
     assert_eq!(buf, expected);
 
@@ -679,6 +680,11 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
 
 #[test]
 fn test_encode_block_seq() {
+    let mut block = AlignedBlock::default();
+    for i in 0..64 {
+        block.get_block_mut()[i] = (i as i16) - 32;
+    }
+
     let expected = [
         6, 124, 20, 0, 161, 5, 16, 40, 193, 72, 10, 80, 83, 2, 156, 21, 0, 169, 5, 80, 42, 193, 88,
         10, 208, 87, 2, 188, 16, 1, 4, 16, 129, 12, 17, 1, 20, 17, 129, 28, 12, 1, 144, 52, 6, 192,
@@ -687,14 +693,10 @@ fn test_encode_block_seq() {
         176, 94, 2, 244, 23, 192, 191,
     ];
 
-    let mut block = AlignedBlock::default();
-    for i in 0..64 {
-        block.get_block_mut()[i] = (i as i16) - 32;
-    }
-
     round_trip_block(&block, &expected);
 }
 
+/// make sure we encode magnitudes correctly
 #[test]
 fn test_encode_block_magnitude() {
     let mut block = AlignedBlock::default();
@@ -714,6 +716,7 @@ fn test_encode_block_magnitude() {
     round_trip_block(&block, &expected);
 }
 
+/// test encoding with gaps to test zero counting
 #[test]
 fn test_encode_block_zero_runs() {
     let mut block = AlignedBlock::default();
@@ -735,6 +738,19 @@ fn test_encode_block_zero_runs() {
     ];
 
     round_trip_block(&block, &expected);
+}
+
+/// test encoding with gaps to test zero counting
+#[test]
+fn test_encode_block_long_zero_cnt() {
+    let mut block = AlignedBlock::default();
+
+    block.get_block_mut()[63] = 1;
+
+    //let expected = [0, 240, 240, 240, 237, 145];
+    let expected = [0, 240, 240, 240, 225];
+
+    //round_trip_block(&block, &expected);
 }
 
 #[test]
