@@ -642,25 +642,43 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
 }
 
-#[test]
-fn test_encode_block_seq() {
+/// roundtrips a block through the encoder and decoder and checks that the output matches the input
+#[cfg(test)]
+fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+    use crate::structs::{
+        bit_reader::BitReader, jpeg_header::HuffTree, jpeg_read::decode_block_seq,
+    };
+    use std::io::Cursor;
+
     let mut buf = Vec::new();
 
     let mut b = BitWriter::new();
-    let mut block = AlignedBlock::default();
-    for i in 0..64 {
-        block.get_block_mut()[i] = (i as i16) - 32;
-    }
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
+    let actbl = HuffCodes::construct_default_code();
+    let dctbl = HuffCodes::construct_default_code();
+
+    encode_block_seq(&mut b, &dctbl, &actbl, &block);
 
     b.flush_with_escape(&mut buf).unwrap();
 
+    assert_eq!(buf, expected);
+
+    let mut bitreader = BitReader::new(Cursor::new(&buf));
+
+    let mut block_decoded = [0i16; 64];
+    decode_block_seq(
+        &mut bitreader,
+        &HuffTree::construct_hufftree(&dctbl, true).unwrap(),
+        &HuffTree::construct_hufftree(&actbl, true).unwrap(),
+        &mut block_decoded,
+    )
+    .unwrap();
+
+    assert_eq!(&block_decoded, block.get_block());
+}
+
+#[test]
+fn test_encode_block_seq() {
     let expected = [
         6, 124, 20, 0, 161, 5, 16, 40, 193, 72, 10, 80, 83, 2, 156, 21, 0, 169, 5, 80, 42, 193, 88,
         10, 208, 87, 2, 188, 16, 1, 4, 16, 129, 12, 17, 1, 20, 17, 129, 28, 12, 1, 144, 52, 6, 192,
@@ -668,14 +686,36 @@ fn test_encode_block_seq() {
         224, 79, 5, 128, 44, 65, 100, 11, 48, 90, 2, 212, 22, 192, 183, 5, 192, 46, 65, 116, 11,
         176, 94, 2, 244, 23, 192, 191,
     ];
-    assert_eq!(buf, expected);
+
+    let mut block = AlignedBlock::default();
+    for i in 0..64 {
+        block.get_block_mut()[i] = (i as i16) - 32;
+    }
+
+    round_trip_block(&block, &expected);
+}
+
+#[test]
+fn test_encode_block_magnitude() {
+    let mut block = AlignedBlock::default();
+    for i in 0..15 {
+        block.get_block_mut()[i] = (1u16 << i) as i16;
+    }
+    for i in 0..15 {
+        block.get_block_mut()[i + 20] = -((1u16 << i) as i16);
+    }
+
+    let expected = [
+        1, 129, 64, 112, 18, 1, 96, 13, 0, 60, 0, 136, 0, 152, 0, 84, 0, 23, 0, 3, 32, 0, 54, 0, 1,
+        208, 0, 7, 192, 0, 81, 1, 32, 108, 17, 193, 94, 12, 248, 59, 240, 135, 240, 151, 248, 83,
+        254, 22, 255, 0, 195, 31, 252, 53, 255, 0, 225, 207, 255, 0, 135, 191, 255, 0, 0,
+    ];
+
+    round_trip_block(&block, &expected);
 }
 
 #[test]
 fn test_encode_block_zero_runs() {
-    let mut buf = Vec::new();
-
-    let mut b = BitWriter::new();
     let mut block = AlignedBlock::default();
 
     for i in 0..10 {
@@ -688,39 +728,20 @@ fn test_encode_block_zero_runs() {
         block.get_block_mut()[i] = i as i16;
     }
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
-
-    b.flush_with_escape(&mut buf).unwrap();
-
     let expected = [
         0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 248, 34, 132, 20, 0, 207, 131, 60, 12,
         232, 51, 128, 205, 131, 52, 12, 200, 51, 0, 203, 131, 44, 12, 168, 50, 128, 201, 131, 36,
         12, 136, 50, 0, 199, 131, 28, 13, 144, 54, 96,
     ];
-    assert_eq!(buf, expected);
+
+    round_trip_block(&block, &expected);
 }
 
 #[test]
 fn test_encode_block_seq_zero() {
-    let mut buf = Vec::new();
-
-    let mut b: BitWriter = BitWriter::new();
     let block = AlignedBlock::default();
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
-
-    b.flush_with_escape(&mut buf).unwrap();
-
     let expected = [0, 0];
-    assert_eq!(buf, expected);
+
+    round_trip_block(&block, &expected);
 }

@@ -54,8 +54,8 @@ pub struct HuffCodes {
     pub max_eob_run: u16,
 }
 
-impl HuffCodes {
-    pub fn new() -> Self {
+impl Default for HuffCodes {
+    fn default() -> Self {
         HuffCodes {
             c_val: [0; 256],
             c_len: [0; 256],
@@ -64,25 +64,76 @@ impl HuffCodes {
             max_eob_run: 0,
         }
     }
+}
+
+impl HuffCodes {
+    pub fn construct_from_segment(
+        segment: &[u8],
+        clen_offset: usize,
+        cval_offset: usize,
+    ) -> Result<Self> {
+        let mut hc = HuffCodes::default();
+
+        // creating huffman-codes
+        let mut k = 0;
+        let mut code = 0;
+
+        // symbol-value of code is its position in the table
+        for i in 0..16 {
+            ensure_space(segment, clen_offset, i + 1).context(here!())?;
+
+            let mut j = 0;
+            while j < segment[clen_offset + (i & 0xff)] {
+                ensure_space(segment, cval_offset, k + 1).context(here!())?;
+
+                let len = (1 + i) as u16;
+
+                if u32::from(code) >= (1u32 << len) {
+                    return err_exit_code(
+                        ExitCode::UnsupportedJpeg,
+                        "invalid huffman code layout, too many codes for a given length",
+                    );
+                }
+
+                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = len;
+                hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
+
+                if code == 65535 {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "huffman code too large");
+                }
+
+                k += 1;
+                code += 1;
+                j += 1;
+            }
+
+            code = code << 1;
+        }
+
+        hc.post_initialize();
+
+        Ok(hc)
+    }
 
     #[cfg(test)]
     pub fn construct_default_code() -> Self {
-        let mut retval = HuffCodes::new();
+        let mut retval = HuffCodes::default();
 
         for i in 0..256 {
             retval.c_len[i] = 8;
             retval.c_val[i] = i as u16;
         }
 
-        retval.init_fast_lookups();
+        retval.post_initialize();
 
         retval
     }
 
+    /// Code to run after initializing c_len and c_val
     /// Lookup tables used for fast encoding since we already
     /// know the length of the code and the value when we write
     /// the code + bits to the bitstream
-    fn init_fast_lookups(&mut self) {
+    fn post_initialize(&mut self) {
         for i in 0..256 {
             let s = i & 0xf;
             self.c_len_plus_s[i] = (self.c_len[i] + (s as u16)) as u8;
@@ -90,6 +141,25 @@ impl HuffCodes {
 
             // calculate the value for negative coefficients, which compensates for the sign bit
             self.c_val_shift_s[i + 256] = ((self.c_val[i] as u32) << s) | ((1u32 << s) - 1);
+        }
+
+        // find out eobrun (runs of all zero blocks) max value. This is used encoding/decoding progressive files.
+        //
+        // G.1.2.2 of the spec specifies that there are 15 huffman codes
+        // reserved for encoding long runs of up to 32767 empty blocks.
+        // Here we figure out what the largest code that could possibly
+        // be encoded by this table is so that we don't exceed it when
+        // we reencode the file.
+        self.max_eob_run = 0;
+
+        let mut i: i32 = 14;
+        while i >= 0 {
+            if self.c_len[((i << 4) & 0xff) as usize] > 0 {
+                self.max_eob_run = ((2 << i) - 1) as u16;
+                break;
+            }
+
+            i -= 1;
         }
     }
 }
@@ -100,12 +170,110 @@ pub struct HuffTree {
     pub peek_code: [(u8, u8); 256],
 }
 
-impl HuffTree {
-    pub fn new() -> Self {
+impl Default for HuffTree {
+    fn default() -> Self {
         HuffTree {
             node: [[0; 2]; 256],
             peek_code: [(0, 0); 256],
         }
+    }
+}
+
+impl HuffTree {
+    /// construct the huffman tree codes from the HuffCodes as a source
+    pub fn construct_hufftree(hc: &HuffCodes, accept_invalid_dht: bool) -> Result<Self> {
+        let mut ht = HuffTree::default();
+
+        let mut nextfree = 1;
+        for i in 0..256 {
+            // reset current node
+            let mut node = 0;
+
+            // go through each code & store path
+            if hc.c_len[i] > 0 {
+                let mut j = hc.c_len[i] - 1;
+                while j > 0 {
+                    if node <= 0xff {
+                        if bitn(hc.c_val[i], j) == 1 {
+                            if ht.node[node][1] == 0 {
+                                ht.node[node][1] = nextfree;
+                                nextfree += 1;
+                            }
+
+                            node = usize::from(ht.node[node][1]);
+                        } else {
+                            if ht.node[node][0] == 0 {
+                                ht.node[node][0] = nextfree;
+                                nextfree += 1;
+                            }
+
+                            node = usize::from(ht.node[node][0]);
+                        }
+                    } else {
+                        // we accept any .lep file that was encoded this way
+                        if !accept_invalid_dht {
+                            return err_exit_code(
+                                ExitCode::UnsupportedJpeg,
+                                "Huffman table out of space",
+                            );
+                        }
+                    }
+
+                    j -= 1;
+                }
+            }
+
+            if node <= 0xff {
+                // last link is number of targetvalue + 256
+                if hc.c_len[i] > 0 {
+                    if bitn(hc.c_val[i], 0) == 1 {
+                        ht.node[node][1] = (i + 256) as u16;
+                    } else {
+                        ht.node[node][0] = (i + 256) as u16;
+                    }
+                }
+            } else {
+                // we accept any .lep file that was encoded this way
+                if !accept_invalid_dht {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "Huffman table out of space");
+                }
+            }
+        }
+        for x in &mut ht.node {
+            if x[0] == 0 {
+                x[0] = 0xffff;
+            }
+            if x[1] == 0 {
+                x[1] = 0xffff;
+            }
+        }
+        // initial value for next free place
+
+        // work through every code creating links between the nodes (represented through ints)
+
+        // for every illegal code node, store 0xffff we should never get here, but it will avoid an infinite loop in the case of a bug
+
+        // precalculate decoding peeking into the stream. This lets us quickly decode
+        // small code without jumping through the node table
+        for peekbyte in 0..256 {
+            let mut node = 0;
+            let mut len: u8 = 0;
+
+            while node < 256 && len <= 7 {
+                node = ht.node[usize::from(node)][(peekbyte >> (7 - len)) & 0x1];
+
+                len += 1;
+            }
+
+            if node == 0xffff || node < 256 {
+                // invalid code or code was too long to fit, so just say it requireds 256 bits
+                // so we will take the long path to decode it
+                ht.peek_code[peekbyte as usize] = (0, 0xff);
+            } else {
+                ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
+            }
+        }
+        Ok(ht)
     }
 }
 
@@ -148,8 +316,8 @@ impl JPegHeader {
     pub fn new() -> Self {
         return JPegHeader {
             q_tables: [[0; 64]; 4],
-            h_codes: [[HuffCodes::new(); 4]; 2],
-            h_trees: [[HuffTree::new(); 4]; 2],
+            h_codes: [[HuffCodes::default(); 4]; 2],
+            h_trees: [[HuffTree::default(); 4]; 2],
             ht_set: [[0; 4]; 2],
             cmp_info: [
                 ComponentInfo::new(),
@@ -360,8 +528,8 @@ impl JPegHeader {
                     hpos+=1;
 
                     // build huffman codes & trees
-                    JPegHeader::build_huff_codes(segment, hpos, hpos + 16, &mut self.h_codes[lval][rval], &mut self.h_trees[lval][rval], true)?;
-
+                    self.h_codes[lval][rval] = HuffCodes::construct_from_segment(segment, hpos, hpos + 16).context(here!())?;
+                    self.h_trees[lval][rval] = HuffTree::construct_hufftree(&self.h_codes[lval][rval], enabled_features.accept_invalid_dht).context(here!())?;
                     self.ht_set[lval][rval] = 1;
 
                     let mut skip = 16;
@@ -713,176 +881,6 @@ impl JPegHeader {
                 }
         }
         return Ok(ParseSegmentResult::Continue);
-    }
-
-    /// <summary>
-    /// creates huffman codes and trees from dht-data
-    /// </summary>
-    fn build_huff_codes(
-        segment: &[u8],
-        clen_offset: usize,
-        cval_offset: usize,
-        hc: &mut HuffCodes,
-        ht: &mut HuffTree,
-        is_encoding: bool,
-    ) -> Result<()> {
-        // clear out existing data since for progressives we read in new huffman tables for each scan
-        *ht = HuffTree::new();
-        *hc = HuffCodes::new();
-
-        // 1st part -> build huffman codes
-        // creating huffman-codes
-        let mut k = 0;
-        let mut code = 0;
-
-        // symbol-value of code is its position in the table
-        for i in 0..16 {
-            ensure_space(segment, clen_offset, i + 1).context(here!())?;
-
-            let mut j = 0;
-            while j < segment[clen_offset + (i & 0xff)] {
-                ensure_space(segment, cval_offset, k + 1).context(here!())?;
-
-                let len = (1 + i) as u16;
-
-                if u32::from(code) >= (1u32 << len) {
-                    return err_exit_code(
-                        ExitCode::UnsupportedJpeg,
-                        "invalid huffman code layout, too many codes for a given length",
-                    );
-                }
-
-                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = len;
-                hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
-
-                if code == 65535 {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, "huffman code too large");
-                }
-
-                k += 1;
-                code += 1;
-                j += 1;
-            }
-
-            code = code << 1;
-        }
-
-        hc.init_fast_lookups();
-
-        // find out eobrun (runs of all zero blocks) max value. This is used encoding/decoding progressive files.
-        //
-        // G.1.2.2 of the spec specifies that there are 15 huffman codes
-        // reserved for encoding long runs of up to 32767 empty blocks.
-        // Here we figure out what the largest code that could possibly
-        // be encoded by this table is so that we don't exceed it when
-        // we reencode the file.
-        hc.max_eob_run = 0;
-
-        {
-            let mut i: i32 = 14;
-            while i >= 0 {
-                if hc.c_len[((i << 4) & 0xff) as usize] > 0 {
-                    hc.max_eob_run = ((2 << i) - 1) as u16;
-                    break;
-                }
-
-                i -= 1;
-            }
-        }
-
-        // 2nd -> part use codes to build the coding tree
-
-        // initial value for next free place
-        let mut nextfree = 1;
-
-        // work through every code creating links between the nodes (represented through ints)
-        for i in 0..256 {
-            // reset current node
-            let mut node = 0;
-
-            // go through each code & store path
-            if hc.c_len[i] > 0 {
-                let mut j = hc.c_len[i] - 1;
-                while j > 0 {
-                    if node <= 0xff {
-                        if bitn(hc.c_val[i], j) == 1 {
-                            if ht.node[node][1] == 0 {
-                                ht.node[node][1] = nextfree;
-                                nextfree += 1;
-                            }
-
-                            node = usize::from(ht.node[node][1]);
-                        } else {
-                            if ht.node[node][0] == 0 {
-                                ht.node[node][0] = nextfree;
-                                nextfree += 1;
-                            }
-
-                            node = usize::from(ht.node[node][0]);
-                        }
-                    } else {
-                        // we accept any .lep file that was encoded this way
-                        if is_encoding {
-                            return err_exit_code(
-                                ExitCode::UnsupportedJpeg,
-                                "Huffman table out of space",
-                            );
-                        }
-                    }
-
-                    j -= 1;
-                }
-            }
-
-            if node <= 0xff {
-                // last link is number of targetvalue + 256
-                if hc.c_len[i] > 0 {
-                    if bitn(hc.c_val[i], 0) == 1 {
-                        ht.node[node][1] = (i + 256) as u16;
-                    } else {
-                        ht.node[node][0] = (i + 256) as u16;
-                    }
-                }
-            } else {
-                // we accept any .lep file that was encoded this way
-                if is_encoding {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, "Huffman table out of space");
-                }
-            }
-        }
-
-        // for every illegal code node, store 0xffff we should never get here, but it will avoid an infinite loop in the case of a bug
-        for x in &mut ht.node {
-            if x[0] == 0 {
-                x[0] = 0xffff;
-            }
-            if x[1] == 0 {
-                x[1] = 0xffff;
-            }
-        }
-
-        // precalculate decoding peeking into the stream. This lets us quickly decode
-        // small code without jumping through the node table
-        for peekbyte in 0..256 {
-            let mut node = 0;
-            let mut len: u8 = 0;
-
-            while node < 256 && len <= 7 {
-                node = ht.node[usize::from(node)][(peekbyte >> (7 - len)) & 0x1];
-
-                len += 1;
-            }
-
-            if node == 0xffff || node < 256 {
-                // invalid code or code was too long to fit, so just say it requireds 256 bits
-                // so we will take the long path to decode it
-                ht.peek_code[peekbyte as usize] = (0, 0xff);
-            } else {
-                ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
-            }
-        }
-
-        return Ok(());
     }
 }
 
