@@ -294,20 +294,20 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     model: &mut Model,
     image_data: &BlockBasedImage,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(ALL_PRESENT == pt.is_all_present());
 
-    let num_non_zeros_7x7 = context.non_zeros_here(&num_non_zeros);
+    let num_non_zeros_7x7 = context.non_zeros_here(&neighbor_summary);
 
     let model_per_color = model.get_per_color(pt);
 
     model_per_color
         .write_non_zero_7x7_count(
             bool_writer,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
+            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, neighbor_summary),
             num_non_zeros_7x7,
         )
         .context(here!())?;
@@ -368,6 +368,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     encode_edge::<W, ALL_PRESENT>(
         left,
         above,
+        context.neighbor_context_above(neighbor_summary),
+        context.neighbor_context_left(neighbor_summary),
         block,
         model_per_color,
         bool_writer,
@@ -380,7 +382,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     .context(here!())?;
 
     let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, &num_non_zeros, features);
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, neighbor_summary, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         block.get_dc(),
@@ -409,7 +411,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         )
         .context(here!())?;
 
-    let here = context.neighbor_context_here(num_non_zeros);
+    let here = context.neighbor_context_here(neighbor_summary);
 
     here.set_horizontal(
         predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
@@ -432,6 +434,8 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     left: &AlignedBlock,
     above: &AlignedBlock,
+    summary_above: &NeighborSummary,
+    summary_left: &NeighborSummary,
     here: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
@@ -444,6 +448,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     encode_one_edge::<W, ALL_PRESENT, true>(
         left,
         above,
+        summary_above,
+        summary_left,
         here,
         model_per_color,
         bool_writer,
@@ -456,6 +462,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     encode_one_edge::<W, ALL_PRESENT, false>(
         left,
         above,
+        summary_above,
+        summary_left,
         here,
         model_per_color,
         bool_writer,
@@ -479,6 +487,8 @@ fn count_non_zero(v: i16) -> u8 {
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     left: &AlignedBlock,
     above: &AlignedBlock,
+    summary_above: &NeighborSummary,
+    summary_left: &NeighborSummary,
     block: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
@@ -539,6 +549,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             &block,
             &above,
             &left,
+            summary_above,
+            summary_left,
             num_non_zeros_edge,
         );
 

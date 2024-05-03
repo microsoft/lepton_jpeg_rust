@@ -14,8 +14,8 @@ pub struct BlockContext {
     cur_block_index: i32,
     above_block_index: i32,
 
-    cur_num_non_zeros_index: i32,
-    above_num_non_zero_index: i32,
+    cur_neighbor_summary_index: i32,
+    above_neighbor_summary_index: i32,
 }
 
 impl BlockContext {
@@ -36,15 +36,15 @@ impl BlockContext {
             self.above_block_index = self.cur_block_index - self.block_width;
         }
 
-        self.cur_num_non_zeros_index += 1;
-        self.above_num_non_zero_index += 1;
+        self.cur_neighbor_summary_index += 1;
+        self.above_neighbor_summary_index += 1;
 
         if !has_more {
-            let cur_row_first = self.cur_num_non_zeros_index < self.above_num_non_zero_index;
+            let cur_row_first = self.cur_neighbor_summary_index < self.above_neighbor_summary_index;
             if cur_row_first {
-                self.above_num_non_zero_index -= self.block_width * 2;
+                self.above_neighbor_summary_index -= self.block_width * 2;
             } else {
-                self.cur_num_non_zeros_index -= self.block_width * 2;
+                self.cur_neighbor_summary_index -= self.block_width * 2;
             }
         }
 
@@ -54,16 +54,16 @@ impl BlockContext {
     pub fn new(
         cur_block_index: i32,
         above_block_index: i32,
-        cur_num_non_zeros_index: i32,
-        above_num_non_zero_index: i32,
+        cur_neighbor_summary_index: i32,
+        above_neighbor_summary_index: i32,
         image_data: &BlockBasedImage,
     ) -> Self {
         return BlockContext {
             block_width: image_data.get_block_width(),
             cur_block_index,
             above_block_index,
-            cur_num_non_zeros_index,
-            above_num_non_zero_index,
+            cur_neighbor_summary_index,
+            above_neighbor_summary_index,
         };
     }
 
@@ -96,36 +96,37 @@ impl BlockContext {
         )
     }
 
-    pub fn non_zeros_here(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[self.cur_num_non_zeros_index as usize].get_num_non_zeros();
+    pub fn non_zeros_here(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
+        return neighbor_summary[self.cur_neighbor_summary_index as usize].get_num_non_zeros();
     }
 
-    pub fn get_non_zeros_above(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[self.above_num_non_zero_index as usize].get_num_non_zeros();
+    pub fn get_non_zeros_above(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
+        return neighbor_summary[self.above_neighbor_summary_index as usize].get_num_non_zeros();
     }
 
-    pub fn get_non_zeros_left(&self, num_non_zeros: &[NeighborSummary]) -> u8 {
-        return num_non_zeros[(self.cur_num_non_zeros_index - 1) as usize].get_num_non_zeros();
+    pub fn get_non_zeros_left(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
+        return neighbor_summary[(self.cur_neighbor_summary_index - 1) as usize]
+            .get_num_non_zeros();
     }
 
     pub fn neighbor_context_here<'a>(
         &mut self,
-        num_non_zeros: &'a mut [NeighborSummary],
+        neighbor_summary: &'a mut [NeighborSummary],
     ) -> &'a mut NeighborSummary {
-        return &mut num_non_zeros[self.cur_num_non_zeros_index as usize];
+        return &mut neighbor_summary[self.cur_neighbor_summary_index as usize];
     }
 
     pub fn neighbor_context_above<'a>(
         &self,
-        num_non_zeros: &'a [NeighborSummary],
+        neighbor_summary: &'a [NeighborSummary],
     ) -> &'a NeighborSummary {
-        return &num_non_zeros[self.above_num_non_zero_index as usize];
+        return &neighbor_summary[self.above_neighbor_summary_index as usize];
     }
 
     pub fn neighbor_context_left<'a>(
         &self,
-        num_non_zeros: &'a [NeighborSummary],
+        neighbor_summary: &'a [NeighborSummary],
     ) -> &'a NeighborSummary {
-        return &num_non_zeros[(self.cur_num_non_zeros_index - 1) as usize];
+        return &neighbor_summary[std::cmp::max(0, self.cur_neighbor_summary_index - 1) as usize];
     }
 }

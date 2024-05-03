@@ -282,7 +282,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     features: &EnabledFeatures,
@@ -294,7 +294,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let num_non_zeros_7x7 = model_per_color
         .read_non_zero_7x7_count(
             bool_reader,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
+            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, neighbor_summary),
         )
         .context(here!())?;
 
@@ -353,6 +353,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         &left,
         &above,
+        context.neighbor_context_above(neighbor_summary),
+        context.neighbor_context_left(neighbor_summary),
         &mut output,
         qt,
         pt,
@@ -362,7 +364,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     )?;
 
     let predicted_dc =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros, features);
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, neighbor_summary, features);
 
     let coef = model
         .read_dc(
@@ -379,7 +381,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         predicted_dc.predicted_dc,
     ) as i16);
 
-    let here = context.neighbor_context_here(num_non_zeros);
+    let here = context.neighbor_context_here(neighbor_summary);
     here.set_num_non_zeros(num_non_zeros_7x7);
 
     here.set_horizontal(
@@ -407,6 +409,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     left: &AlignedBlock,
     above: &AlignedBlock,
+    summary_above: &NeighborSummary,
+    summary_left: &NeighborSummary,
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -419,6 +423,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         left,
         above,
+        summary_above,
+        summary_left,
         here_mut,
         qt,
         pt,
@@ -430,6 +436,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         bool_reader,
         left,
         above,
+        summary_above,
+        summary_left,
         here_mut,
         qt,
         pt,
@@ -444,6 +452,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     left: &AlignedBlock,
     above: &AlignedBlock,
+    summary_above: &NeighborSummary,
+    summary_left: &NeighborSummary,
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -483,6 +493,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             here_mut,
             above,
             left,
+            summary_above,
+            summary_left,
             num_non_zeros_edge,
         );
 

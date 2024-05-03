@@ -21,6 +21,8 @@ use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientC
 use wide::i16x8;
 use wide::i32x8;
 
+use bytemuck::cast;
+
 pub struct ProbabilityTables {
     left_present: bool,
     above_present: bool,
@@ -165,6 +167,8 @@ impl ProbabilityTables {
         here: &AlignedBlock,
         above: &AlignedBlock,
         left: &AlignedBlock,
+        summary_above: &NeighborSummary,
+        summary_left: &NeighborSummary,
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
@@ -183,14 +187,14 @@ impl ProbabilityTables {
             for i in 0..8 {
                 let cur_coef = coefficient + (i * 8);
 
-                let sign = if (i & 1) != 0 { -1 } else { 1 };
+                //let sign = if (i & 1) != 0 { -1 } else { 1 };
 
                 compute_lak_coeffs_x[i] = if i != 0 {
                     here.get_coefficient(cur_coef).into()
                 } else {
                     0
                 };
-                compute_lak_coeffs_a[i] = (sign * above.get_coefficient(cur_coef)).into();
+                compute_lak_coeffs_a[i] = (above.get_coefficient(cur_coef)).into();
             }
 
             coef_idct =
@@ -206,14 +210,14 @@ impl ProbabilityTables {
             for i in 0..8 {
                 let cur_coef = coefficient + i;
 
-                let sign = if (i & 1) != 0 { -1 } else { 1 };
+                //let sign = if (i & 1) != 0 { -1 } else { 1 };
 
                 compute_lak_coeffs_x[i] = if i != 0 {
                     here.get_coefficient(cur_coef).into()
                 } else {
                     0
                 };
-                compute_lak_coeffs_a[i] = (sign * left.get_coefficient(cur_coef)).into();
+                compute_lak_coeffs_a[i] = (left.get_coefficient(cur_coef)).into();
             }
 
             coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
@@ -225,13 +229,51 @@ impl ProbabilityTables {
             };
         }
 
-        let mut best_prior: i32 = 0;
+        let mut prior: i32 = 0;
         for i in 0..8 {
             // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-            best_prior = best_prior.wrapping_add(
-                coef_idct[i]
-                    .wrapping_mul(compute_lak_coeffs_a[i].wrapping_sub(compute_lak_coeffs_x[i])),
+            //prior = prior.wrapping_add(coef_idct[i].wrapping_mul(compute_lak_coeffs_a[i]));
+            prior = prior.wrapping_add(
+                if !HORIZONTAL {
+                    (qt.get_quantization_table())[coefficient + i] as i32
+                        * left.get_coefficient(coefficient + i) as i32
+                } else {
+                    (qt.get_quantization_table())[coefficient + i * 8] as i32
+                        * above.get_coefficient(coefficient + i * 8) as i32
+                }
+                .wrapping_mul(ICOS_BASED_8192_SCALED_PM[i]),
             );
+            // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
+        }
+
+        let mut best_prior: i32 = if HORIZONTAL {
+            summary_above.get_horizontal_coef()[coefficient]
+        } else {
+            summary_left.get_vertical_coef()[coefficient >> 3]
+        };
+        assert_eq!(prior, best_prior);
+        // for i in 1..8 {
+        //     // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
+        //     // best_prior += coef_idct[i] * (a[i] - x[i])
+        //     best_prior =
+        //         best_prior.wrapping_sub(coef_idct[i].wrapping_mul(compute_lak_coeffs_x[i]));
+        //     // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
+        // }
+
+        // best_prior = 0;
+        // for i in 0..8 {
+        //     // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
+        //     best_prior = best_prior.wrapping_add(
+        //         coef_idct[i]
+        //             .wrapping_mul(compute_lak_coeffs_a[i].wrapping_sub(compute_lak_coeffs_x[i])),
+        //     );
+        //     // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
+        // }
+        best_prior = prior;
+        for i in 0..8 {
+            // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
+            best_prior =
+                best_prior.wrapping_sub(coef_idct[i].wrapping_mul(compute_lak_coeffs_x[i]));
             // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
         }
 
@@ -261,18 +303,24 @@ impl ProbabilityTables {
         &self,
         here: &AlignedBlock,
         qt: &QuantizationTables,
-        block_context: &BlockContext,
-        num_non_zeros: &[NeighborSummary],
+        block_context: &mut BlockContext,
+        neighbor_summary: &mut [NeighborSummary],
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
-        let q_transposed = qt.get_quantization_table_transposed();
+        //let q_transposed = qt.get_quantization_table_transposed();
+        let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
 
-        let pixels_sans_dc = run_idct::<true>(here, q_transposed);
+        //let pixels_sans_dc = run_idct::<true>(here, q_transposed, neighbor_summary);
+        let pixels_sans_dc = run_idct::<true>(
+            here,
+            &q,
+            block_context.neighbor_context_here(neighbor_summary),
+        );
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
         let calc_left = || {
-            let left_context = block_context.neighbor_context_left(num_non_zeros);
+            let left_context = block_context.neighbor_context_left(neighbor_summary);
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
@@ -297,7 +345,7 @@ impl ProbabilityTables {
         };
 
         let calc_above = || {
-            let above_context = block_context.neighbor_context_above(num_non_zeros);
+            let above_context = block_context.neighbor_context_above(neighbor_summary);
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
@@ -374,7 +422,7 @@ impl ProbabilityTables {
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
         return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0))) + 4) >> 3,
+            predicted_dc: ((avgmed / i32::from(q.get_coefficient(0))) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,

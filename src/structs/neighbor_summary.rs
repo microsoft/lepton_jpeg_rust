@@ -8,11 +8,15 @@ use std::num::Wrapping;
 
 use crate::enabled_features::EnabledFeatures;
 
+use wide::i32x8;
+
 #[derive(Copy, Clone)]
 pub struct NeighborSummary {
     edge_pixels_h: [i16; 8],
-
     edge_pixels_v: [i16; 8],
+
+    edge_coefs_h: [i32; 8],
+    edge_coefs_v: [i32; 8],
 
     num_non_zeros: u8,
 }
@@ -24,6 +28,8 @@ impl NeighborSummary {
         return NeighborSummary {
             edge_pixels_h: [0; 8],
             edge_pixels_v: [0; 8],
+            edge_coefs_h: [0; 8],
+            edge_coefs_v: [0; 8],
             num_non_zeros: 0,
         };
     }
@@ -96,6 +102,22 @@ impl NeighborSummary {
                     + (delta / 2)) as i16;
             }
         }
+    }
+
+    pub fn get_vertical_coef(&self) -> &[i32; 8] {
+        return &self.edge_coefs_v;
+    }
+
+    pub fn get_horizontal_coef(&self) -> &[i32; 8] {
+        return &self.edge_coefs_h;
+    }
+
+    pub fn set_horizontal_coef(&mut self, pred: i32x8) {
+        self.edge_coefs_h = pred.to_array();
+    }
+
+    pub fn set_vertical_coef(&mut self, pred: i32x8) {
+        self.edge_coefs_v = pred.to_array();
     }
 
     // used for debugging

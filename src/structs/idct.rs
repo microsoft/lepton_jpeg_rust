@@ -4,10 +4,12 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use super::neighbor_summary::NeighborSummary;
 use bytemuck::{cast, cast_ref};
 use wide::{i16x8, i32x8};
 
 use super::block_based_image::AlignedBlock;
+use crate::consts::ICOS_BASED_8192_SCALED_PM;
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -30,42 +32,56 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
-    let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
+pub fn get_q(offset: usize, q: &AlignedBlock) -> i32x8 {
+    let rows: &[i16x8; 8] = cast_ref(q.get_block());
     i32x8::from_i16x8(rows[offset])
 }
 
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(
     block: &AlignedBlock,
-    q_transposed: &AlignedBlock,
+    q: &AlignedBlock,
+    neighbor_summary: &mut NeighborSummary,
 ) -> AlignedBlock {
-    // first transpose as 16 bit values, then cast up to 32 bit for multiplications
     let v: &[i16x8; 8] = cast_ref(block.get_block());
-    let t = i16x8::transpose(*v);
 
-    let r0 = i32x8::from_i16x8(if IGNORE_DC {
-        t[0] & i16x8::new([0, -1, -1, -1, -1, -1, -1, -1])
-    } else {
-        t[0]
-    });
-    let r1 = i32x8::from_i16x8(t[1]);
-    let r2 = i32x8::from_i16x8(t[2]);
-    let r3 = i32x8::from_i16x8(t[3]);
-    let r4 = i32x8::from_i16x8(t[4]);
-    let r5 = i32x8::from_i16x8(t[5]);
-    let r6 = i32x8::from_i16x8(t[6]);
-    let r7 = i32x8::from_i16x8(t[7]);
+    // multiply by quant table
+    let mut c: [i32x8; 8] = Default::default();
+    for i in 0..8 {
+        c[i] = i32x8::from_i16x8(v[i]) * get_q(i, q);
+    }
+    if IGNORE_DC {
+        c[0] = c[0] & i32x8::new([0, -1, -1, -1, -1, -1, -1, -1])
+    }
 
-    // multiply by quant table (get it already transposed so we can load it quickly)
-    let mut xv0 = ((r0 * get_q(0, q_transposed)) << 11) + 128;
-    let mut xv1 = r1 * get_q(1, q_transposed);
-    let mut xv2 = r2 * get_q(2, q_transposed);
-    let mut xv3 = r3 * get_q(3, q_transposed);
-    let mut xv4 = (r4 * get_q(4, q_transposed)) << 11;
-    let mut xv5 = r5 * get_q(5, q_transposed);
-    let mut xv6 = r6 * get_q(6, q_transposed);
-    let mut xv7 = r7 * get_q(7, q_transposed);
+    //let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
+
+    let mut horiz_pred = ICOS_BASED_8192_SCALED_PM[0] * c[0];
+    for i in 1..8 {
+        horiz_pred += ICOS_BASED_8192_SCALED_PM[i] * c[i];
+    }
+
+    neighbor_summary.set_horizontal_coef(horiz_pred);
+    //neighbor_summary.set_vertical_coef(horiz_pred);
+
+    let t = i32x8::transpose(c);
+
+    let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * t[0];
+    for i in 1..8 {
+        vert_pred += ICOS_BASED_8192_SCALED_PM[i] * t[i];
+    }
+
+    neighbor_summary.set_vertical_coef(vert_pred);
+    //neighbor_summary.set_horizontal_coef(vert_pred);
+
+    let mut xv0 = (t[0] << 11) + 128;
+    let mut xv1 = t[1];
+    let mut xv2 = t[2];
+    let mut xv3 = t[3];
+    let mut xv4 = t[4] << 11;
+    let mut xv5 = t[5];
+    let mut xv6 = t[6];
+    let mut xv7 = t[7];
 
     // Stage 1.
     let mut xv8 = _W7 * (xv1 + xv7);
@@ -302,10 +318,13 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
         }
     }
 
+    let mut neighbor_summary = NeighborSummary::new();
+
     {
         let outp = run_idct::<true>(
             test_data,
-            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
+            &AlignedBlock::new(cast(*test_q)),
+            &mut neighbor_summary,
         );
 
         let mut outp2 = [0; 64];
@@ -317,7 +336,8 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     {
         let outp = run_idct::<false>(
             test_data,
-            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
+            &AlignedBlock::new(cast(*test_q)),
+            &mut neighbor_summary,
         );
 
         let mut outp2 = [0; 64];

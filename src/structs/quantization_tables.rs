@@ -60,10 +60,10 @@ impl QuantizationTables {
         for pixel_row in 0..8 {
             for i in 0..8 {
                 self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i * 8]
+                    [i]
                     * (self.quantization_table[(i * 8) + pixel_row] as i32);
                 self.icos_idct_edge8192_dequantized_y[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i * 8]
+                    [i]
                     * (self.quantization_table[(pixel_row * 8) + i] as i32);
             }
         }
