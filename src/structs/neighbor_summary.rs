@@ -112,11 +112,11 @@ impl NeighborSummary {
         return &self.edge_coefs_h;
     }
 
-    pub fn set_horizontal_coef(&mut self, pred: i32x8) {
+    pub fn set_horizontal_coefs(&mut self, pred: i32x8) {
         self.edge_coefs_h = pred.to_array();
     }
 
-    pub fn set_vertical_coef(&mut self, pred: i32x8) {
+    pub fn set_vertical_coefs(&mut self, pred: i32x8) {
         self.edge_coefs_v = pred.to_array();
     }
 

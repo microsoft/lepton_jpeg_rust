@@ -160,6 +160,40 @@ impl ProbabilityTables {
     }
 
     #[inline(always)]
+    pub fn calc_coefficient_context8_decode_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
+        &self,
+        qt: &QuantizationTables,
+        coefficient: usize,
+        pred: &[i32; 8],
+        num_non_zeros_x: u8,
+    ) -> ProbabilityTablesCoefficientContext {
+        debug_assert_eq!(HORIZONTAL, (coefficient & 7) != 0);
+
+        if !ALL_PRESENT
+            && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
+        {
+            return ProbabilityTablesCoefficientContext {
+                best_prior: 0,
+                num_non_zeros_bin: num_non_zeros_x - 1,
+                best_prior_bit_len: 0,
+            };
+        }
+
+        let mut best_prior: i32 = pred[if HORIZONTAL {
+            coefficient
+        } else {
+            coefficient >> 3
+        }];
+        best_prior /= (qt.get_quantization_table()[coefficient] as i32) << 13;
+
+        return ProbabilityTablesCoefficientContext {
+            best_prior,
+            num_non_zeros_bin: num_non_zeros_x - 1,
+            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
+        };
+    }
+
+    #[inline(always)]
     pub fn calc_coefficient_context8_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         &self,
         qt: &QuantizationTables,
@@ -179,7 +213,8 @@ impl ProbabilityTables {
 
             // y == 0: we're the x
 
-            coef_idct = &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
+            coef_idct =
+                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
             //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8].try_into().unwrap());
 
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop

@@ -61,7 +61,7 @@ pub fn run_idct<const IGNORE_DC: bool>(
         horiz_pred += ICOS_BASED_8192_SCALED_PM[i] * c[i];
     }
 
-    neighbor_summary.set_horizontal_coef(horiz_pred);
+    neighbor_summary.set_horizontal_coefs(horiz_pred);
 
     let t = i32x8::transpose(c);
 
@@ -71,7 +71,7 @@ pub fn run_idct<const IGNORE_DC: bool>(
         vert_pred += ICOS_BASED_8192_SCALED_PM[i] * t[i];
     }
 
-    neighbor_summary.set_vertical_coef(vert_pred);
+    neighbor_summary.set_vertical_coefs(vert_pred);
 
     let mut xv0 = (t[0] << 11) + 128;
     let mut xv1 = t[1];

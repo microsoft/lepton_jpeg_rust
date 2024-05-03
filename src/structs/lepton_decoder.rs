@@ -6,6 +6,8 @@
 
 use anyhow::{Context, Result};
 
+use crate::consts::ICOS_BASED_8192_SCALED;
+
 use default_boxed::DefaultBoxed;
 
 use std::cmp;
@@ -312,6 +314,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
+    let mut horiz_pred: [i32; 8] = *context
+        .neighbor_context_above(neighbor_summary)
+        .get_horizontal_coef();
+    let mut vert_pred: [i32; 8] = *context
+        .neighbor_context_left(neighbor_summary)
+        .get_vertical_coef();
 
     for zig49 in 0..49 {
         if num_non_zeros_left_7x7 == 0 {
@@ -345,14 +353,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             num_non_zeros_left_7x7 -= 1;
 
             output.set_coefficient(coord as usize, coef);
+
+            let deq_coef = (qt.get_quantization_table()[coord as usize] as i32) * (coef as i32);
+            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
+            horiz_pred[b_x as usize] = horiz_pred[b_x as usize]
+                .wrapping_sub(deq_coef.wrapping_mul(ICOS_BASED_8192_SCALED[b_y as usize]));
+            vert_pred[b_y as usize] = vert_pred[b_y as usize]
+                .wrapping_sub(deq_coef.wrapping_mul(ICOS_BASED_8192_SCALED[b_x as usize]));
         }
     }
 
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        context.neighbor_context_above(neighbor_summary),
-        context.neighbor_context_left(neighbor_summary),
+        &horiz_pred,
+        &vert_pred,
         &mut output,
         qt,
         pt,
@@ -405,8 +420,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    summary_above: &NeighborSummary,
-    summary_left: &NeighborSummary,
+    horiz_pred: &[i32; 8],
+    vert_pred: &[i32; 8],
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -417,8 +432,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        summary_above,
-        summary_left,
+        horiz_pred,
         here_mut,
         qt,
         pt,
@@ -428,8 +442,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        summary_above,
-        summary_left,
+        vert_pred,
         here_mut,
         qt,
         pt,
@@ -442,8 +455,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    summary_above: &NeighborSummary,
-    summary_left: &NeighborSummary,
+    pred: &[i32; 8],
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -477,12 +489,10 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
+        let ptcc8 = pt.calc_coefficient_context8_decode_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
             coord,
-            here_mut,
-            summary_above,
-            summary_left,
+            pred,
             num_non_zeros_edge,
         );
 
