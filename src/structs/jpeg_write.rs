@@ -645,6 +645,7 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 /// roundtrips a block through the encoder and decoder and checks that the output matches the input
 #[cfg(test)]
 fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+    use crate::structs::jpeg_header::generate_huff_table_from_distribution;
     use crate::structs::{
         bit_reader::BitReader, jpeg_header::HuffTree, jpeg_read::decode_block_seq,
     };
@@ -654,8 +655,18 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
 
     let mut bitwriter = BitWriter::new();
 
-    let actbl = HuffCodes::construct_default_code();
-    let dctbl = HuffCodes::construct_default_code();
+    // create a weird distribution to test the huffman encoding for corner cases
+    let mut dcdistribution = [0; 256];
+    for i in 0..256 {
+        dcdistribution[i] = 256 - i;
+    }
+    let dctbl = generate_huff_table_from_distribution(&dcdistribution);
+
+    let mut acdistribution = [0; 256];
+    for i in 0..256 {
+        acdistribution[i] = 1 + 256;
+    }
+    let actbl = generate_huff_table_from_distribution(&acdistribution);
 
     encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
 
@@ -687,11 +698,11 @@ fn test_encode_block_seq() {
     }
 
     let expected = [
-        6, 124, 20, 0, 161, 5, 16, 40, 193, 72, 10, 80, 83, 2, 156, 21, 0, 169, 5, 80, 42, 193, 88,
-        10, 208, 87, 2, 188, 16, 1, 4, 16, 129, 12, 17, 1, 20, 17, 129, 28, 12, 1, 144, 52, 6, 192,
-        128, 36, 4, 35, 2, 128, 176, 56, 7, 64, 240, 31, 4, 128, 73, 4, 160, 75, 4, 192, 77, 4,
-        224, 79, 5, 128, 44, 65, 100, 11, 48, 90, 2, 212, 22, 192, 183, 5, 192, 46, 65, 116, 11,
-        176, 94, 2, 244, 23, 192, 191,
+        152, 252, 176, 37, 131, 44, 41, 97, 203, 18, 88, 178, 198, 150, 60, 178, 37, 147, 44, 169,
+        101, 203, 50, 89, 178, 206, 150, 126, 176, 107, 14, 177, 107, 30, 178, 107, 46, 179, 107,
+        56, 136, 17, 34, 40, 69, 128, 128, 47, 120, 250, 3, 0, 226, 48, 70, 136, 225, 31, 173, 26,
+        211, 173, 90, 215, 173, 154, 219, 173, 218, 223, 45, 9, 104, 203, 74, 90, 114, 212, 150,
+        172, 181, 165, 175, 45, 137, 108, 203, 106, 91, 114, 220, 150, 236, 183, 165, 190,
     ];
 
     round_trip_block(&block, &expected);
@@ -709,9 +720,10 @@ fn test_encode_block_magnitude() {
     }
 
     let expected = [
-        1, 129, 64, 112, 18, 1, 96, 13, 0, 60, 0, 136, 0, 152, 0, 84, 0, 23, 0, 3, 32, 0, 54, 0, 1,
-        208, 0, 7, 192, 0, 81, 1, 32, 108, 17, 193, 94, 12, 248, 59, 240, 135, 240, 151, 248, 83,
-        254, 22, 255, 0, 195, 31, 252, 53, 255, 0, 225, 207, 255, 0, 135, 191, 255, 0, 0,
+        165, 1, 132, 102, 180, 75, 64, 138, 6, 248, 8, 16, 27, 208, 13, 120, 2, 122, 0, 75, 192, 4,
+        60, 0, 8, 224, 0, 109, 128, 1, 250, 1, 68, 94, 179, 203, 60, 137, 246, 247, 232, 15, 251,
+        207, 253, 119, 254, 121, 255, 0, 203, 191, 252, 59, 255, 0, 200, 223, 255, 0, 109, 127,
+        254, 0,
     ];
 
     round_trip_block(&block, &expected);
@@ -733,9 +745,9 @@ fn test_encode_block_zero_runs() {
     }
 
     let expected = [
-        0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 248, 34, 132, 20, 0, 207, 131, 60, 12,
-        232, 51, 128, 205, 131, 52, 12, 200, 51, 0, 203, 131, 44, 12, 168, 50, 128, 201, 131, 36,
-        12, 136, 50, 0, 199, 131, 28, 13, 144, 54, 96, 0,
+        169, 223, 1, 128, 113, 24, 35, 68, 112, 143, 214, 141, 105, 167, 249, 12, 176, 8, 159, 34,
+        120, 137, 210, 39, 8, 155, 34, 104, 137, 146, 38, 8, 151, 34, 88, 137, 82, 37, 8, 147, 34,
+        72, 137, 18, 36, 8, 143, 34, 56, 139, 34, 44, 192, 0,
     ];
 
     round_trip_block(&block, &expected);
@@ -748,8 +760,7 @@ fn test_encode_block_long_zero_cnt() {
 
     block.get_block_mut()[63] = 1;
 
-    //let expected = [0, 240, 240, 240, 237, 145];
-    let expected = [0, 240, 240, 240, 225, 128];
+    let expected = [169, 79, 79, 79, 33];
 
     round_trip_block(&block, &expected);
 }
@@ -758,7 +769,7 @@ fn test_encode_block_long_zero_cnt() {
 fn test_encode_block_seq_zero() {
     let block = AlignedBlock::default();
 
-    let expected = [0, 0];
+    let expected = [168, 0];
 
     round_trip_block(&block, &expected);
 }

@@ -67,11 +67,14 @@ impl Default for HuffCodes {
 }
 
 impl HuffCodes {
-    pub fn construct_from_segment(
-        segment: &[u8],
-        clen_offset: usize,
-        cval_offset: usize,
-    ) -> Result<Self> {
+    /// Constructs from the format encoded by JPEG
+    ///
+    /// Tree consists of a 16 byte table with the number of codes for each bit length,
+    /// followed by the actual codes for that length appended together.
+    pub fn construct_from_segment(segment: &[u8]) -> Result<Self> {
+        let clen_offset = 0;
+        let cval_offset = 16;
+
         let mut hc = HuffCodes::default();
 
         // creating huffman-codes
@@ -95,8 +98,8 @@ impl HuffCodes {
                     );
                 }
 
-                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = len;
-                hc.c_val[usize::from(segment[cval_offset + (k & 0xff)] & 0xff)] = code;
+                hc.c_len[usize::from(segment[cval_offset + (k & 0xff)])] = len;
+                hc.c_val[usize::from(segment[cval_offset + (k & 0xff)])] = code;
 
                 if code == 65535 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "huffman code too large");
@@ -113,20 +116,6 @@ impl HuffCodes {
         hc.post_initialize();
 
         Ok(hc)
-    }
-
-    #[cfg(test)]
-    pub fn construct_default_code() -> Self {
-        let mut retval = HuffCodes::default();
-
-        for i in 0..256 {
-            retval.c_len[i] = 8;
-            retval.c_val[i] = i as u16;
-        }
-
-        retval.post_initialize();
-
-        retval
     }
 
     /// Code to run after initializing c_len and c_val
@@ -528,7 +517,7 @@ impl JPegHeader {
                     hpos+=1;
 
                     // build huffman codes & trees
-                    self.h_codes[lval][rval] = HuffCodes::construct_from_segment(segment, hpos, hpos + 16).context(here!())?;
+                    self.h_codes[lval][rval] = HuffCodes::construct_from_segment(&segment[hpos..]).context(here!())?;
                     self.h_trees[lval][rval] = HuffTree::construct_hufftree(&self.h_codes[lval][rval], enabled_features.accept_invalid_dht).context(here!())?;
                     self.ht_set[lval][rval] = 1;
 
@@ -890,4 +879,101 @@ fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// constructs a huffman table for testing purposes from a given distribution
+#[cfg(test)]
+pub fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
+    use std::collections::BinaryHeap;
+    use std::collections::HashMap;
+
+    struct Node {
+        symbol: Option<u8>,
+        freq: usize,
+        left: Option<Box<Node>>,
+        right: Option<Box<Node>>,
+    }
+
+    impl PartialOrd for Node {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.freq.cmp(&other.freq).reverse())
+        }
+    }
+
+    impl PartialEq for Node {
+        fn eq(&self, other: &Self) -> bool {
+            self.freq == other.freq
+        }
+    }
+
+    impl Eq for Node {}
+
+    impl Ord for Node {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.freq.cmp(&other.freq).reverse()
+        }
+    }
+
+    fn build_tree(freq: &[usize]) -> Box<Node> {
+        let mut pq = BinaryHeap::new();
+
+        for (symbol, &freq) in freq.iter().enumerate() {
+            if freq > 0 {
+                pq.push(Box::new(Node {
+                    symbol: Some(symbol as u8),
+                    freq,
+                    left: None,
+                    right: None,
+                }));
+            }
+        }
+
+        while pq.len() > 1 {
+            let left = pq.pop().unwrap();
+            let right = pq.pop().unwrap();
+            let new_node = Node {
+                symbol: None,
+                freq: left.freq + right.freq,
+                left: Some(left),
+                right: Some(right),
+            };
+            pq.push(Box::new(new_node));
+        }
+
+        pq.pop().unwrap()
+    }
+
+    fn generate_codes(
+        root: &Node,
+        codes: &mut std::collections::HashMap<u8, (u16, u8)>,
+        prefix: u16,
+        length: u8,
+    ) {
+        if let Some(symbol) = root.symbol {
+            codes.insert(symbol, (prefix, length));
+        } else {
+            if let Some(ref left) = root.left {
+                generate_codes(left, codes, prefix << 1, length + 1);
+            }
+            if let Some(ref right) = root.right {
+                generate_codes(right, codes, (prefix << 1) | 1, length + 1);
+            }
+        }
+    }
+
+    let root = build_tree(freq);
+
+    let mut codes = HashMap::new();
+    generate_codes(&root, &mut codes, 0, 0);
+
+    let mut retval = HuffCodes::default();
+
+    for (&symbol, &(code, length)) in &codes {
+        retval.c_len[symbol as usize] = length.into();
+        retval.c_val[symbol as usize] = code;
+    }
+
+    retval.post_initialize();
+
+    retval
 }
