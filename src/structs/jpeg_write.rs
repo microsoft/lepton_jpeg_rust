@@ -33,16 +33,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use anyhow::{Context, Result};
+use bytemuck::{cast, cast_ref};
 use byteorder::WriteBytesExt;
+use wide::{i16x16, CmpEq};
 
 use crate::{
     consts::{JPegDecodeStatus, JPegType},
     helpers::{err_exit_code, here, u16_bit_length},
     jpeg_code,
     lepton_error::ExitCode,
+    structs::block_based_image::AlignedBlock,
 };
 
-use std::{io::Write, num::NonZeroI16};
+use std::io::Write;
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
@@ -193,14 +196,11 @@ fn recode_one_mcu_row<W: Write>(
 
             if jf.jpeg_type == JPegType::Sequential {
                 // unzigzag
-                let mut block = [0i16; 64]; // store block for coeffs
-                for bpos in 0..64 {
-                    block[bpos] = current_block.get_coefficient_zigzag(bpos);
-                }
+                let mut block = current_block.zigzag();
 
                 // diff coding for dc
-                let dc = block[0];
-                block[0] -= lastdc[state.get_cmp()];
+                let dc = block.get_block()[0];
+                block.get_block_mut()[0] -= lastdc[state.get_cmp()];
                 lastdc[state.get_cmp()] = dc;
 
                 // encode block
@@ -224,7 +224,13 @@ fn recode_one_mcu_row<W: Write>(
                     lastdc[state.get_cmp()] = tmp;
 
                     // encode dc
-                    write_coef(huffw, v, 0, jf.get_huff_dc_codes(state.get_cmp()));
+                    write_coef(
+                        huffw,
+                        v < 0,
+                        v.unsigned_abs(),
+                        0,
+                        jf.get_huff_dc_codes(state.get_cmp()),
+                    );
                 } else {
                     // ---> succesive approximation later stage <---
 
@@ -357,59 +363,96 @@ fn encode_block_seq(
     huffw: &mut BitWriter,
     dctbl: &HuffCodes,
     actbl: &HuffCodes,
-    block: &[i16; 64],
+    block: &AlignedBlock,
 ) {
+    // using SIMD instructions, construct a 64 bit mask of all
+    // the non-zero coefficients in the block. This can be used
+    // to efficiently skip zero blocks using trailing zero scan.
+    let block_simd: &[i16x16; 4] = cast_ref(block.get_block());
+
+    let mut mask = (block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
+        | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
+        | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
+        | ((block_simd[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
+
+    // abs value of all coefficients. Super fast to calculate here
+    // for everything, even if it is zero and not needed.
+    let abs_value: [u16; 64] = cast(block_simd.map(|x| x.abs()));
+    let is_neg: [u16; 64] = cast(block_simd.map(|x| x >> 15));
+
     // encode DC
-    write_coef(huffw, block[0], 0, dctbl);
+    // & 256 is bit faster all the bits are 1s and since it allows the optimizer
+    //   to convert << 8 (inside this function) to a single AND
+    write_coef(huffw, (is_neg[0] & 256) != 0, abs_value[0], 0, dctbl);
 
+    // flip the bits since cmp_eq returns 0xffff for zero coefficients
+    mask = !mask;
+
+    // already processed DC coefficient, so skip it
+    mask >>= 1;
     let mut bpos = 1;
-    // encode AC
-    while bpos < 64 {
-        // if nonzero is encountered
-        let mut tmp = block[bpos];
-        bpos += 1;
 
-        if tmp == 0 {
-            let mut z = 1;
+    // encode ACs
+    while mask != 0 {
+        let mut zeros = mask.trailing_zeros();
 
-            loop {
-                if bpos == 64 {
-                    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
-                    return;
-                }
+        if zeros > 15 {
+            // JPEG encoding only supports 15 zeros in a row. Most implementations
+            // write 0xf0 codes for 16 zeros in a row, but we don't need
+            // a special case since write_coef with a zero coefficient
+            // and a 0xf zero count will write the correct code.
+            zeros = 15;
+        }
 
-                tmp = block[bpos];
-                bpos += 1;
+        bpos += zeros + 1;
+        mask >>= zeros + 1;
 
-                if tmp != 0 {
-                    // if we have 16 or more zero, we need to write them in blocks of 16
-                    while z >= 16 {
-                        huffw.write(actbl.c_val[0xF0].into(), actbl.c_len[0xF0].into());
-                        z -= 16;
-                    }
-                    write_coef(huffw, tmp, z, actbl);
-                    break;
-                }
+        write_coef(
+            huffw,
+            (is_neg[(bpos - 1) as usize] & 256) != 0, // a bit faster since it allows the optimizer to convert << 8 (inside this function) to a single AND
+            abs_value[(bpos - 1) as usize],
+            zeros,
+            actbl,
+        );
 
-                z += 1;
-            }
-        } else {
-            write_coef(huffw, tmp, 0, actbl);
+        if bpos >= 64 {
+            // if we get all 64 coefficients, we're done and don't need an EOB
+            return;
         }
     }
+
+    // write EOB since we didn't get all 64 coefficients
+    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
 }
 
 /// encodes a coefficient which is a huffman code specifying the size followed
 /// by the coefficient itself
 #[inline(always)]
-fn write_coef(huffw: &mut BitWriter, coef: i16, z: u8, tbl: &HuffCodes) {
-    // vli encode
-    let (n, s) = envli(coef);
-    let hc = ((z & 0xf) << 4) + s;
+fn write_coef(huffw: &mut BitWriter, is_neg: bool, abs_coef: u16, z: u32, tbl: &HuffCodes) {
+    let s = 32 - u32::from(abs_coef).leading_zeros();
 
-    // write to huffman writer (combine into single write)
-    let val = (u32::from(tbl.c_val[usize::from(hc)]) << s) | u32::from(n);
-    let new_bits = u32::from(tbl.c_len[usize::from(hc)]) + u32::from(s);
+    // compiler is smart enough to figure out that this will never be >= 256,
+    // so no bounds check
+    let hc = z << 4 | s;
+
+    // JPEG stores the coefficient with an implied sign bit, since once we know the
+    // number of bits, we can infer the sign.
+    //
+    // Eg, if the bitlength of the absolute value is 4,
+    //
+    // 0..7 are negative (corresponding to -15..-8)
+    // 8..15 are positive
+    //
+    // This is equivalent to absolute value XOR (1 << bitlength) - 1 if the number is negative, so
+    // what we do is store this adjustment in c_val_shift_s so that we don't need
+    // to calculate it separately.
+    //
+    // is_neg indicates whether we want the value with the bits set.
+    let val = tbl.c_val_shift_s[(hc | ((is_neg as u32) << 8)) as usize] ^ u32::from(abs_coef);
+
+    let new_bits = u32::from(tbl.c_len_plus_s[hc as usize]);
+
+    // write to huffman writer (combine hufmman code and coefficient bits into single write)
     huffw.write(val, new_bits);
 }
 
@@ -437,7 +480,7 @@ fn encode_ac_prg_fs(
             }
 
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp < 0, tmp.unsigned_abs(), z, actbl);
 
             // reset zeroes
             z = 0;
@@ -517,7 +560,7 @@ fn encode_ac_prg_sa(
         // if nonzero is encountered
         else if (tmp == 1) || (tmp == -1) {
             // vli encode
-            write_coef(huffw, tmp, z, actbl);
+            write_coef(huffw, tmp < 0, tmp.unsigned_abs(), z, actbl);
 
             // write correction bits
             encode_crbits(huffw, correction_bits);
@@ -594,39 +637,139 @@ fn div_pow2(v: i16, p: u8) -> i16 {
     (if v < 0 { v + ((1 << p) - 1) } else { v }) >> p
 }
 
-/// prepares a coefficient for encoding. Calculates the bitlength s makes v positive by adding 1 << s  - 1 if the number is negative or zero
-#[inline(always)]
-fn envli(v: i16) -> (u16, u8) {
-    // since this is inlined, in the main case the compiler figures out that v cannot be zero
-    if let Some(nz) = NonZeroI16::new(v) {
-        let leading_zeros = nz.unsigned_abs().leading_zeros() as u8;
-
-        // first shift right signed by 15 to make everything 1 if negative,
-        // then shift right unsigned to make the leading bits 0
-        let adjustment = ((nz.get() >> 15) as u16) >> leading_zeros;
-
-        let n = (nz.get() as u16).wrapping_add(adjustment); // turn v into a 2s complement of s bits
-        let s = 16 - leading_zeros;
-
-        return (n, s);
-    } else {
-        return (0, 0);
-    }
-}
-
 /// encoding for eobrun length. Chop off highest bit since we know it is always 1.
 fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
 }
 
-#[test]
-fn test_envli() {
-    for i in -16383..=16385 {
-        let (n, s) = envli(i);
+/// roundtrips a block through the encoder and decoder and checks that the output matches the input
+#[cfg(test)]
+fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+    use crate::structs::jpeg_header::generate_huff_table_from_distribution;
+    use crate::structs::{
+        bit_reader::BitReader, jpeg_header::HuffTree, jpeg_read::decode_block_seq,
+    };
+    use std::io::Cursor;
 
-        assert_eq!(s, u16_bit_length(i.unsigned_abs()));
+    let mut buf = Vec::new();
 
-        let n2 = if i > 0 { i } else { i - 1 + (1 << s) } as u16;
-        assert_eq!(n, n2, "s={0}", s);
+    let mut bitwriter = BitWriter::new();
+
+    // create a weird distribution to test the huffman encoding for corner cases
+    let mut dcdistribution = [0; 256];
+    for i in 0..256 {
+        dcdistribution[i] = 256 - i;
     }
+    let dctbl = generate_huff_table_from_distribution(&dcdistribution);
+
+    let mut acdistribution = [0; 256];
+    for i in 0..256 {
+        acdistribution[i] = 1 + 256;
+    }
+    let actbl = generate_huff_table_from_distribution(&acdistribution);
+
+    encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
+
+    bitwriter.pad(0);
+
+    bitwriter.flush_with_escape(&mut buf).unwrap();
+
+    assert_eq!(buf, expected);
+
+    let mut bitreader = BitReader::new(Cursor::new(&buf));
+
+    let mut block_decoded = [0i16; 64];
+    decode_block_seq(
+        &mut bitreader,
+        &HuffTree::construct_hufftree(&dctbl, true).unwrap(),
+        &HuffTree::construct_hufftree(&actbl, true).unwrap(),
+        &mut block_decoded,
+    )
+    .unwrap();
+
+    assert_eq!(&block_decoded, block.get_block());
+}
+
+#[test]
+fn test_encode_block_seq() {
+    let mut block = AlignedBlock::default();
+    for i in 0..64 {
+        block.get_block_mut()[i] = (i as i16) - 32;
+    }
+
+    let expected = [
+        152, 252, 176, 37, 131, 44, 41, 97, 203, 18, 88, 178, 198, 150, 60, 178, 37, 147, 44, 169,
+        101, 203, 50, 89, 178, 206, 150, 126, 176, 107, 14, 177, 107, 30, 178, 107, 46, 179, 107,
+        56, 136, 17, 34, 40, 69, 128, 128, 47, 120, 250, 3, 0, 226, 48, 70, 136, 225, 31, 173, 26,
+        211, 173, 90, 215, 173, 154, 219, 173, 218, 223, 45, 9, 104, 203, 74, 90, 114, 212, 150,
+        172, 181, 165, 175, 45, 137, 108, 203, 106, 91, 114, 220, 150, 236, 183, 165, 190,
+    ];
+
+    round_trip_block(&block, &expected);
+}
+
+/// make sure we encode magnitudes correctly
+#[test]
+fn test_encode_block_magnitude() {
+    let mut block = AlignedBlock::default();
+    for i in 0..15 {
+        block.get_block_mut()[i] = (1u16 << i) as i16;
+    }
+    for i in 0..15 {
+        block.get_block_mut()[i + 20] = -((1u16 << i) as i16);
+    }
+
+    let expected = [
+        165, 1, 132, 102, 180, 75, 64, 138, 6, 248, 8, 16, 27, 208, 13, 120, 2, 122, 0, 75, 192, 4,
+        60, 0, 8, 224, 0, 109, 128, 1, 250, 1, 68, 94, 179, 203, 60, 137, 246, 247, 232, 15, 251,
+        207, 253, 119, 254, 121, 255, 0, 203, 191, 252, 59, 255, 0, 200, 223, 255, 0, 109, 127,
+        254, 0,
+    ];
+
+    round_trip_block(&block, &expected);
+}
+
+/// test encoding with gaps to test zero counting
+#[test]
+fn test_encode_block_zero_runs() {
+    let mut block = AlignedBlock::default();
+
+    for i in 0..10 {
+        block.get_block_mut()[i] = i as i16;
+    }
+    for i in 30..50 {
+        block.get_block_mut()[i] = -(i as i16);
+    }
+    for i in 50..52 {
+        block.get_block_mut()[i] = i as i16;
+    }
+
+    let expected = [
+        169, 223, 1, 128, 113, 24, 35, 68, 112, 143, 214, 141, 105, 167, 249, 12, 176, 8, 159, 34,
+        120, 137, 210, 39, 8, 155, 34, 104, 137, 146, 38, 8, 151, 34, 88, 137, 82, 37, 8, 147, 34,
+        72, 137, 18, 36, 8, 143, 34, 56, 139, 34, 44, 192, 0,
+    ];
+
+    round_trip_block(&block, &expected);
+}
+
+/// test encoding with gaps to test zero counting
+#[test]
+fn test_encode_block_long_zero_cnt() {
+    let mut block = AlignedBlock::default();
+
+    block.get_block_mut()[63] = 1;
+
+    let expected = [169, 79, 79, 79, 33];
+
+    round_trip_block(&block, &expected);
+}
+
+#[test]
+fn test_encode_block_seq_zero() {
+    let block = AlignedBlock::default();
+
+    let expected = [168, 0];
+
+    round_trip_block(&block, &expected);
 }
