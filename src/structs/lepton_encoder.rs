@@ -25,6 +25,8 @@ use crate::structs::{
 
 use default_boxed::DefaultBoxed;
 
+use super::block_context::NeighborData;
+
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
     pts: &ProbabilityTablesSet,
@@ -43,7 +45,7 @@ pub fn lepton_encode_row_range<W: Write>(
     let mut bool_writer = VPXBoolWriter::new(writer)?;
 
     let mut is_top_row = Vec::new();
-    let mut num_non_zeros = Vec::new();
+    let mut neighbor_summary_cache = Vec::new();
 
     // Init helper structures
     for i in 0..image_data.len() {
@@ -51,10 +53,10 @@ pub fn lepton_encode_row_range<W: Write>(
 
         let num_non_zeros_length = (image_data[i].get_block_width() << 1) as usize;
 
-        let mut num_non_zero_list = Vec::new();
-        num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
+        let mut neighbor_summary_component = Vec::new();
+        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::new());
 
-        num_non_zeros.push(num_non_zero_list);
+        neighbor_summary_cache.push(neighbor_summary_component);
     }
 
     let component_size_in_blocks = colldata.get_component_sizes_in_blocks();
@@ -105,7 +107,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.top[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
@@ -122,7 +124,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.mid_right[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
@@ -140,7 +142,7 @@ pub fn lepton_encode_row_range<W: Write>(
                 &pts.width_one[bt],
                 colldata,
                 &mut block_context,
-                &mut num_non_zeros[bt][..],
+                &mut neighbor_summary_cache[bt][..],
                 block_width,
                 component_size_in_blocks[bt],
                 features,
@@ -184,23 +186,19 @@ fn process_row<W: Write>(
     right_model: &ProbabilityTables,
     _colldata: &TruncateComponents,
     state: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     block_width: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     if block_width > 0 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         serialize_tokens::<W, false>(
             state,
             qt,
             left_model,
             model,
             image_data,
-            num_non_zeros,
+            neighbor_summary_cache,
             bool_writer,
             features,
         )
@@ -213,10 +211,6 @@ fn process_row<W: Write>(
     }
 
     for _jpeg_x in 1..block_width - 1 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
         if middle_model.is_all_present() {
             serialize_tokens::<W, true>(
@@ -225,7 +219,7 @@ fn process_row<W: Write>(
                 middle_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -237,7 +231,7 @@ fn process_row<W: Write>(
                 middle_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -252,10 +246,6 @@ fn process_row<W: Write>(
     }
 
     if block_width > 1 {
-        state
-            .neighbor_context_here(num_non_zeros)
-            .set_num_non_zeros(state.here(image_data).get_count_of_non_zeros_7x7());
-
         if right_model.is_all_present() {
             serialize_tokens::<W, true>(
                 state,
@@ -263,7 +253,7 @@ fn process_row<W: Write>(
                 right_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -275,7 +265,7 @@ fn process_row<W: Write>(
                 right_model,
                 model,
                 image_data,
-                num_non_zeros,
+                neighbor_summary_cache,
                 bool_writer,
                 features,
             )
@@ -294,31 +284,16 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     model: &mut Model,
     image_data: &BlockBasedImage,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(ALL_PRESENT == pt.is_all_present());
 
-    let num_non_zeros_7x7 = context.non_zeros_here(&num_non_zeros);
-
-    let model_per_color = model.get_per_color(pt);
-
-    model_per_color
-        .write_non_zero_7x7_count(
-            bool_writer,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
-            num_non_zeros_7x7,
-        )
-        .context(here!())?;
-
-    let mut eob_x = 0;
-    let mut eob_y = 0;
-    let mut num_non_zeros_left_7x7 = num_non_zeros_7x7;
-
     let block = context.here(image_data);
 
-    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     #[cfg(feature = "detailed_tracing")]
     trace!(
@@ -327,78 +302,145 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         block.get_hash()
     );
 
-    let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
+    let ns = write_coefficient_block::<ALL_PRESENT, W>(
+        pt,
+        &neighbors,
+        block,
+        model,
+        bool_writer,
+        qt,
+        features,
+    )?;
 
-    for zig49 in 0..49 {
-        if num_non_zeros_left_7x7 == 0 {
-            break;
-        }
+    context.set_neighbor_summary_here(neighbor_summary_cache, ns);
 
-        let coord = UNZIGZAG_49[zig49];
+    Ok(())
+}
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+/// Writes the 8x8 coefficient block to the bit writer, taking into account the neighboring
+/// blocks, probability tables and model.
+///
+/// This function is designed to be independently callable without needing to know the context,
+/// image data, etc so it can be extensively unit tested.
+pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
+    pt: &ProbabilityTables,
+    neighbors_data: &NeighborData,
+    here: &AlignedBlock,
+    model: &mut Model,
+    bool_writer: &mut VPXBoolWriter<W>,
+    qt: &QuantizationTables,
+    features: &EnabledFeatures,
+) -> Result<NeighborSummary> {
+    let model_per_color = model.get_per_color(pt);
 
-        // this should work in all cases but doesn't utilize that the zig49 is related
-        let coef = block.get_coefficient(coord as usize);
+    // First we encode the 49 inner coefficients
 
-        model_per_color
-            .write_coef(
-                bool_writer,
-                coef,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
-                best_prior_bit_length as usize,
-            )
-            .context(here!())?;
+    // calculate the predictor context bin based on the neighbors
+    let num_non_zeros_7x7_context_bin =
+        pt.calc_num_non_zeros_7x7_context_bin::<ALL_PRESENT>(neighbors_data);
 
-        if coef != 0 {
-            num_non_zeros_left_7x7 -= 1;
+    // store how many of these coefficients are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
+    let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
 
-            let bx = coord & 7;
-            let by = coord >> 3;
+    model_per_color
+        .write_non_zero_7x7_count(
+            bool_writer,
+            num_non_zeros_7x7_context_bin,
+            num_non_zeros_7x7,
+        )
+        .context(here!())?;
 
-            debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
+    // these are used as predictors for the number of non-zero edge coefficients
+    let mut eob_x = 0;
+    let mut eob_y = 0;
 
-            eob_x = cmp::max(eob_x, bx);
-            eob_y = cmp::max(eob_y, by);
+    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
+
+    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+        neighbors_data.left,
+        neighbors_data.above,
+        neighbors_data.above_left,
+    );
+
+    if num_non_zeros_7x7_remaining > 0 {
+        // calculate the bin we are using for the number of non-zeros
+        let mut num_non_zeros_remaining_bin =
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
+
+        // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
+        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+
+            let coef = here.get_coefficient(coord as usize);
+
+            model_per_color
+                .write_coef(
+                    bool_writer,
+                    coef,
+                    zig49,
+                    num_non_zeros_remaining_bin,
+                    best_prior_bit_length as usize,
+                )
+                .context(here!())?;
+
+            if coef != 0 {
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                let bx = coord & 7;
+                let by = coord >> 3;
+
+                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
+
+                eob_x = cmp::max(eob_x, bx);
+                eob_y = cmp::max(eob_y, by);
+
+                num_non_zeros_7x7_remaining -= 1;
+                if num_non_zeros_7x7_remaining == 0 {
+                    break;
+                }
+
+                // update the bin since the number of non-zeros has changed
+                num_non_zeros_remaining_bin =
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
+            }
         }
     }
 
+    // next step is the edge coefficients
     encode_edge::<W, ALL_PRESENT>(
-        left,
-        above,
-        block,
+        neighbors_data.left,
+        neighbors_data.above,
+        here,
         model_per_color,
         bool_writer,
         qt,
         pt,
         num_non_zeros_7x7,
-        eob_x as u8,
-        eob_y as u8,
+        eob_x,
+        eob_y,
     )
     .context(here!())?;
 
-    let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&block, qt, context, &num_non_zeros, features);
+    // finally the DC coefficient (at 0,0)
+    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&here, qt, neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
-        block.get_dc(),
+        here.get_dc(),
         false,
-        predicted_val.predicted_dc.into(),
+        predicted_val.predicted_dc,
     );
 
-    if block.get_dc() as i32
+    if here.get_dc() as i32
         != ProbabilityTables::adv_predict_or_unpredict_dc(
             avg_predicted_dc as i16,
             true,
-            predicted_val.predicted_dc.into(),
+            predicted_val.predicted_dc,
         )
     {
         return err_exit_code(ExitCode::CoefficientOutOfRange, "BlockDC mismatch");
     }
 
-    // do DC
     model
         .write_dc(
             bool_writer,
@@ -409,23 +451,16 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         )
         .context(here!())?;
 
-    let here = context.neighbor_context_here(num_non_zeros);
-
-    here.set_horizontal(
-        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        block.get_dc(),
+    // neighbor summary is used as a predictor for the next block
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+        &predicted_val.advanced_predict_dc_pixels_sans_dc,
+        qt,
+        here,
+        num_non_zeros_7x7,
         features,
     );
 
-    here.set_vertical(
-        predicted_val.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        block.get_dc(),
-        features,
-    );
-
-    Ok(())
+    Ok(neighbor_summary)
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
@@ -557,4 +592,369 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     Ok(())
+}
+
+/// simplest case, all zeros. The goal of these test cases is go from simplest to most
+/// complicated so if tests start failing, you have some idea of where to start looking.
+#[test]
+fn roundtrip_zeros() {
+    let left = AlignedBlock::new([0; 64]);
+    let above = AlignedBlock::new([0; 64]);
+    let here = AlignedBlock::new([0; 64]);
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0x133100e068957963,
+        0x133100e068957963,
+        0x133100e068957963,
+        0x133100e068957963,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &left,
+        &above,
+        &here,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+#[test]
+fn roundtrip_ones() {
+    let left = AlignedBlock::new([1; 64]);
+    let above = AlignedBlock::new([1; 64]);
+    let here = AlignedBlock::new([1; 64]);
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0xe5a1980d71891a2b,
+        0x5a8fd92548e2ea07,
+        0xb392ea90d7b31238,
+        0x1a769d84e98a27e,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &left,
+        &above,
+        &here,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// test large coefficients that could overflow unpredictably if there are changes to the
+/// way the math operations are performed (for example overflow or bitness)
+#[test]
+fn roundtrip_large_coef() {
+    let left = AlignedBlock::new([1023; 64]);
+    let above = AlignedBlock::new([1023; 64]);
+    let here = AlignedBlock::new([1023; 64]);
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0x506f55523369cf48,
+        0x5b2795bc24a04d2e,
+        0xdcb68ed904cfc4f9,
+        0x80efab28c62db071,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &left,
+        &above,
+        &here,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_scalar_read(),
+    );
+}
+
+#[test]
+fn roundtrip_random() {
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    let mut rng = StdRng::from_seed([2u8; 32]);
+
+    let arr = [0i16; 64];
+
+    let left = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
+    let above = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
+    let here = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0x4b08a910feb758e8,
+        0x44c3f76e93f1d204,
+        0x899bc6e64957e400,
+        0x322e78e37fd7ed13,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &left,
+        &above,
+        &here,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests a pattern where all the coefficients are unique to make sure we don't mix up anything
+#[test]
+fn roundtrip_unique() {
+    let mut arr = [0; 64];
+    for i in 0..64 {
+        arr[i] = i as i16;
+    }
+
+    let left = AlignedBlock::new(arr);
+    let above = AlignedBlock::new(arr.map(|x| x + 64));
+    let here = AlignedBlock::new(arr.map(|x| x + 128));
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0x31caa65a4af9fe19,
+        0x33622f772a9fc403,
+        0xa2cc76c22f35dfbd,
+        0xdb832d71fc9faf0c,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &left,
+        &above,
+        &here,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests a pattern to check the non-zero counting
+#[test]
+fn roundtrip_non_zeros_counts() {
+    let mut arr = [0; 64];
+
+    // upper left corner is all 50, the rest is 0
+    for i in 0..64 {
+        arr[i] = if (i & 7) < 4 || (i >> 3) < 4 { 50 } else { 0 };
+    }
+
+    let block = AlignedBlock::new(arr);
+
+    // verified output from a previous run. If this fails, then you've made a change
+    // to the binary format of the compressor and probably shouldn't do that since then
+    // the compressor and decompressor won't be compatible anymore.
+    let verified_output = [
+        0xa781963bb25ecfa3,
+        0x4158c01c97aa07d4,
+        0x7744eda601c31332,
+        0x16740ad27fa899fc,
+    ];
+
+    roundtrip_read_write_coefficients_all(
+        &block,
+        &block,
+        &block,
+        &verified_output,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// does all combinations of corner blocks being present or not
+#[cfg(test)]
+fn roundtrip_read_write_coefficients_all(
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here: &AlignedBlock,
+    verified_output: &[u64; 4],
+    features: &EnabledFeatures,
+) {
+    for (&(left_present, above_present), &verified_output) in
+        [(false, false), (true, false), (false, true), (true, true)]
+            .iter()
+            .zip(verified_output.iter())
+    {
+        roundtrip_read_write_coefficients(
+            left_present,
+            above_present,
+            left,
+            above,
+            here,
+            verified_output,
+            features,
+        );
+    }
+}
+
+/// randomizes the branches of the model so that we don't start with a
+/// state where all the branches are in the same state. This is important
+/// to catch any misaligment in the model state between reading and writing.
+#[cfg(test)]
+fn make_random_model() -> Box<Model> {
+    let mut model = Model::default_boxed();
+
+    use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    let mut rng = StdRng::from_seed([2u8; 32]);
+
+    model.walk(|x| {
+        x.set_count(rng.gen_range(0x101..=0xffff));
+    });
+    model
+}
+
+/// tests the roundtrip of reading and writing coefficients
+///
+/// The tests are done with a seeded random model so that the tests are deterministic.
+///
+/// In addition, we check to make that everything ran as expected by comparing the
+/// hash of the output to a verified output. This verified output is generated by
+/// hashing the output plus the new state of the model.
+#[cfg(test)]
+fn roundtrip_read_write_coefficients(
+    left_present: bool,
+    above_present: bool,
+    left: &AlignedBlock,
+    above: &AlignedBlock,
+    here: &AlignedBlock,
+    verified_output: u64,
+    features: &EnabledFeatures,
+) {
+    use crate::structs::idct::run_idct;
+    use crate::structs::lepton_decoder::read_coefficient_block;
+    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
+    use crate::structs::vpx_bool_reader::VPXBoolReader;
+
+    use siphasher::sip::SipHasher13;
+    use std::hash::Hasher;
+    use std::io::Cursor;
+
+    let pt = ProbabilityTables::new(0, left_present, above_present);
+
+    let mut write_model = make_random_model();
+
+    let mut buffer = Vec::new();
+
+    let mut bool_writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+    let qt = QuantizationTables::new_from_table(&[1; 64]);
+
+    // calculate the neighbor values. Normally this is done by recycling the previous results
+    // but since we are testing a one-off here, manually calculate the values
+    let above_neighbor = if above_present {
+        let idct_above = run_idct::<true>(above, qt.get_quantization_table_transposed());
+
+        NeighborSummary::calculate_neighbor_summary(
+            &idct_above,
+            &qt,
+            &above,
+            above.get_count_of_non_zeros_7x7(),
+            &features,
+        )
+    } else {
+        NEIGHBOR_DATA_EMPTY
+    };
+
+    let left_neighbor = if left_present {
+        let idct_left = run_idct::<true>(left, qt.get_quantization_table_transposed());
+
+        NeighborSummary::calculate_neighbor_summary(
+            &idct_left,
+            &qt,
+            &left,
+            left.get_count_of_non_zeros_7x7(),
+            &features,
+        )
+    } else {
+        NEIGHBOR_DATA_EMPTY
+    };
+
+    let neighbors = NeighborData {
+        above: &above,
+        left: &left,
+        above_left: &above,
+        neighbor_context_above: &above_neighbor,
+        neighbor_context_left: &left_neighbor,
+    };
+
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+    let ns_read = if left_present && above_present {
+        write_coefficient_block::<true, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+    } else {
+        write_coefficient_block::<false, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+    }
+    .unwrap();
+
+    bool_writer.finish().unwrap();
+
+    let mut read_model = make_random_model();
+    let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
+
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+    let (output, ns_write) = if left_present && above_present {
+        read_coefficient_block::<true, _>(
+            &pt,
+            &neighbors,
+            &mut read_model,
+            &mut bool_reader,
+            &qt,
+            &features,
+        )
+    } else {
+        read_coefficient_block::<false, _>(
+            &pt,
+            &neighbors,
+            &mut read_model,
+            &mut bool_reader,
+            &qt,
+            &features,
+        )
+    }
+    .unwrap();
+
+    assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
+    assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
+    assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
+    assert_eq!(output.get_block(), here.get_block());
+    assert_eq!(write_model.model_checksum(), read_model.model_checksum());
+
+    let mut h = SipHasher13::new();
+    h.write(&buffer);
+    h.write_u64(write_model.model_checksum());
+    let hash = h.finish();
+
+    println!("0x{:x?},", hash);
+
+    if verified_output != 0 {
+        assert_eq!(
+            verified_output, hash,
+            "Hash mismatch. Unexpected change in model behavior/output format"
+        );
+    }
 }

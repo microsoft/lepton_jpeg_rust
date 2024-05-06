@@ -24,7 +24,7 @@ use crate::structs::{
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
 
-use super::block_context::BlockContext;
+use super::block_context::{BlockContext, NeighborData};
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -45,7 +45,7 @@ pub fn lepton_decode_row_range<R: Read>(
     let max_coded_heights = trunc.get_max_coded_heights();
 
     let mut is_top_row = Vec::new();
-    let mut num_non_zeros = Vec::new();
+    let mut neighbor_summary_cache = Vec::new();
 
     // Init helper structures
     for i in 0..image_data.len() {
@@ -56,7 +56,7 @@ pub fn lepton_decode_row_range<R: Read>(
         let mut num_non_zero_list = Vec::new();
         num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
 
-        num_non_zeros.push(num_non_zero_list);
+        neighbor_summary_cache.push(num_non_zero_list);
     }
 
     let mut model = Model::default_boxed();
@@ -95,7 +95,7 @@ pub fn lepton_decode_row_range<R: Read>(
             pts,
             &mut image_data[cur_row.component],
             &qt[cur_row.component],
-            &mut num_non_zeros[cur_row.component],
+            &mut neighbor_summary_cache[cur_row.component],
             &mut is_top_row[..],
             &component_size_in_blocks[..],
             cur_row.component,
@@ -114,7 +114,7 @@ fn decode_row_wrapper<R: Read>(
     pts: &ProbabilityTablesSet,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
-    num_non_zeros: &mut Vec<NeighborSummary>,
+    neighbor_summary_cache: &mut Vec<NeighborSummary>,
     is_top_row: &mut [bool],
     component_size_in_blocks: &[i32],
     component: usize,
@@ -135,7 +135,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.top[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -151,7 +151,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.mid_right[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -167,7 +167,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.width_one[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -186,7 +186,7 @@ fn decode_row<R: Read>(
     right_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     block_context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     component_size_in_blocks: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
@@ -197,7 +197,7 @@ fn decode_row<R: Read>(
             bool_reader,
             image_data,
             block_context,
-            num_non_zeros,
+            neighbor_summary_cache,
             qt,
             left_model,
             features,
@@ -217,7 +217,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -229,7 +229,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -251,7 +251,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -263,7 +263,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -282,77 +282,121 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
+
+    let (output, ns) =
+        read_coefficient_block::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
+
+    context.set_neighbor_summary_here(neighbor_summary_cache, ns);
+
+    image_data.append_block(output);
+
+    Ok(())
+}
+
+/// Reads the 8x8 coefficient block from the bit reader, taking into account the neighboring
+/// blocks, probability tables and model.
+///
+/// This function is designed to be independently callable without needing to know the context,
+/// image data, etc so it can be extensively unit tested.
+pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
+    pt: &ProbabilityTables,
+    neighbor_data: &NeighborData,
+    model: &mut Model,
+    bool_reader: &mut VPXBoolReader<R>,
+    qt: &QuantizationTables,
+    features: &EnabledFeatures,
+) -> Result<(AlignedBlock, NeighborSummary)> {
     let model_per_color = model.get_per_color(pt);
 
+    // First we read the 49 inner coefficients
+
+    // calculate the predictor context bin based on the neighbors
+    let num_non_zeros_7x7_context_bin =
+        pt.calc_num_non_zeros_7x7_context_bin::<ALL_PRESENT>(neighbor_data);
+
+    // read how many of these are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
     let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(
-            bool_reader,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, num_non_zeros),
-        )
+        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)
         .context(here!())?;
 
     if num_non_zeros_7x7 > 49 {
+        // most likely a stream or model synchronization error
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
-    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
-
     let mut output = AlignedBlock::default();
 
+    // these are used as predictors for the number of non-zero edge coefficients
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
-    let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
 
-    let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
+    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
-    for zig49 in 0..49 {
-        if num_non_zeros_left_7x7 == 0 {
-            break;
-        }
+    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+        neighbor_data.left,
+        neighbor_data.above,
+        neighbor_data.above_left,
+    );
 
-        let coord = UNZIGZAG_49[zig49];
+    if num_non_zeros_7x7_remaining > 0 {
+        // calculate the bin we are using for the number of non-zeros
+        let mut num_non_zeros_bin =
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+        // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
+        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
-        let coef = model_per_color
-            .read_coef(
-                bool_reader,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
-                best_prior_bit_length as usize,
-            )
-            .context(here!())?;
+            let coef = model_per_color
+                .read_coef(
+                    bool_reader,
+                    zig49,
+                    num_non_zeros_bin,
+                    best_prior_bit_length as usize,
+                )
+                .context(here!())?;
 
-        if coef != 0 {
-            debug_assert!(
-                (coord & 7) > 0 && (coord >> 3) > 0,
-                "this does the DC and the lower 7x7 AC"
-            );
+            if coef != 0 {
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                let bx = coord & 7;
+                let by = coord >> 3;
 
-            let b_x = coord & 7;
-            let b_y = coord >> 3;
+                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
-            eob_x = cmp::max(eob_x, b_x);
-            eob_y = cmp::max(eob_y, b_y);
-            num_non_zeros_left_7x7 -= 1;
+                eob_x = cmp::max(eob_x, bx);
+                eob_y = cmp::max(eob_y, by);
 
-            output.set_coefficient(coord as usize, coef);
+                output.set_coefficient(coord as usize, coef);
+
+                num_non_zeros_7x7_remaining -= 1;
+                if num_non_zeros_7x7_remaining == 0 {
+                    break;
+                }
+
+                // update the bin since we've chance the number of non-zeros
+                num_non_zeros_bin =
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
+            }
         }
     }
 
+    // step 2, read the edge coefficients
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        &left,
-        &above,
+        neighbor_data.left,
+        neighbor_data.above,
         &mut output,
         qt,
         pt,
@@ -361,9 +405,8 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         eob_y,
     )?;
 
-    let predicted_dc =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, num_non_zeros, features);
-
+    // step 3, read the DC coefficient (0,0 of the block)
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, &neighbor_data, features);
     let coef = model
         .read_dc(
             bool_reader,
@@ -372,33 +415,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             predicted_dc.uncertainty2,
         )
         .context(here!())?;
-
     output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
         predicted_dc.predicted_dc,
     ) as i16);
 
-    let here = context.neighbor_context_here(num_non_zeros);
-    here.set_num_non_zeros(num_non_zeros_7x7);
-
-    here.set_horizontal(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
+    // neighbor summary is used as a predictor for the next block
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+        &predicted_dc.advanced_predict_dc_pixels_sans_dc,
+        qt,
+        &output,
+        num_non_zeros_7x7,
         features,
     );
-
-    here.set_vertical(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
-        features,
-    );
-
-    image_data.append_block(output);
-
-    Ok(())
+    Ok((output, neighbor_summary))
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data

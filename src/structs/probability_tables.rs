@@ -14,8 +14,7 @@ use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 
 use super::block_based_image::AlignedBlock;
-use super::block_context::BlockContext;
-use super::neighbor_summary::NeighborSummary;
+use super::block_context::NeighborData;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
 use wide::i16x8;
@@ -82,27 +81,22 @@ impl ProbabilityTables {
         return if self.color == 0 { 0 } else { 1 };
     }
 
-    pub fn num_non_zeros_to_bin(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN[num_non_zeros as usize];
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
+        return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
     }
 
-    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN_7X7[num_non_zeros as usize];
-    }
-
-    pub fn calc_non_zero_counts_context_7x7<const ALL_PRESENT: bool>(
+    pub fn calc_num_non_zeros_7x7_context_bin<const ALL_PRESENT: bool>(
         &self,
-        block: &BlockContext,
-        num_non_zeros: &[NeighborSummary],
+        neighbor_data: &NeighborData,
     ) -> u8 {
         let mut num_non_zeros_above = 0;
         let mut num_non_zeros_left = 0;
         if ALL_PRESENT || self.above_present {
-            num_non_zeros_above = block.get_non_zeros_above(num_non_zeros);
+            num_non_zeros_above = neighbor_data.neighbor_context_above.get_num_non_zeros();
         }
 
         if ALL_PRESENT || self.left_present {
-            num_non_zeros_left = block.get_non_zeros_left(num_non_zeros);
+            num_non_zeros_left = neighbor_data.neighbor_context_left.get_num_non_zeros();
         }
 
         let num_non_zeros_context;
@@ -116,7 +110,7 @@ impl ProbabilityTables {
             num_non_zeros_context = 0;
         }
 
-        return num_non_zeros_context;
+        return NON_ZERO_TO_BIN[usize::from(num_non_zeros_context)];
     }
 
     // calculates the average of the prior values from their corresponding value in the left, above and above/left block
@@ -261,8 +255,7 @@ impl ProbabilityTables {
         &self,
         here: &AlignedBlock,
         qt: &QuantizationTables,
-        block_context: &BlockContext,
-        num_non_zeros: &[NeighborSummary],
+        neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
         let q_transposed = qt.get_quantization_table_transposed();
@@ -272,7 +265,7 @@ impl ProbabilityTables {
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
         let calc_left = || {
-            let left_context = block_context.neighbor_context_left(num_non_zeros);
+            let left_context = neighbor_data.neighbor_context_left;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
@@ -297,7 +290,7 @@ impl ProbabilityTables {
         };
 
         let calc_above = || {
-            let above_context = block_context.neighbor_context_above(num_non_zeros);
+            let above_context = neighbor_data.neighbor_context_above;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);

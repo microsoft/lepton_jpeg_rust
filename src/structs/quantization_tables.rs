@@ -28,6 +28,12 @@ pub struct QuantizationTables {
 
 impl QuantizationTables {
     pub fn new(jpeg_header: &JPegHeader, component: usize) -> Self {
+        Self::new_from_table(
+            &jpeg_header.q_tables[usize::from(jpeg_header.cmp_info[component].q_table_index)],
+        )
+    }
+
+    pub fn new_from_table(quantization_table: &[u16; 64]) -> Self {
         let mut retval = QuantizationTables {
             icos_idct_edge8192_dequantized_x: [0; 64],
             icos_idct_edge8192_dequantized_y: [0; 64],
@@ -38,15 +44,12 @@ impl QuantizationTables {
             min_noise_threshold: [0; 64],
         };
 
-        retval.set_quantization_table(
-            component,
-            &jpeg_header.q_tables[usize::from(jpeg_header.cmp_info[component].q_table_index)],
-        );
+        retval.set_quantization_table(quantization_table);
 
         return retval;
     }
 
-    fn set_quantization_table(&mut self, _color: usize, quantization_table: &[u16; 64]) {
+    fn set_quantization_table(&mut self, quantization_table: &[u16; 64]) {
         for i in 0..64 {
             self.quantization_table[i] = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
         }
