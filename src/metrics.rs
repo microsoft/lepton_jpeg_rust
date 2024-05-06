@@ -74,6 +74,7 @@ pub trait ModelStatsCollector {
 }
 
 impl ModelStatsCollector for Metrics {
+    #[allow(dead_code)]
     fn record_compression_stats(
         &mut self,
         cmp: ModelComponent,
