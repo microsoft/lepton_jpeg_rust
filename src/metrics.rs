@@ -64,16 +64,7 @@ pub struct Metrics {
     cpu_time_worker_time: Duration,
 }
 
-pub trait ModelStatsCollector {
-    fn record_compression_stats(
-        &mut self,
-        cmp: ModelComponent,
-        total_bits: i64,
-        total_compressed: i64,
-    );
-}
-
-impl ModelStatsCollector for Metrics {
+impl Metrics {
     #[allow(dead_code)]
     fn record_compression_stats(
         &mut self,
@@ -88,9 +79,7 @@ impl ModelStatsCollector for Metrics {
         e.total_bits += total_bits;
         e.total_compressed += total_compressed;
     }
-}
 
-impl Metrics {
     pub fn record_cpu_worker_time(&mut self, duration: Duration) {
         self.cpu_time_worker_time += duration;
     }

@@ -26,9 +26,6 @@ use std::io::{Read, Result};
 
 use crate::metrics::{Metrics, ModelComponent};
 
-#[cfg(feature = "compression_stats")]
-use crate::metrics::ModelStatsCollector;
-
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 const BITS_IN_BYTE: i32 = 8;
