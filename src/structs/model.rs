@@ -231,6 +231,7 @@ impl ModelPerColor {
         .context(here!());
     }
 
+    #[inline(always)]
     fn get_coef_branches(
         &mut self,
         num_non_zeros_bin: usize,
@@ -241,10 +242,19 @@ impl ModelPerColor {
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        debug_assert!(
-            num_non_zeros_bin < self.counts.len(),
+        // these bounds checks happen anyway, but we can provide more helpful error messages
+        // and it also means that the compiler can move the actual array references around
+        // if it helps with performance
+        assert!(
+            num_non_zeros_bin < NUM_NON_ZERO_7X7_BINS,
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
+        );
+        assert!(zig49 < 49, "zig49 {0} too high", num_non_zeros_bin);
+        assert!(
+            best_prior_bit_len < MAX_EXPONENT,
+            "best_prior_bit_len {0} too high",
+            best_prior_bit_len
         );
 
         let exp = &mut self.counts[num_non_zeros_bin][zig49].exponent_counts[best_prior_bit_len];
@@ -595,6 +605,7 @@ impl Model {
         (exp, sign, bits)
     }
 
+    #[inline(always)]
     fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
         bool_reader: &mut VPXBoolReader<R>,
         magnitude_branches: &mut [Branch; A],
