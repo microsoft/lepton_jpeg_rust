@@ -441,6 +441,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     eob_x: u8,
     eob_y: u8,
 ) -> Result<()> {
+    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+
     encode_one_edge::<W, ALL_PRESENT, true>(
         summary_above,
         summary_left,
@@ -449,7 +451,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         bool_writer,
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
         eob_x,
     )
     .context(here!())?;
@@ -461,7 +463,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         bool_writer,
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
         eob_y,
     )
     .context(here!())?;
@@ -484,7 +486,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
+    num_non_zeros_bin: u8,
     est_eob: u8,
 ) -> Result<()> {
     let mut num_non_zeros_edge;
@@ -511,7 +513,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
             est_eob,
-            num_non_zeros_7x7,
+            num_non_zeros_bin,
             num_non_zeros_edge,
         )
         .context(here!())?;

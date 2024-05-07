@@ -7,10 +7,12 @@
 use anyhow::{Context, Result};
 
 use crate::consts::ICOS_BASED_8192_SCALED;
+use crate::structs::idct::get_q;
+use bytemuck::cast;
+use wide::i32x8;
 
 use default_boxed::DefaultBoxed;
 
-use std::cmp;
 use std::io::Read;
 
 use crate::consts::UNZIGZAG_49;
@@ -314,9 +316,14 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 
     let best_priors =
         pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
-    let mut horiz_pred: [i32; 8] = *context
-        .neighbor_context_above(neighbor_summary)
-        .get_horizontal_coef();
+    let mut raster: [i32x8; 8] = [0.into(); 8];
+    let mut nonzero_mask: u64 = 0;
+
+    let mut horiz_pred: i32x8 = cast(
+        *context
+            .neighbor_context_above(neighbor_summary)
+            .get_horizontal_coef(),
+    );
     let mut vert_pred: [i32; 8] = *context
         .neighbor_context_left(neighbor_summary)
         .get_vertical_coef();
@@ -342,42 +349,83 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         if coef != 0 {
             debug_assert!(
                 (coord & 7) > 0 && (coord >> 3) > 0,
-                "this does the DC and the lower 7x7 AC"
+                "this does the lower 7x7 AC"
             );
 
-            let b_x = coord & 7;
-            let b_y = coord >> 3;
+            //let b_x = coord & 7;
+            //let b_y = coord >> 3;
 
-            eob_x = cmp::max(eob_x, b_x);
-            eob_y = cmp::max(eob_y, b_y);
+            //eob_x = cmp::max(eob_x, b_x);
+            //eob_y = cmp::max(eob_y, b_y);
             num_non_zeros_left_7x7 -= 1;
 
             output.set_coefficient(coord as usize, coef);
-
-            let deq_coef = (qt.get_quantization_table()[coord as usize] as i32) * (coef as i32);
-            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-            horiz_pred[b_x as usize] = horiz_pred[b_x as usize]
-                .wrapping_sub(deq_coef.wrapping_mul(ICOS_BASED_8192_SCALED[b_y as usize]));
-            vert_pred[b_y as usize] = vert_pred[b_y as usize]
-                .wrapping_sub(deq_coef.wrapping_mul(ICOS_BASED_8192_SCALED[b_x as usize]));
+            nonzero_mask |= 1 << coord;
         }
     }
+
+    if num_non_zeros_left_7x7 > 0 {
+        return err_exit_code(
+            ExitCode::StreamInconsistent,
+            "not enough nonzeros in 7x7 block",
+        );
+    }
+
+    let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
+    let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
+
+    //for row in 1..(eob_y + 1) as usize {
+    for row in 1..8 {
+        if nonzero_mask & (0xFE << (row * 8)) != 0 
+        {
+            raster[row] = get_q(row, &output) * get_q(row, &q);
+            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
+            horiz_pred -= raster[row] * ICOS_BASED_8192_SCALED[row];
+            vert_pred[row] = vert_pred[row].wrapping_sub((raster[row] * mult).reduce_add());
+            eob_y = row as u8;
+        }
+        if nonzero_mask & (0x0101010101010101 << row) != 0 {
+            eob_x = row as u8;
+        }
+    }
+
+    let h_pred = horiz_pred.to_array();
 
     decode_edge::<R, ALL_PRESENT>(
         model_per_color,
         bool_reader,
-        &horiz_pred,
+        &h_pred,
         &vert_pred,
         &mut output,
         qt,
         pt,
         num_non_zeros_7x7,
+        &mut nonzero_mask,
         eob_x,
         eob_y,
     )?;
 
-    let predicted_dc =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&output, qt, context, neighbor_summary, features);
+    if nonzero_mask & 0xFE != 0 
+    {
+        raster[0] = get_q(0, &output) * get_q(0, &q);
+    }
+    for row in 1..8 {
+        if nonzero_mask & (1 << (row * 8)) != 0 
+        {
+            let dc_coef = output.get_coefficient(row << 3) as i32;
+            let q = qt.get_quantization_table()[row << 3] as i32;
+            raster[row] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
+        }
+    }
+
+    let q0 = qt.get_quantization_table()[0] as i32;
+    let predicted_dc = pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(
+        &raster,
+        q0,
+        context,
+        neighbor_summary,
+        features,
+    );
 
     let coef = model
         .read_dc(
@@ -426,9 +474,12 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
+    nonzero_mask: &mut u64,
     eob_x: u8,
     eob_y: u8,
 ) -> Result<()> {
+    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
@@ -436,7 +487,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         here_mut,
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
+        nonzero_mask,
         eob_x,
     )?;
     decode_one_edge::<R, ALL_PRESENT, false>(
@@ -446,7 +498,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         here_mut,
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
+        nonzero_mask,
         eob_y,
     )?;
     Ok(())
@@ -459,11 +512,12 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
+    num_non_zeros_bin: u8,
+    nonzero_mask: &mut u64,
     est_eob: u8,
 ) -> Result<()> {
     let mut num_non_zeros_edge = model_per_color
-        .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_7x7)
+        .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context(here!())?;
 
     // this can never happen by prev func - 3-bit value is at most 7
@@ -502,6 +556,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         if coef != 0 {
             num_non_zeros_edge -= 1;
             here_mut.set_coefficient(coord, coef);
+
+            *nonzero_mask |= 1 << coord;
         }
 
         coord += delta;

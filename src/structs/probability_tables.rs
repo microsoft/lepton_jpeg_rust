@@ -288,6 +288,131 @@ impl ProbabilityTables {
         ]);
     }
 
+    pub fn adv_predict_dc_pix_decode<const ALL_PRESENT: bool>(
+        &self,
+        raster_rows: &[i32x8; 8],
+        q0: i32,
+        block_context: &mut BlockContext,
+        neighbor_summary: &mut [NeighborSummary],
+        enabled_features: &enabled_features::EnabledFeatures,
+    ) -> PredictDCResult {
+        let pixels_sans_dc = run_idct_decode(
+            raster_rows,
+            block_context.neighbor_context_here(neighbor_summary),
+        );
+
+        // helper functions to avoid code duplication that calculate the left and above prediction values
+
+        let calc_left = || {
+            let left_context = block_context.neighbor_context_left(neighbor_summary);
+
+            if enabled_features.use_16bit_adv_predict {
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+
+                b - a
+            } else {
+                let mut dc_estimates = [0i16; 8];
+                for i in 0..8 {
+                    let a = i32::from(pixels_sans_dc.get_block()[i << 3]) + 1024;
+                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i << 3])
+                        - i32::from(pixels_sans_dc.get_block()[(i << 3) + 1]);
+                    let b = i32::from(left_context.get_vertical()[i]) - (pixel_delta / 2); //round to zero
+                    dc_estimates[i] = (b - a) as i16;
+                }
+
+                i16x8::from(dc_estimates)
+            }
+        };
+
+        let calc_above = || {
+            let above_context = block_context.neighbor_context_above(neighbor_summary);
+
+            if enabled_features.use_16bit_adv_predict {
+                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
+                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
+                let pixel_delta = a1 - a2;
+                let a: i16x8 = a1 + 1024;
+                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+
+                b - a
+            } else {
+                let mut dc_estimates = [0i16; 8];
+                for i in 0..8 {
+                    let a = i32::from(pixels_sans_dc.get_block()[i]) + 1024;
+                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i])
+                        - i32::from(pixels_sans_dc.get_block()[i + 8]);
+                    let b = i32::from(above_context.get_horizontal()[i]) - (pixel_delta / 2); //round to zero
+                    dc_estimates[i] = (b - a) as i16;
+                }
+
+                i16x8::from(dc_estimates)
+            }
+        };
+
+        let min_dc;
+        let max_dc;
+        let mut avg_horizontal: i32;
+        let mut avg_vertical: i32;
+
+        if ALL_PRESENT || self.left_present {
+            if ALL_PRESENT || self.above_present {
+                // most common case where we have both left and above
+                let horiz = calc_left();
+                let vert = calc_above();
+
+                min_dc = horiz.min(vert).reduce_min();
+                max_dc = horiz.max(vert).reduce_max();
+
+                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
+                avg_vertical = i32x8::from_i16x8(vert).reduce_add();
+            } else {
+                let horiz = calc_left();
+                min_dc = horiz.reduce_min();
+                max_dc = horiz.reduce_max();
+
+                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
+                avg_vertical = avg_horizontal;
+            }
+        } else if self.above_present {
+            let vert = calc_above();
+            min_dc = vert.reduce_min();
+            max_dc = vert.reduce_max();
+
+            avg_vertical = i32x8::from_i16x8(vert).reduce_add();
+            avg_horizontal = avg_vertical;
+        } else {
+            return PredictDCResult {
+                predicted_dc: 0,
+                uncertainty: 0,
+                uncertainty2: 0,
+                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            };
+        }
+
+        let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
+        let uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
+        avg_horizontal -= avgmed;
+        avg_vertical -= avgmed;
+
+        let mut far_afield_value = avg_vertical;
+        if avg_horizontal.abs() < avg_vertical.abs() {
+            far_afield_value = avg_horizontal;
+        }
+
+        let uncertainty2_val = (far_afield_value >> 3) as i16;
+
+        return PredictDCResult {
+            predicted_dc: (avgmed / q0 + 4) >> 3,
+            uncertainty: uncertainty_val,
+            uncertainty2: uncertainty2_val,
+            advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+        };
+    }
+
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         here: &AlignedBlock,

@@ -168,6 +168,122 @@ pub fn run_idct<const IGNORE_DC: bool>(
     ]))
 }
 
+#[inline(always)]
+pub fn run_idct_decode(block: &[i32x8; 8], neighbor_summary: &mut NeighborSummary) -> AlignedBlock {
+    // produce predictions for edge DCT coefs:
+    // for the block below
+    let mut horiz_pred = ICOS_BASED_8192_SCALED_PM[0] * block[0];
+    for i in 1..8 {
+        horiz_pred += ICOS_BASED_8192_SCALED_PM[i] * block[i];
+    }
+
+    neighbor_summary.set_horizontal_coefs(horiz_pred);
+
+    let t = i32x8::transpose(*block);
+
+    // for the block to the right
+    let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * t[0];
+    for i in 1..8 {
+        vert_pred += ICOS_BASED_8192_SCALED_PM[i] * t[i];
+    }
+
+    neighbor_summary.set_vertical_coefs(vert_pred);
+
+    let mut xv0 = (t[0] << 11) + 128;
+    let mut xv1 = t[1];
+    let mut xv2 = t[2];
+    let mut xv3 = t[3];
+    let mut xv4 = t[4] << 11;
+    let mut xv5 = t[5];
+    let mut xv6 = t[6];
+    let mut xv7 = t[7];
+
+    // Stage 1.
+    let mut xv8 = _W7 * (xv1 + xv7);
+    xv1 = xv8 + (W1MW7 * xv1);
+    xv7 = xv8 - (W1PW7 * xv7);
+    xv8 = _W3 * (xv5 + xv3);
+    xv5 = xv8 - (W3MW5 * xv5);
+    xv3 = xv8 - (W3PW5 * xv3);
+
+    // Stage 2.
+    xv8 = xv0 + xv4;
+    xv0 -= xv4;
+    xv4 = W6 * (xv2 + xv6);
+    xv6 = xv4 - (W2PW6 * xv6);
+    xv2 = xv4 + (W2MW6 * xv2);
+    xv4 = xv1 + xv5;
+    xv1 -= xv5;
+    xv5 = xv7 + xv3;
+    xv7 -= xv3;
+
+    // Stage 3.
+    xv3 = xv8 + xv2;
+    xv8 -= xv2;
+    xv2 = xv0 + xv6;
+    xv0 -= xv6;
+    xv6 = ((R2 * (xv1 + xv7)) + 128) >> 8;
+    xv1 = ((R2 * (xv1 - xv7)) + 128) >> 8;
+
+    // Stage 4.
+    let row = [
+        (xv3 + xv4) >> 8,
+        (xv2 + xv6) >> 8,
+        (xv0 + xv1) >> 8,
+        (xv8 + xv5) >> 8,
+        (xv8 - xv5) >> 8,
+        (xv0 - xv1) >> 8,
+        (xv2 - xv6) >> 8,
+        (xv3 - xv4) >> 8,
+    ];
+
+    // transpose and now do vertical
+    let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
+        i32x8::transpose(row);
+
+    yv0 = (yv0 << 8) + 8192;
+    yv4 = yv4 << 8;
+
+    // Stage 1.
+    let mut yv8 = (W7 * (yv1 + yv7)) + 4;
+    yv1 = (yv8 + (W1MW7 * yv1)) >> 3;
+    yv7 = (yv8 - (W1PW7 * yv7)) >> 3;
+    yv8 = (W3 * (yv5 + yv3)) + 4;
+    yv5 = (yv8 - (W3MW5 * yv5)) >> 3;
+    yv3 = (yv8 - (W3PW5 * yv3)) >> 3;
+
+    // Stage 2.
+    yv8 = yv0 + yv4;
+    yv0 -= yv4;
+    yv4 = ((W6) * (yv2 + yv6)) + 4;
+    yv6 = (yv4 - (W2PW6 * yv6)) >> 3;
+    yv2 = (yv4 + (W2MW6 * yv2)) >> 3;
+    yv4 = yv1 + yv5;
+    yv1 -= yv5;
+    yv5 = yv7 + yv3;
+    yv7 -= yv3;
+
+    // Stage 3.
+    yv3 = yv8 + yv2;
+    yv8 -= yv2;
+    yv2 = yv0 + yv6;
+    yv0 -= yv6;
+    yv6 = ((R2 * (yv1 + yv7)) + 128) >> 8;
+    yv1 = ((R2 * (yv1 - yv7)) + 128) >> 8;
+
+    // Stage 4.
+    AlignedBlock::new(cast([
+        i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
+        i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
+        i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
+        i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
+        i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
+        i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
+        i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
+        i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
+    ]))
+}
+
 #[cfg(test)]
 fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     use std::num::Wrapping;
