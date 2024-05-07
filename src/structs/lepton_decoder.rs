@@ -17,7 +17,7 @@ use std::io::Read;
 
 use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
-use crate::helpers::{err_exit_code, here, u16_bit_length};
+use crate::helpers::{err_exit_code, here, u32_bit_length};
 use crate::lepton_error::ExitCode;
 
 use crate::metrics::Metrics;
@@ -28,7 +28,7 @@ use crate::structs::{
     row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
 };
 
-use super::block_context::BlockContext;
+use super::block_context::{BlockContext, NeighborData};
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -49,7 +49,7 @@ pub fn lepton_decode_row_range<R: Read>(
     let max_coded_heights = trunc.get_max_coded_heights();
 
     let mut is_top_row = Vec::new();
-    let mut num_non_zeros = Vec::new();
+    let mut neighbor_summary_cache = Vec::new();
 
     // Init helper structures
     for i in 0..image_data.len() {
@@ -60,7 +60,7 @@ pub fn lepton_decode_row_range<R: Read>(
         let mut num_non_zero_list = Vec::new();
         num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
 
-        num_non_zeros.push(num_non_zero_list);
+        neighbor_summary_cache.push(num_non_zero_list);
     }
 
     let mut model = Model::default_boxed();
@@ -99,7 +99,7 @@ pub fn lepton_decode_row_range<R: Read>(
             pts,
             &mut image_data[cur_row.component],
             &qt[cur_row.component],
-            &mut num_non_zeros[cur_row.component],
+            &mut neighbor_summary_cache[cur_row.component],
             &mut is_top_row[..],
             &component_size_in_blocks[..],
             cur_row.component,
@@ -118,7 +118,7 @@ fn decode_row_wrapper<R: Read>(
     pts: &ProbabilityTablesSet,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
-    num_non_zeros: &mut Vec<NeighborSummary>,
+    neighbor_summary_cache: &mut Vec<NeighborSummary>,
     is_top_row: &mut [bool],
     component_size_in_blocks: &[i32],
     component: usize,
@@ -139,7 +139,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.top[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -155,7 +155,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.mid_right[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -171,7 +171,7 @@ fn decode_row_wrapper<R: Read>(
             &pts.width_one[component],
             image_data,
             &mut context,
-            num_non_zeros,
+            neighbor_summary_cache,
             component_size_in_blocks[component],
             features,
         )
@@ -190,7 +190,7 @@ fn decode_row<R: Read>(
     right_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     block_context: &mut BlockContext,
-    num_non_zeros: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     component_size_in_blocks: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
@@ -201,7 +201,7 @@ fn decode_row<R: Read>(
             bool_reader,
             image_data,
             block_context,
-            num_non_zeros,
+            neighbor_summary_cache,
             qt,
             left_model,
             features,
@@ -221,7 +221,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -233,7 +233,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 middle_model,
                 features,
@@ -255,7 +255,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -267,7 +267,7 @@ fn decode_row<R: Read>(
                 bool_reader,
                 image_data,
                 block_context,
-                num_non_zeros,
+                neighbor_summary_cache,
                 qt,
                 right_model,
                 features,
@@ -286,85 +286,120 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
     context: &mut BlockContext,
-    neighbor_summary: &mut [NeighborSummary],
+    neighbor_summary_cache: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
 
+    let neighbors =
+        context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
+
+    let (output, ns) =
+        read_coefficient_block::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
+
+    context.set_neighbor_summary_here(neighbor_summary_cache, ns);
+
+    image_data.append_block(output);
+
+    Ok(())
+}
+
+/// Reads the 8x8 coefficient block from the bit reader, taking into account the neighboring
+/// blocks, probability tables and model.
+///
+/// This function is designed to be independently callable without needing to know the context,
+/// image data, etc so it can be extensively unit tested.
+pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
+    pt: &ProbabilityTables,
+    neighbor_data: &NeighborData,
+    model: &mut Model,
+    bool_reader: &mut VPXBoolReader<R>,
+    qt: &QuantizationTables,
+    features: &EnabledFeatures,
+) -> Result<(AlignedBlock, NeighborSummary)> {
     let model_per_color = model.get_per_color(pt);
 
+    // First we read the 49 inner coefficients
+
+    // calculate the predictor context bin based on the neighbors
+    let num_non_zeros_7x7_context_bin =
+        pt.calc_num_non_zeros_7x7_context_bin::<ALL_PRESENT>(neighbor_data);
+
+    // read how many of these are non-zero, which is used both
+    // to terminate the loop early and as a predictor for the model
     let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(
-            bool_reader,
-            pt.calc_non_zero_counts_context_7x7::<ALL_PRESENT>(context, neighbor_summary),
-        )
+        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)
         .context(here!())?;
 
     if num_non_zeros_7x7 > 49 {
+        // most likely a stream or model synchronization error
         return err_exit_code(ExitCode::StreamInconsistent, "numNonzeros7x7 > 49");
     }
 
-    let (above_left, above, left) = context.get_neighbors::<ALL_PRESENT>(image_data, pt);
-
     let mut output = AlignedBlock::default();
-
-    let mut eob_x: u8 = 0;
-    let mut eob_y: u8 = 0;
-    let mut num_non_zeros_left_7x7: u8 = num_non_zeros_7x7;
-
-    let best_priors =
-        pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(&left, &above, &above_left);
     let mut raster: [i32x8; 8] = [0.into(); 8];
     let mut nonzero_mask: u64 = 0;
 
-    let mut horiz_pred: i32x8 = cast(
-        *context
-            .neighbor_context_above(neighbor_summary)
-            .get_horizontal_coef(),
-    );
-    let mut vert_pred: [i32; 8] = *context
-        .neighbor_context_left(neighbor_summary)
-        .get_vertical_coef();
+    // these are used as predictors for the number of non-zero edge coefficients
+    let mut eob_x: u8 = 0;
+    let mut eob_y: u8 = 0;
+    // load predictors data from neighborhood blocks
+    let mut horiz_pred: i32x8 = cast(*neighbor_data.neighbor_context_above.get_horizontal_coef());
+    let mut vert_pred: [i32; 8] = *neighbor_data.neighbor_context_left.get_vertical_coef();
 
-    for zig49 in 0..49 {
-        if num_non_zeros_left_7x7 == 0 {
-            break;
-        }
+    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
-        let coord = UNZIGZAG_49[zig49];
+    if num_non_zeros_7x7_remaining > 0 {
+        let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+            neighbor_data.left,
+            neighbor_data.above,
+            neighbor_data.above_left,
+        );
 
-        let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+        // calculate the bin we are using for the number of non-zeros
+        let mut num_non_zeros_bin =
+            ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
-        let coef = model_per_color
-            .read_coef(
-                bool_reader,
-                zig49,
-                ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_left_7x7) as usize,
-                best_prior_bit_length as usize,
-            )
-            .context(here!())?;
+        // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
+        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
+            let best_prior_bit_length = u32_bit_length(best_priors[coord as usize] as u32);
 
-        if coef != 0 {
-            debug_assert!(
-                (coord & 7) > 0 && (coord >> 3) > 0,
-                "this does the lower 7x7 AC"
-            );
+            let coef = model_per_color
+                .read_coef(
+                    bool_reader,
+                    zig49,
+                    num_non_zeros_bin,
+                    best_prior_bit_length as usize,
+                )
+                .context(here!())?;
 
-            //let b_x = coord & 7;
-            //let b_y = coord >> 3;
+            if coef != 0 {
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                //let b_x = coord & 7;
+                //let b_y = coord >> 3;
 
-            //eob_x = cmp::max(eob_x, b_x);
-            //eob_y = cmp::max(eob_y, b_y);
-            num_non_zeros_left_7x7 -= 1;
+                //eob_x = cmp::max(eob_x, b_x);
+                //eob_y = cmp::max(eob_y, b_y);
 
-            output.set_coefficient(coord as usize, coef);
-            nonzero_mask |= 1 << coord;
+                output.set_coefficient(coord as usize, coef);
+                nonzero_mask |= 1 << coord;
+
+                num_non_zeros_7x7_remaining -= 1;
+                if num_non_zeros_7x7_remaining == 0 {
+                    break;
+                }
+
+                // update the bin since we've chance the number of non-zeros
+                num_non_zeros_bin =
+                    ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
+            }
         }
     }
 
-    if num_non_zeros_left_7x7 > 0 {
+    if num_non_zeros_7x7_remaining > 0 {
         return err_exit_code(
             ExitCode::StreamInconsistent,
             "not enough nonzeros in 7x7 block",
@@ -375,17 +410,16 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
 
     //for row in 1..(eob_y + 1) as usize {
-    for row in 1..8 {
-        if nonzero_mask & (0xFE << (row * 8)) != 0 
-        {
-            raster[row] = get_q(row, &output) * get_q(row, &q);
+    for i in 1..8 {
+        if nonzero_mask & (0xFE << (i * 8)) != 0 {
+            raster[i] = get_q(i, &output) * get_q(i, &q);
             // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-            horiz_pred -= raster[row] * ICOS_BASED_8192_SCALED[row];
-            vert_pred[row] = vert_pred[row].wrapping_sub((raster[row] * mult).reduce_add());
-            eob_y = row as u8;
+            horiz_pred -= raster[i] * ICOS_BASED_8192_SCALED[i];
+            vert_pred[i] = vert_pred[i].wrapping_sub((raster[i] * mult).reduce_add());
+            eob_y = i as u8;
         }
-        if nonzero_mask & (0x0101010101010101 << row) != 0 {
-            eob_x = row as u8;
+        if nonzero_mask & (0x0101010101010101 << i) != 0 {
+            eob_x = i as u8;
         }
     }
 
@@ -405,27 +439,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
         eob_y,
     )?;
 
-    if nonzero_mask & 0xFE != 0 
-    {
+    if nonzero_mask & 0xFE != 0 {
         raster[0] = get_q(0, &output) * get_q(0, &q);
     }
     for row in 1..8 {
-        if nonzero_mask & (1 << (row * 8)) != 0 
-        {
+        if nonzero_mask & (1 << (row * 8)) != 0 {
             let dc_coef = output.get_coefficient(row << 3) as i32;
             let q = qt.get_quantization_table()[row << 3] as i32;
             raster[row] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
         }
     }
 
+    // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc = pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(
-        &raster,
-        q0,
-        context,
-        neighbor_summary,
-        features,
-    );
+    let (predicted_dc, mut summary) =
+        pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
 
     let coef = model
         .read_dc(
@@ -435,33 +463,21 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
             predicted_dc.uncertainty2,
         )
         .context(here!())?;
-
     output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
         predicted_dc.predicted_dc,
     ) as i16);
 
-    let here = context.neighbor_context_here(neighbor_summary);
-    here.set_num_non_zeros(num_non_zeros_7x7);
-
-    here.set_horizontal(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
+    // neighbor summary is used as a predictor for the next block
+    summary.calculate_neighbor_summary(
+        &predicted_dc.advanced_predict_dc_pixels_sans_dc,
+        qt,
+        &output,
+        num_non_zeros_7x7,
         features,
     );
-
-    here.set_vertical(
-        predicted_dc.advanced_predict_dc_pixels_sans_dc.get_block(),
-        qt.get_quantization_table(),
-        output.get_dc(),
-        features,
-    );
-
-    image_data.append_block(output);
-
-    Ok(())
+    Ok((output, summary))
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data

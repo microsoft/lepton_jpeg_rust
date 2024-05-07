@@ -226,7 +226,7 @@ fn recode_one_mcu_row<W: Write>(
                     // encode dc
                     write_coef(
                         huffw,
-                        v,
+                        v < 0,
                         v.unsigned_abs(),
                         0,
                         jf.get_huff_dc_codes(state.get_cmp()),
@@ -369,6 +369,7 @@ fn encode_block_seq(
     // the non-zero coefficients in the block. This can be used
     // to efficiently skip zero blocks using trailing zero scan.
     let block_simd: &[i16x16; 4] = cast_ref(block.get_block());
+
     let mut mask = (block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
         | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
         | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
@@ -377,9 +378,12 @@ fn encode_block_seq(
     // abs value of all coefficients. Super fast to calculate here
     // for everything, even if it is zero and not needed.
     let abs_value: [u16; 64] = cast(block_simd.map(|x| x.abs()));
+    let is_neg: [u16; 64] = cast(block_simd.map(|x| x >> 15));
 
     // encode DC
-    write_coef(huffw, block.get_coefficient(0), abs_value[0], 0, dctbl);
+    // & 256 is bit faster all the bits are 1s and since it allows the optimizer
+    //   to convert << 8 (inside this function) to a single AND
+    write_coef(huffw, (is_neg[0] & 256) != 0, abs_value[0], 0, dctbl);
 
     // flip the bits since cmp_eq returns 0xffff for zero coefficients
     mask = !mask;
@@ -405,7 +409,7 @@ fn encode_block_seq(
 
         write_coef(
             huffw,
-            block.get_coefficient((bpos - 1) as usize),
+            (is_neg[(bpos - 1) as usize] & 256) != 0, // a bit faster since it allows the optimizer to convert << 8 (inside this function) to a single AND
             abs_value[(bpos - 1) as usize],
             zeros,
             actbl,
@@ -418,35 +422,38 @@ fn encode_block_seq(
     }
 
     // write EOB since we didn't get all 64 coefficients
-    huffw.write_code(actbl.c_val_shift_s[0x00]);
+    huffw.write(actbl.c_val[0x00].into(), actbl.c_len[0x00].into());
 }
 
 /// encodes a coefficient which is a huffman code specifying the size followed
 /// by the coefficient itself
 #[inline(always)]
-fn write_coef(huffw: &mut BitWriter, coef: i16, abs_coef: u16, z: u32, tbl: &HuffCodes) {
-    // Extend to 32 bits. This results in better performance on modern processors
-    // since the operations are implemented as 32 bit operations anyway,
-    // and the compiler can optimize the code better if it doesn't have to
-    // pretend that the values are 16 bit integers.
-    let abs = u32::from(abs_coef);
-    let bit_width = 32 - abs.leading_zeros();
+fn write_coef(huffw: &mut BitWriter, is_neg: bool, abs_coef: u16, z: u32, tbl: &HuffCodes) {
+    let s = 32 - u32::from(abs_coef).leading_zeros();
+
     // compiler is smart enough to figure out that this will never be >= 256,
     // so no bounds check
-    let hc = (z << 4 | bit_width) as usize;
+    let hc = z << 4 | s;
 
-    let code = if coef > 0 {
-        tbl.c_val_shift_s[2 * hc]
-    } else {
-        tbl.c_val_shift_s[2 * hc + 1]
-    };
+    // JPEG stores the coefficient with an implied sign bit, since once we know the
+    // number of bits, we can infer the sign.
+    //
+    // Eg, if the bitlength of the absolute value is 4,
+    //
+    // 0..7 are negative (corresponding to -15..-8)
+    // 8..15 are positive
+    //
+    // This is equivalent to absolute value XOR (1 << bitlength) - 1 if the number is negative, so
+    // what we do is store this adjustment in c_val_shift_s so that we don't need
+    // to calculate it separately.
+    //
+    // is_neg indicates whether we want the value with the bits set.
+    let val = tbl.c_val_shift_s[(hc | ((is_neg as u32) << 8)) as usize] ^ u32::from(abs_coef);
 
-    // Write to huffman writer (combine into single write).
-    // XOR produces VLI-encoding: for positive values XOR with 0 is a no-op,
-    // for negative XOR of abs with `(1 << bitlength) - 1` is equivalent to
-    // adding `(1 << bitlength) - 1`.
-    let val = code ^ abs;
-    huffw.write_code(val);
+    let new_bits = u32::from(tbl.c_len_plus_s[hc as usize]);
+
+    // write to huffman writer (combine hufmman code and coefficient bits into single write)
+    huffw.write(val, new_bits);
 }
 
 /// progressive AC encoding (first pass)
@@ -473,7 +480,7 @@ fn encode_ac_prg_fs(
             }
 
             // vli encode
-            write_coef(huffw, tmp, tmp.unsigned_abs(), z, actbl);
+            write_coef(huffw, tmp < 0, tmp.unsigned_abs(), z, actbl);
 
             // reset zeroes
             z = 0;
@@ -553,7 +560,7 @@ fn encode_ac_prg_sa(
         // if nonzero is encountered
         else if (tmp == 1) || (tmp == -1) {
             // vli encode
-            write_coef(huffw, tmp, tmp.unsigned_abs(), z, actbl);
+            write_coef(huffw, tmp < 0, tmp.unsigned_abs(), z, actbl);
 
             // write correction bits
             encode_crbits(huffw, correction_bits);
@@ -635,86 +642,134 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
 }
 
-#[test]
-fn test_encode_block_seq() {
+/// roundtrips a block through the encoder and decoder and checks that the output matches the input
+#[cfg(test)]
+fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+    use crate::structs::jpeg_header::generate_huff_table_from_distribution;
+    use crate::structs::{
+        bit_reader::BitReader, jpeg_header::HuffTree, jpeg_read::decode_block_seq,
+    };
+    use std::io::Cursor;
+
     let mut buf = Vec::new();
 
-    let mut b = BitWriter::new();
-    let mut block = AlignedBlock::default();
-    for i in 0..64 {
-        block.get_block_mut()[i] = i as i16;
+    let mut bitwriter = BitWriter::new();
+
+    // create a weird distribution to test the huffman encoding for corner cases
+    let mut dcdistribution = [0; 256];
+    for i in 0..256 {
+        dcdistribution[i] = 256 - i;
     }
+    let dctbl = generate_huff_table_from_distribution(&dcdistribution);
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
+    let mut acdistribution = [0; 256];
+    for i in 0..256 {
+        acdistribution[i] = 1 + 256;
+    }
+    let actbl = generate_huff_table_from_distribution(&acdistribution);
 
-    b.flush_with_escape(&mut buf).unwrap();
+    encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
 
-    let expected = [
-        0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 130, 80, 37, 130, 96, 38, 130, 112,
-        39, 130, 192, 22, 32, 178, 5, 152, 45, 1, 106, 11, 96, 91, 130, 224, 23, 32, 186, 5, 216,
-        47, 1, 122, 11, 224, 95, 131, 64, 13, 8, 52, 64, 209, 131, 72, 13, 40, 52, 192, 211, 131,
-        80, 13, 72, 53, 64, 213, 131, 88, 13, 104, 53, 192, 215, 131, 96, 13, 136, 54, 64, 217,
-        131, 104, 13, 168, 54, 192, 219, 131, 112, 13, 200, 55, 64, 221, 131, 120, 13, 232, 55,
-        192, 223,
-    ];
+    bitwriter.pad(0);
+
+    bitwriter.flush_with_escape(&mut buf).unwrap();
+
     assert_eq!(buf, expected);
+
+    let mut bitreader = BitReader::new(Cursor::new(&buf));
+
+    let mut block_decoded = [0i16; 64];
+    decode_block_seq(
+        &mut bitreader,
+        &HuffTree::construct_hufftree(&dctbl, true).unwrap(),
+        &HuffTree::construct_hufftree(&actbl, true).unwrap(),
+        &mut block_decoded,
+    )
+    .unwrap();
+
+    assert_eq!(&block_decoded, block.get_block());
 }
 
 #[test]
-fn test_encode_block_zero_runs() {
-    let mut buf = Vec::new();
+fn test_encode_block_seq() {
+    let mut block = AlignedBlock::default();
+    for i in 0..64 {
+        block.get_block_mut()[i] = (i as i16) - 32;
+    }
 
-    let mut b = BitWriter::new();
+    let expected = [
+        152, 252, 176, 37, 131, 44, 41, 97, 203, 18, 88, 178, 198, 150, 60, 178, 37, 147, 44, 169,
+        101, 203, 50, 89, 178, 206, 150, 126, 176, 107, 14, 177, 107, 30, 178, 107, 46, 179, 107,
+        56, 136, 17, 34, 40, 69, 128, 128, 47, 120, 250, 3, 0, 226, 48, 70, 136, 225, 31, 173, 26,
+        211, 173, 90, 215, 173, 154, 219, 173, 218, 223, 45, 9, 104, 203, 74, 90, 114, 212, 150,
+        172, 181, 165, 175, 45, 137, 108, 203, 106, 91, 114, 220, 150, 236, 183, 165, 190,
+    ];
+
+    round_trip_block(&block, &expected);
+}
+
+/// make sure we encode magnitudes correctly
+#[test]
+fn test_encode_block_magnitude() {
+    let mut block = AlignedBlock::default();
+    for i in 0..15 {
+        block.get_block_mut()[i] = (1u16 << i) as i16;
+    }
+    for i in 0..15 {
+        block.get_block_mut()[i + 20] = -((1u16 << i) as i16);
+    }
+
+    let expected = [
+        165, 1, 132, 102, 180, 75, 64, 138, 6, 248, 8, 16, 27, 208, 13, 120, 2, 122, 0, 75, 192, 4,
+        60, 0, 8, 224, 0, 109, 128, 1, 250, 1, 68, 94, 179, 203, 60, 137, 246, 247, 232, 15, 251,
+        207, 253, 119, 254, 121, 255, 0, 203, 191, 252, 59, 255, 0, 200, 223, 255, 0, 109, 127,
+        254, 0,
+    ];
+
+    round_trip_block(&block, &expected);
+}
+
+/// test encoding with gaps to test zero counting
+#[test]
+fn test_encode_block_zero_runs() {
     let mut block = AlignedBlock::default();
 
     for i in 0..10 {
         block.get_block_mut()[i] = i as i16;
     }
     for i in 30..50 {
-        block.get_block_mut()[i] = i as i16;
+        block.get_block_mut()[i] = -(i as i16);
     }
     for i in 50..52 {
         block.get_block_mut()[i] = i as i16;
     }
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
-
-    b.flush_with_escape(&mut buf).unwrap();
-
     let expected = [
-        0, 1, 129, 64, 88, 28, 3, 160, 120, 15, 130, 64, 36, 248, 34, 248, 23, 224, 208, 3, 66, 13,
-        16, 52, 96, 210, 3, 74, 13, 48, 52, 224, 212, 3, 82, 13, 80, 53, 96, 214, 3, 90, 13, 112,
-        53, 224, 216, 3, 98, 13, 144, 54, 96,
+        169, 223, 1, 128, 113, 24, 35, 68, 112, 143, 214, 141, 105, 167, 249, 12, 176, 8, 159, 34,
+        120, 137, 210, 39, 8, 155, 34, 104, 137, 146, 38, 8, 151, 34, 88, 137, 82, 37, 8, 147, 34,
+        72, 137, 18, 36, 8, 143, 34, 56, 139, 34, 44, 192, 0,
     ];
-    assert_eq!(buf, expected);
+
+    round_trip_block(&block, &expected);
+}
+
+/// test encoding with gaps to test zero counting
+#[test]
+fn test_encode_block_long_zero_cnt() {
+    let mut block = AlignedBlock::default();
+
+    block.get_block_mut()[63] = 1;
+
+    let expected = [169, 79, 79, 79, 33];
+
+    round_trip_block(&block, &expected);
 }
 
 #[test]
 fn test_encode_block_seq_zero() {
-    let mut buf = Vec::new();
-
-    let mut b: BitWriter = BitWriter::new();
     let block = AlignedBlock::default();
 
-    encode_block_seq(
-        &mut b,
-        &HuffCodes::construct_default_code(),
-        &HuffCodes::construct_default_code(),
-        &block,
-    );
+    let expected = [168, 0];
 
-    b.flush_with_escape(&mut buf).unwrap();
-
-    let expected = [0, 0];
-    assert_eq!(buf, expected);
+    round_trip_block(&block, &expected);
 }

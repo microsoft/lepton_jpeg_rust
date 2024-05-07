@@ -18,6 +18,9 @@ pub struct EnabledFeatures {
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
     pub use_16bit_adv_predict: bool,
+
+    /// Accept JPEG files that have invalid DHT tables
+    pub accept_invalid_dht: bool,
 }
 
 impl EnabledFeatures {
@@ -31,6 +34,7 @@ impl EnabledFeatures {
             max_jpeg_width: 16386,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
+            accept_invalid_dht: false,
         }
     }
 
@@ -45,6 +49,7 @@ impl EnabledFeatures {
             max_jpeg_width: i32::MAX,
             use_16bit_dc_estimate: false,
             use_16bit_adv_predict: false,
+            accept_invalid_dht: true,
         }
     }
 
@@ -59,6 +64,7 @@ impl EnabledFeatures {
             max_jpeg_width: i32::MAX,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
+            accept_invalid_dht: true,
         }
     }
 }

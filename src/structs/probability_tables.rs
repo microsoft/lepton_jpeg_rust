@@ -14,7 +14,7 @@ use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 
 use super::block_based_image::AlignedBlock;
-use super::block_context::BlockContext;
+use super::block_context::NeighborData;
 use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
@@ -84,27 +84,22 @@ impl ProbabilityTables {
         return if self.color == 0 { 0 } else { 1 };
     }
 
-    pub fn num_non_zeros_to_bin(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN[num_non_zeros as usize];
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
+        return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
     }
 
-    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: u8) -> u8 {
-        return NON_ZERO_TO_BIN_7X7[num_non_zeros as usize];
-    }
-
-    pub fn calc_non_zero_counts_context_7x7<const ALL_PRESENT: bool>(
+    pub fn calc_num_non_zeros_7x7_context_bin<const ALL_PRESENT: bool>(
         &self,
-        block: &BlockContext,
-        num_non_zeros: &[NeighborSummary],
+        neighbor_data: &NeighborData,
     ) -> u8 {
         let mut num_non_zeros_above = 0;
         let mut num_non_zeros_left = 0;
         if ALL_PRESENT || self.above_present {
-            num_non_zeros_above = block.get_non_zeros_above(num_non_zeros);
+            num_non_zeros_above = neighbor_data.neighbor_context_above.get_num_non_zeros();
         }
 
         if ALL_PRESENT || self.left_present {
-            num_non_zeros_left = block.get_non_zeros_left(num_non_zeros);
+            num_non_zeros_left = neighbor_data.neighbor_context_left.get_num_non_zeros();
         }
 
         let num_non_zeros_context;
@@ -118,7 +113,7 @@ impl ProbabilityTables {
             num_non_zeros_context = 0;
         }
 
-        return num_non_zeros_context;
+        return NON_ZERO_TO_BIN[usize::from(num_non_zeros_context)];
     }
 
     // calculates the average of the prior values from their corresponding value in the left, above and above/left block
@@ -199,8 +194,7 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         coefficient: usize,
         here: &AlignedBlock,
-        summary_above: &NeighborSummary,
-        summary_left: &NeighborSummary,
+        neighbors_data: &NeighborData,
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
@@ -250,9 +244,9 @@ impl ProbabilityTables {
         }
 
         let mut best_prior: i32 = if HORIZONTAL {
-            summary_above.get_horizontal_coef()[coefficient]
+            neighbors_data.neighbor_context_above.get_horizontal_coef()[coefficient]
         } else {
-            summary_left.get_vertical_coef()[coefficient >> 3]
+            neighbors_data.neighbor_context_left.get_vertical_coef()[coefficient >> 3]
         };
         // // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
         // best_prior = best_prior.wrapping_sub((coef_idct * i32x8::new(compute_lak_coeffs_x)).reduce_add());
@@ -292,19 +286,15 @@ impl ProbabilityTables {
         &self,
         raster_rows: &[i32x8; 8],
         q0: i32,
-        block_context: &mut BlockContext,
-        neighbor_summary: &mut [NeighborSummary],
+        neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
-    ) -> PredictDCResult {
-        let pixels_sans_dc = run_idct_decode(
-            raster_rows,
-            block_context.neighbor_context_here(neighbor_summary),
-        );
+    ) -> (PredictDCResult, NeighborSummary) {
+        let (pixels_sans_dc, neighbor_summary) = run_idct_decode(raster_rows);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
         let calc_left = || {
-            let left_context = block_context.neighbor_context_left(neighbor_summary);
+            let left_context = neighbor_data.neighbor_context_left;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
@@ -329,7 +319,7 @@ impl ProbabilityTables {
         };
 
         let calc_above = || {
-            let above_context = block_context.neighbor_context_above(neighbor_summary);
+            let above_context = neighbor_data.neighbor_context_above;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
@@ -385,12 +375,15 @@ impl ProbabilityTables {
             avg_vertical = i32x8::from_i16x8(vert).reduce_add();
             avg_horizontal = avg_vertical;
         } else {
-            return PredictDCResult {
-                predicted_dc: 0,
-                uncertainty: 0,
-                uncertainty2: 0,
-                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-            };
+            return (
+                PredictDCResult {
+                    predicted_dc: 0,
+                    uncertainty: 0,
+                    uncertainty2: 0,
+                    advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+                },
+                neighbor_summary,
+            );
         }
 
         let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
@@ -405,36 +398,34 @@ impl ProbabilityTables {
 
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
-        return PredictDCResult {
-            predicted_dc: (avgmed / q0 + 4) >> 3,
-            uncertainty: uncertainty_val,
-            uncertainty2: uncertainty2_val,
-            advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-        };
+        return (
+            PredictDCResult {
+                predicted_dc: (avgmed / q0 + 4) >> 3,
+                uncertainty: uncertainty_val,
+                uncertainty2: uncertainty2_val,
+                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            },
+            neighbor_summary,
+        );
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         here: &AlignedBlock,
         qt: &QuantizationTables,
-        block_context: &mut BlockContext,
-        neighbor_summary: &mut [NeighborSummary],
+        neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
-    ) -> PredictDCResult {
+    ) -> (PredictDCResult, NeighborSummary) {
         //let q_transposed = qt.get_quantization_table_transposed();
         let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
 
         //let pixels_sans_dc = run_idct::<true>(here, q_transposed, neighbor_summary);
-        let pixels_sans_dc = run_idct::<true>(
-            here,
-            &q,
-            block_context.neighbor_context_here(neighbor_summary),
-        );
+        let (pixels_sans_dc, summary) = run_idct::<true>(here, &q);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
         let calc_left = || {
-            let left_context = block_context.neighbor_context_left(neighbor_summary);
+            let left_context = neighbor_data.neighbor_context_left;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
@@ -459,7 +450,7 @@ impl ProbabilityTables {
         };
 
         let calc_above = || {
-            let above_context = block_context.neighbor_context_above(neighbor_summary);
+            let above_context = neighbor_data.neighbor_context_above;
 
             if enabled_features.use_16bit_adv_predict {
                 let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
@@ -515,12 +506,15 @@ impl ProbabilityTables {
             avg_vertical = i32x8::from_i16x8(vert).reduce_add();
             avg_horizontal = avg_vertical;
         } else {
-            return PredictDCResult {
-                predicted_dc: 0,
-                uncertainty: 0,
-                uncertainty2: 0,
-                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-            };
+            return (
+                PredictDCResult {
+                    predicted_dc: 0,
+                    uncertainty: 0,
+                    uncertainty2: 0,
+                    advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+                },
+                summary,
+            );
         }
 
         let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
@@ -535,11 +529,14 @@ impl ProbabilityTables {
 
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
-        return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q.get_coefficient(0))) + 4) >> 3,
-            uncertainty: uncertainty_val,
-            uncertainty2: uncertainty2_val,
-            advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-        };
+        return (
+            PredictDCResult {
+                predicted_dc: ((avgmed / i32::from(q.get_coefficient(0))) + 4) >> 3,
+                uncertainty: uncertainty_val,
+                uncertainty2: uncertainty2_val,
+                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            },
+            summary,
+        );
     }
 }

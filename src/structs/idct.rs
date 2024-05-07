@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::neighbor_summary::NeighborSummary;
+use super::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use bytemuck::{cast, cast_ref};
 use wide::{i16x8, i32x8};
 
@@ -41,8 +41,9 @@ pub fn get_q(offset: usize, q: &AlignedBlock) -> i32x8 {
 pub fn run_idct<const IGNORE_DC: bool>(
     block: &AlignedBlock,
     q: &AlignedBlock,
-    neighbor_summary: &mut NeighborSummary,
-) -> AlignedBlock {
+) -> (AlignedBlock, NeighborSummary) {
+    let mut neighbor_summary: NeighborSummary = NEIGHBOR_DATA_EMPTY;
+
     let v: &[i16x8; 8] = cast_ref(block.get_block());
 
     // multiply by quant table
@@ -156,20 +157,24 @@ pub fn run_idct<const IGNORE_DC: bool>(
     yv1 = ((R2 * (yv1 - yv7)) + 128) >> 8;
 
     // Stage 4.
-    AlignedBlock::new(cast([
-        i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
-        i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
-        i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
-        i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
-        i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
-        i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
-        i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
-        i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
-    ]))
+    (
+        AlignedBlock::new(cast([
+            i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
+            i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
+            i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
+            i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
+            i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
+            i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
+            i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
+            i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
+        ])),
+        neighbor_summary,
+    )
 }
 
 #[inline(always)]
-pub fn run_idct_decode(block: &[i32x8; 8], neighbor_summary: &mut NeighborSummary) -> AlignedBlock {
+pub fn run_idct_decode(block: &[i32x8; 8]) -> (AlignedBlock, NeighborSummary) {
+    let mut neighbor_summary: NeighborSummary = NEIGHBOR_DATA_EMPTY;
     // produce predictions for edge DCT coefs:
     // for the block below
     let mut horiz_pred = ICOS_BASED_8192_SCALED_PM[0] * block[0];
@@ -272,16 +277,19 @@ pub fn run_idct_decode(block: &[i32x8; 8], neighbor_summary: &mut NeighborSummar
     yv1 = ((R2 * (yv1 - yv7)) + 128) >> 8;
 
     // Stage 4.
-    AlignedBlock::new(cast([
-        i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
-        i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
-        i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
-        i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
-        i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
-        i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
-        i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
-        i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
-    ]))
+    (
+        AlignedBlock::new(cast([
+            i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
+            i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
+            i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
+            i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
+            i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
+            i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
+            i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
+            i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
+        ])),
+        neighbor_summary,
+    )
 }
 
 #[cfg(test)]
@@ -433,33 +441,21 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
         }
     }
 
-    let mut neighbor_summary = NeighborSummary::new();
+    let q = AlignedBlock::new(cast(*test_q));
 
-    {
-        let outp = run_idct::<true>(
-            test_data,
-            &AlignedBlock::new(cast(*test_q)),
-            &mut neighbor_summary,
-        );
+    let outp = run_idct::<true>(test_data, &q).0;
 
-        let mut outp2 = [0; 64];
-        run_idct_old(test_data, test_q, &mut outp2, true);
+    let mut outp2 = [0; 64];
+    run_idct_old(test_data, test_q, &mut outp2, true);
 
-        assert_eq!(*outp.get_block(), outp2);
-    }
+    assert_eq!(*outp.get_block(), outp2);
 
-    {
-        let outp = run_idct::<false>(
-            test_data,
-            &AlignedBlock::new(cast(*test_q)),
-            &mut neighbor_summary,
-        );
+    let outp = run_idct::<false>(test_data, &q).0;
 
-        let mut outp2 = [0; 64];
-        run_idct_old(test_data, test_q, &mut outp2, false);
+    let mut outp2 = [0; 64];
+    run_idct_old(test_data, test_q, &mut outp2, false);
 
-        assert_eq!(*outp.get_block(), outp2);
-    }
+    assert_eq!(*outp.get_block(), outp2);
 }
 
 /// test with a simple block to catch obvious mistakes

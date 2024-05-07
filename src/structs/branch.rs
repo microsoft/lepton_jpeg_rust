@@ -51,6 +51,18 @@ impl Branch {
         Branch { counts: 0x0101 }
     }
 
+    /// used for testing to set counts to a specific value
+    #[cfg(test)]
+    pub fn set_count(&mut self, count: u16) {
+        self.counts = count;
+    }
+
+    /// used for testing to set counts to a specific value
+    #[cfg(test)]
+    pub fn get_count(&self) -> u16 {
+        self.counts
+    }
+
     /// used for debugging to keep the state for hashing
     #[allow(dead_code)]
     pub fn get_u64(&self) -> u64 {

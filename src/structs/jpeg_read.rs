@@ -447,7 +447,7 @@ fn decode_baseline_rst<R: Read>(
 /// <summary>
 /// sequential block decoding routine
 /// </summary>
-fn decode_block_seq<R: Read>(
+pub fn decode_block_seq<R: Read>(
     bit_reader: &mut BitReader<R>,
     dctree: &HuffTree,
     actree: &HuffTree,

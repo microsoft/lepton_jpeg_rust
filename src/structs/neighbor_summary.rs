@@ -8,6 +8,8 @@ use std::num::Wrapping;
 
 use crate::enabled_features::EnabledFeatures;
 
+use super::{block_based_image::AlignedBlock, quantization_tables::QuantizationTables};
+
 use wide::i32x8;
 
 #[derive(Copy, Clone)]
@@ -20,6 +22,14 @@ pub struct NeighborSummary {
 
     num_non_zeros: u8,
 }
+
+pub static NEIGHBOR_DATA_EMPTY: NeighborSummary = NeighborSummary {
+    edge_pixels_h: [0; 8],
+    edge_pixels_v: [0; 8],
+    edge_coefs_h: [0; 8],
+    edge_coefs_v: [0; 8],
+    num_non_zeros: 0,
+};
 
 const X_IDCT_SCALE: i32 = 8;
 
@@ -38,10 +48,6 @@ impl NeighborSummary {
         self.num_non_zeros
     }
 
-    pub fn set_num_non_zeros(&mut self, v: u8) {
-        self.num_non_zeros = v;
-    }
-
     pub fn get_vertical(&self) -> &[i16; 8] {
         return &self.edge_pixels_v;
     }
@@ -50,7 +56,32 @@ impl NeighborSummary {
         return &self.edge_pixels_h;
     }
 
-    pub fn set_horizontal(
+    pub fn calculate_neighbor_summary(
+        &mut self,
+        here_idct: &AlignedBlock,
+        qt: &QuantizationTables,
+        here: &AlignedBlock,
+        num_non_zeros_7x7: u8,
+        features: &EnabledFeatures,
+    ) {
+        self.set_horizontal(
+            here_idct.get_block(),
+            qt.get_quantization_table(),
+            here.get_dc(),
+            features,
+        );
+
+        self.set_vertical(
+            here_idct.get_block(),
+            qt.get_quantization_table(),
+            here.get_dc(),
+            features,
+        );
+
+        self.num_non_zeros = num_non_zeros_7x7;
+    }
+
+    fn set_horizontal(
         &mut self,
         data: &[i16; 64],
         qt: &[u16; 64],
@@ -77,7 +108,7 @@ impl NeighborSummary {
         }
     }
 
-    pub fn set_vertical(
+    fn set_vertical(
         &mut self,
         data: &[i16; 64],
         qt: &[u16; 64],

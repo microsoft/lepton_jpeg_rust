@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use super::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
-use super::neighbor_summary::NeighborSummary;
+use super::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use super::probability_tables::ProbabilityTables;
 
 pub struct BlockContext {
@@ -16,6 +16,13 @@ pub struct BlockContext {
 
     cur_neighbor_summary_index: i32,
     above_neighbor_summary_index: i32,
+}
+pub struct NeighborData<'a> {
+    pub above: &'a AlignedBlock,
+    pub left: &'a AlignedBlock,
+    pub above_left: &'a AlignedBlock,
+    pub neighbor_context_above: &'a NeighborSummary,
+    pub neighbor_context_left: &'a NeighborSummary,
 }
 
 impl BlockContext {
@@ -72,61 +79,46 @@ impl BlockContext {
         return retval;
     }
 
-    pub fn get_neighbors<'a, const ALL_PRESENT: bool>(
+    pub fn get_neighbor_data<'a, const ALL_PRESENT: bool>(
         &self,
         image_data: &'a BlockBasedImage,
+        neighbor_summary: &'a [NeighborSummary],
         pt: &ProbabilityTables,
-    ) -> (&'a AlignedBlock, &'a AlignedBlock, &'a AlignedBlock) {
-        (
-            if ALL_PRESENT {
+    ) -> NeighborData<'a> {
+        NeighborData::<'a> {
+            above_left: if ALL_PRESENT {
                 image_data.get_block(self.above_block_index - 1)
             } else {
                 &EMPTY_BLOCK
             },
-            if ALL_PRESENT || pt.is_above_present() {
+            above: if ALL_PRESENT || pt.is_above_present() {
                 image_data.get_block(self.above_block_index)
             } else {
                 &EMPTY_BLOCK
             },
-            if ALL_PRESENT || pt.is_left_present() {
+            left: if ALL_PRESENT || pt.is_left_present() {
                 image_data.get_block(self.cur_block_index - 1)
             } else {
                 &EMPTY_BLOCK
             },
-        )
+            neighbor_context_above: if ALL_PRESENT || pt.is_above_present() {
+                &neighbor_summary[self.above_neighbor_summary_index as usize]
+            } else {
+                &NEIGHBOR_DATA_EMPTY
+            },
+            neighbor_context_left: if ALL_PRESENT || pt.is_left_present() {
+                &neighbor_summary[(self.cur_neighbor_summary_index - 1) as usize]
+            } else {
+                &NEIGHBOR_DATA_EMPTY
+            },
+        }
     }
 
-    pub fn non_zeros_here(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
-        return neighbor_summary[self.cur_neighbor_summary_index as usize].get_num_non_zeros();
-    }
-
-    pub fn get_non_zeros_above(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
-        return neighbor_summary[self.above_neighbor_summary_index as usize].get_num_non_zeros();
-    }
-
-    pub fn get_non_zeros_left(&self, neighbor_summary: &[NeighborSummary]) -> u8 {
-        return neighbor_summary[(self.cur_neighbor_summary_index - 1) as usize]
-            .get_num_non_zeros();
-    }
-
-    pub fn neighbor_context_here<'a>(
+    pub fn set_neighbor_summary_here(
         &mut self,
-        neighbor_summary: &'a mut [NeighborSummary],
-    ) -> &'a mut NeighborSummary {
-        return &mut neighbor_summary[self.cur_neighbor_summary_index as usize];
-    }
-
-    pub fn neighbor_context_above<'a>(
-        &self,
-        neighbor_summary: &'a [NeighborSummary],
-    ) -> &'a NeighborSummary {
-        return &neighbor_summary[self.above_neighbor_summary_index as usize];
-    }
-
-    pub fn neighbor_context_left<'a>(
-        &self,
-        neighbor_summary: &'a [NeighborSummary],
-    ) -> &'a NeighborSummary {
-        return &neighbor_summary[std::cmp::max(0, self.cur_neighbor_summary_index - 1) as usize];
+        neighbor_summary_cache: &mut [NeighborSummary],
+        neighbor_summary: NeighborSummary,
+    ) {
+        neighbor_summary_cache[self.cur_neighbor_summary_index as usize] = neighbor_summary;
     }
 }

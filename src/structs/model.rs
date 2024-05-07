@@ -46,6 +46,99 @@ pub struct Model {
     counts_dc: [CountsDC; NUMERIC_LENGTH_MAX],
 }
 
+impl Model {
+    /// Walks through the model and applies the walker function to each branch
+    /// This is used by testing to randomize the model so we can detect
+    /// any mismatches in the way that updates are handled.
+    ///
+    /// This is not used in the normal operation of the codec.
+    ///
+    /// Note: the order of the branch walking must be maintained between the model and the walker,
+    /// otherwise you will break the unit tests.
+    #[cfg(test)]
+    pub fn walk(&mut self, mut walker: impl FnMut(&mut Branch)) {
+        for x in self.per_color.iter_mut() {
+            for y in x.num_non_zeros_counts7x7.iter_mut() {
+                for z in y.iter_mut() {
+                    walker(z);
+                }
+            }
+
+            for y in x.counts.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.exponent_counts.iter_mut() {
+                        for q in w.iter_mut() {
+                            walker(q);
+                        }
+                    }
+
+                    for w in z.residual_noise_counts.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.num_non_zeros_counts1x8.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.num_non_zeros_counts8x1.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.counts_x.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.exponent_counts.iter_mut() {
+                        for q in w.iter_mut() {
+                            walker(q);
+                        }
+                    }
+
+                    for w in z.residual_noise_counts.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.residual_threshold_counts.iter_mut() {
+                for z in y.iter_mut() {
+                    for w in z.iter_mut() {
+                        walker(w);
+                    }
+                }
+            }
+
+            for y in x.sign_counts.iter_mut() {
+                for z in y.iter_mut() {
+                    walker(z);
+                }
+            }
+        }
+    }
+
+    /// calculates a checksum of the model so we can compare two models for equality
+    #[cfg(test)]
+    pub fn model_checksum(&mut self) -> u64 {
+        use siphasher::sip::SipHasher13;
+        use std::hash::Hasher;
+
+        let mut h = SipHasher13::new();
+        self.walk(|x| {
+            h.write_u16(x.get_count());
+        });
+
+        h.finish()
+    }
+}
+
 // Arrays are more or less in the order of access.
 // Array `residual_noise_counts` is split into 7x7 and edge parts to save memory.
 // Some dimensions are exchanged to get lower changing rate outer, lowering cache misses frequency.
@@ -98,7 +191,7 @@ impl ModelPerColor {
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
-    ) -> Result<i16> {
+    ) -> std::io::Result<i16> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
@@ -110,8 +203,7 @@ impl ModelPerColor {
             ModelComponent::Coef(ModelSubComponent::Exp),
             ModelComponent::Coef(ModelSubComponent::Sign),
             ModelComponent::Coef(ModelSubComponent::Noise),
-        )
-        .context(here!());
+        );
     }
 
     #[inline(never)]
@@ -139,6 +231,7 @@ impl ModelPerColor {
         .context(here!());
     }
 
+    #[inline(always)]
     fn get_coef_branches(
         &mut self,
         num_non_zeros_bin: usize,
@@ -149,10 +242,19 @@ impl ModelPerColor {
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        debug_assert!(
-            num_non_zeros_bin < self.counts.len(),
+        // these bounds checks happen anyway, but we can provide more helpful error messages
+        // and it also means that the compiler can move the actual array references around
+        // if it helps with performance
+        assert!(
+            num_non_zeros_bin < NUM_NON_ZERO_7X7_BINS,
             "num_non_zeros_bin {0} too high",
             num_non_zeros_bin
+        );
+        assert!(zig49 < 49, "zig49 {0} too high", num_non_zeros_bin);
+        assert!(
+            best_prior_bit_len < MAX_EXPONENT,
+            "best_prior_bit_len {0} too high",
+            best_prior_bit_len
         );
 
         let exp = &mut self.counts[num_non_zeros_bin][zig49].exponent_counts[best_prior_bit_len];
@@ -165,11 +267,11 @@ impl ModelPerColor {
     pub fn write_non_zero_7x7_count<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        num_non_zeros_context: u8,
+        num_non_zeros_7x7_context_bin: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+        let num_non_zeros_prob =
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
         return bool_writer
             .put_grid(
@@ -202,10 +304,10 @@ impl ModelPerColor {
     pub fn read_non_zero_7x7_count<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        num_non_zeros_context: u8,
+        num_non_zeros_7x7_context_bin: u8,
     ) -> Result<u8> {
-        let num_non_zeros_prob = &mut self.num_non_zeros_counts7x7
-            [ProbabilityTables::num_non_zeros_to_bin(num_non_zeros_context) as usize];
+        let num_non_zeros_prob =
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
         return Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
@@ -418,11 +520,9 @@ impl ModelPerColor {
         num_nonzeros_bin: u8,
     ) -> &mut [Branch; 8] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
-                [num_nonzeros_bin as usize];
+            return &mut self.num_non_zeros_counts8x1[est_eob as usize][num_nonzeros_bin as usize];
         } else {
-            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
-                [num_nonzeros_bin as usize];
+            return &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize];
         }
     }
 
@@ -503,6 +603,7 @@ impl Model {
         (exp, sign, bits)
     }
 
+    #[inline(always)]
     fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
         bool_reader: &mut VPXBoolReader<R>,
         magnitude_branches: &mut [Branch; A],
@@ -511,7 +612,7 @@ impl Model {
         mag_cmp: ModelComponent,
         sign_cmp: ModelComponent,
         bits_cmp: ModelComponent,
-    ) -> Result<i16> {
+    ) -> std::io::Result<i16> {
         debug_assert!(
             A - 1 <= B,
             "A (max mag) should be not more than B+1 (max bits). A={0} B={1} from {2:?}",
@@ -520,17 +621,13 @@ impl Model {
             mag_cmp
         );
 
-        let length = bool_reader
-            .get_unary_encoded(magnitude_branches, mag_cmp)
-            .context(here!())?;
+        let length = bool_reader.get_unary_encoded(magnitude_branches, mag_cmp)?;
 
         let mut coef: i16 = 0;
         if length != 0 {
             let neg = !bool_reader.get(sign_branch, sign_cmp)?;
             if length > 1 {
-                coef = bool_reader
-                    .get_n_bits(length - 1, bits_branch, bits_cmp)
-                    .context(here!())? as i16;
+                coef = bool_reader.get_n_bits(length - 1, bits_branch, bits_cmp)? as i16;
             }
 
             coef |= (1 << (length - 1)) as i16;

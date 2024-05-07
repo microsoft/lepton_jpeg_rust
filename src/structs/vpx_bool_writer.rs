@@ -26,9 +26,6 @@ use std::io::{Result, Write};
 
 use crate::metrics::{Metrics, ModelComponent};
 
-#[cfg(feature = "compression_stats")]
-use crate::metrics::ModelStatsCollector;
-
 use super::{branch::Branch, simple_hash::SimpleHash};
 
 pub struct VPXBoolWriter<W> {

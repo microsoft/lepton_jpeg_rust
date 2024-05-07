@@ -96,13 +96,13 @@ impl BitWriter {
         }
     }
 
-    #[inline(always)]
-    pub fn write_code(&mut self, code: u32) {
-        let new_bits = code >> 27;
-        let val = code & 0x7FFFFFF;
+    // #[inline(always)]
+    // pub fn write_code(&mut self, code: u32) {
+    //     let new_bits = code >> 27;
+    //     let val = code & 0x7FFFFFF;
 
-        self.write(val, new_bits);
-    }
+    //     self.write(val, new_bits);
+    // }
 
     pub fn pad(&mut self, fillbit: u8) {
         let mut offset = 1;
