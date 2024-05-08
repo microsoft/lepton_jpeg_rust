@@ -338,15 +338,16 @@ impl ModelPerColor {
     ) -> Result<i16> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
-        let best_prior_abs = best_prior.unsigned_abs();
-        let best_prior_bit_len =
-            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
-
         assert!(
             num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
             "num_non_zeros_edge_bin {0} too high",
             num_non_zeros_edge_bin
         );
+
+        // we cap the bit length since the prior prediction can be wonky
+        let best_prior_abs = best_prior.unsigned_abs();
+        let best_prior_bit_len =
+            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
         let length_branches = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
             .exponent_counts[best_prior_bit_len];
@@ -435,6 +436,7 @@ impl ModelPerColor {
             num_non_zeros_edge_bin
         );
 
+        // we cap the bit length since the prior prediction can be wonky
         let best_prior_abs = best_prior.unsigned_abs();
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
