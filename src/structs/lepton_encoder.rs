@@ -5,9 +5,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 use anyhow::{Context, Result};
+use bytemuck::cast_ref;
 
 use std::cmp;
 use std::io::Write;
+use wide::{i16x16, CmpEq};
 
 use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
@@ -333,6 +335,15 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 ) -> Result<NeighborSummary> {
     let model_per_color = model.get_per_color(pt);
 
+    // using SIMD instructions, construct a 64 bit mask of all
+    // the non-zero coefficients in the block, cmp_eq returns 0xffff for zero coefficients
+    let block_simd: &[i16x16; 4] = cast_ref(here.get_block());
+
+    let mask = !((block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
+        | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
+        | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
+        | ((block_simd[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48));
+
     // First we encode the 49 inner coefficients
 
     // calculate the predictor context bin based on the neighbors
@@ -341,6 +352,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // store how many of these coefficients are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
+    // TODO: vectorize
     let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
 
     model_per_color
@@ -372,28 +384,37 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
             let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
 
-            let coef = here.get_coefficient(coord as usize);
-
-            model_per_color
-                .write_coef(
-                    bool_writer,
-                    coef,
-                    zig49,
-                    num_non_zeros_remaining_bin,
-                    best_prior_bit_length as usize,
-                )
-                .context(here!())?;
-
-            if coef != 0 {
+            if mask & (1 << coord) == 0 {
+                model_per_color
+                    .write_coef(
+                        bool_writer,
+                        0,
+                        zig49,
+                        num_non_zeros_remaining_bin,
+                        best_prior_bit_length as usize,
+                    )
+                    .context(here!())?;
+            } else {
+                // coef != 0
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
                 let bx = coord & 7;
                 let by = coord >> 3;
 
-                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
-
                 eob_x = cmp::max(eob_x, bx);
                 eob_y = cmp::max(eob_y, by);
+
+                let coef = here.get_coefficient(coord as usize);
+
+                model_per_color
+                    .write_coef(
+                        bool_writer,
+                        coef,
+                        zig49,
+                        num_non_zeros_remaining_bin,
+                        best_prior_bit_length as usize,
+                    )
+                    .context(here!())?;
 
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {

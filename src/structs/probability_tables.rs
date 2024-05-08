@@ -288,8 +288,8 @@ impl ProbabilityTables {
         q0: i32,
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
-    ) -> (PredictDCResult, NeighborSummary) {
-        let (pixels_sans_dc, neighbor_summary) = run_idct_decode(raster_rows);
+    ) -> PredictDCResult {
+        let pixels_sans_dc = run_idct_decode(raster_rows);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
@@ -375,15 +375,12 @@ impl ProbabilityTables {
             avg_vertical = i32x8::from_i16x8(vert).reduce_add();
             avg_horizontal = avg_vertical;
         } else {
-            return (
-                PredictDCResult {
-                    predicted_dc: 0,
-                    uncertainty: 0,
-                    uncertainty2: 0,
-                    advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-                },
-                neighbor_summary,
-            );
+            return PredictDCResult {
+                predicted_dc: 0,
+                uncertainty: 0,
+                uncertainty2: 0,
+                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            };
         }
 
         let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
@@ -398,15 +395,12 @@ impl ProbabilityTables {
 
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
-        return (
-            PredictDCResult {
-                predicted_dc: (avgmed / q0 + 4) >> 3,
-                uncertainty: uncertainty_val,
-                uncertainty2: uncertainty2_val,
-                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-            },
-            neighbor_summary,
-        );
+        return PredictDCResult {
+            predicted_dc: (avgmed / q0 + 4) >> 3,
+            uncertainty: uncertainty_val,
+            uncertainty2: uncertainty2_val,
+            advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+        };
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(

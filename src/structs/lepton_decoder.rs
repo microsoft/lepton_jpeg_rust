@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::consts::ICOS_BASED_8192_SCALED;
+use crate::consts::{ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
 use crate::structs::idct::get_q;
 use bytemuck::cast;
 use wide::i32x8;
@@ -29,6 +29,7 @@ use crate::structs::{
 };
 
 use super::block_context::{BlockContext, NeighborData};
+use super::neighbor_summary::NEIGHBOR_DATA_EMPTY;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -345,9 +346,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     // these are used as predictors for the number of non-zero edge coefficients
     let mut eob_x: u8 = 0;
     let mut eob_y: u8 = 0;
-    // load predictors data from neighborhood blocks
-    let mut horiz_pred: i32x8 = cast(*neighbor_data.neighbor_context_above.get_horizontal_coef());
-    let mut vert_pred: [i32; 8] = *neighbor_data.neighbor_context_left.get_vertical_coef();
 
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
@@ -376,14 +374,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                 .context(here!())?;
 
             if coef != 0 {
-                // here we calculate the furthest x and y coordinates that have non-zero coefficients
-                // which is later used as a predictor for the number of edge coefficients
-                //let b_x = coord & 7;
-                //let b_y = coord >> 3;
-
-                //eob_x = cmp::max(eob_x, b_x);
-                //eob_y = cmp::max(eob_y, b_y);
-
                 output.set_coefficient(coord as usize, coef);
                 nonzero_mask |= 1 << coord;
 
@@ -406,19 +396,28 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         );
     }
 
+    // here we calculate the furthest x and y coordinates that have non-zero coefficients
+    // which is later used as a predictor for the number of edge coefficients,
+    // dequantize raster coefficients, and produce predictors for edge DCT coefficients
     let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
-    let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
+    let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
+    // load predictors data from neighborhood blocks
+    let mut horiz_pred: i32x8 = cast(*neighbor_data.neighbor_context_above.get_horizontal_coef());
+    let mut vert_pred: [i32; 8] = *neighbor_data.neighbor_context_left.get_vertical_coef();
 
-    //for row in 1..(eob_y + 1) as usize {
     for i in 1..8 {
         if nonzero_mask & (0xFE << (i * 8)) != 0 {
+            // have non-zero coefficients in the row i
+            eob_y = i as u8;
+
             raster[i] = get_q(i, &output) * get_q(i, &q);
             // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
             horiz_pred -= raster[i] * ICOS_BASED_8192_SCALED[i];
             vert_pred[i] = vert_pred[i].wrapping_sub((raster[i] * mult).reduce_add());
-            eob_y = i as u8;
         }
-        if nonzero_mask & (0x0101010101010101 << i) != 0 {
+
+        if nonzero_mask & (0x0101010101010100 << i) != 0 {
+            // have non-zero coefficients in the column i
             eob_x = i as u8;
         }
     }
@@ -439,21 +438,38 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         eob_y,
     )?;
 
+    // here we produce first part of edge DCT coefficients predictions for neighborhood blocks
+    // and finalize dequantization of raster
+    horiz_pred = 0.into();
+    vert_pred = [0; 8];
+    mult = cast(ICOS_BASED_8192_SCALED_PM);
+
     if nonzero_mask & 0xFE != 0 {
         raster[0] = get_q(0, &output) * get_q(0, &q);
+        horiz_pred += ICOS_BASED_8192_SCALED_PM[0] * raster[0];
     }
     for row in 1..8 {
-        if nonzero_mask & (1 << (row * 8)) != 0 {
+        if nonzero_mask & (0xFF << (row * 8)) != 0 {
+            // add row DC coef
             let dc_coef = output.get_coefficient(row << 3) as i32;
             let q = qt.get_quantization_table()[row << 3] as i32;
             raster[row] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
+            // produce predictions for edge DCT coefs for the block below
+            horiz_pred += ICOS_BASED_8192_SCALED_PM[row] * raster[row];
+            // and for the block to the right
+            vert_pred[row] = (mult * raster[row]).reduce_add();
         }
     }
 
+    let mut summary = NEIGHBOR_DATA_EMPTY;
+    summary.set_horizontal_coefs(horiz_pred);
+    summary.set_vertical_coefs(cast(vert_pred));
+
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let (predicted_dc, mut summary) =
+    let predicted_dc =
         pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    // save predictions for edge DCT coefs for the block below
 
     let coef = model
         .read_dc(
