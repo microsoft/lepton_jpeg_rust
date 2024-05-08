@@ -338,11 +338,15 @@ impl ModelPerColor {
     ) -> Result<i16> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
+        // bounds checks will test these anyway, so check here for better
+        // error messages and also gives the optimizer more freedom to move code around
         assert!(
             num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
             "num_non_zeros_edge_bin {0} too high",
             num_non_zeros_edge_bin
         );
+
+        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
 
         // we cap the bit length since the prior prediction can be wonky
         let best_prior_abs = best_prior.unsigned_abs();
@@ -430,22 +434,26 @@ impl ModelPerColor {
     ) -> Result<()> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
+        // bounds checks will test these anyway, so check here for better
+        // error messages and also gives the optimizer more freedom to move code around
         assert!(
             num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
             "num_non_zeros_edge_bin {0} too high",
             num_non_zeros_edge_bin
         );
 
+        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
+
         // we cap the bit length since the prior prediction can be wonky
         let best_prior_abs = best_prior.unsigned_abs();
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
-        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
-            [best_prior_bit_len];
-
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
+
+        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
+            [best_prior_bit_len];
 
         if length > MAX_EXPONENT {
             return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
