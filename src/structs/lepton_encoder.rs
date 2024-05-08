@@ -569,18 +569,21 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            qt,
-            coord,
-            &block,
-            &above,
-            &left,
-            num_non_zeros_edge,
+            qt, coord, &block, &above, &left,
         );
 
         let coef = block.get_coefficient(coord);
 
         model_per_color
-            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
+            .write_edge_coefficient(
+                bool_writer,
+                qt,
+                coef,
+                coord,
+                zig15offset,
+                num_non_zeros_edge,
+                &ptcc8,
+            )
             .context(here!())?;
 
         if coef != 0 {

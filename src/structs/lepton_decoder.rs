@@ -509,16 +509,17 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            qt,
-            coord,
-            here_mut,
-            above,
-            left,
-            num_non_zeros_edge,
+            qt, coord, here_mut, above, left,
         );
 
-        let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
+        let coef = model_per_color.read_edge_coefficient(
+            bool_reader,
+            qt,
+            coord,
+            zig15offset,
+            num_non_zeros_edge,
+            &ptcc8,
+        )?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;

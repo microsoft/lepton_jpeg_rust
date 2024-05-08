@@ -334,9 +334,18 @@ impl ModelPerColor {
         qt: &QuantizationTables,
         coord: usize,
         zig15offset: usize,
+        num_non_zeros_edge: u8,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
-        let length_branches = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
+        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
+
+        assert!(
+            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
+            "num_non_zeros_edge_bin {0} too high",
+            num_non_zeros_edge_bin
+        );
+
+        let length_branches = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
             .exponent_counts[ptcc8.best_prior_bit_len as usize];
 
         let length = bool_reader
@@ -383,14 +392,7 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
-                        [zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
                         .residual_noise_counts;
 
                     coef <<= i + 1;
@@ -416,10 +418,19 @@ impl ModelPerColor {
         coef: i16,
         coord: usize,
         zig15offset: usize,
+        num_non_zero_edge: u8,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
-        let exp_array = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
-            .exponent_counts[ptcc8.best_prior_bit_len as usize];
+        let num_non_zeros_edge_bin = usize::from(num_non_zero_edge) - 1;
+
+        assert!(
+            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
+            "num_non_zeros_edge_bin {0} too high",
+            num_non_zeros_edge_bin
+        );
+
+        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
+            [ptcc8.best_prior_bit_len as usize];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -474,14 +485,7 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
-                        [zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
                         .residual_noise_counts;
 
                     bool_writer
