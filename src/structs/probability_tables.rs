@@ -182,8 +182,9 @@ impl ProbabilityTables {
                 compute_lak_coeffs_a[i] = (sign * above.get_coefficient(cur_coef)).into();
             }
 
-            coef_idct =
-                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
+            coef_idct = qt
+                .get_icos_idct_edge8192_dequantized_x(coefficient)
+                .as_array_ref();
         } else if !HORIZONTAL && (ALL_PRESENT || self.left_present) {
             assert!(coefficient <= 56); // avoid bounds check later
 
@@ -205,7 +206,9 @@ impl ProbabilityTables {
                 compute_lak_coeffs_a[i] = (sign * left.get_coefficient(cur_coef)).into();
             }
 
-            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
+            coef_idct = qt
+                .get_icos_idct_edge8192_dequantized_y(coefficient / 8)
+                .as_array_ref();
         } else {
             return 0;
         }
