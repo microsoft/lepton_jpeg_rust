@@ -508,7 +508,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
+        let best_prior = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt, coord, here_mut, above, left,
         );
 
@@ -518,7 +518,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             coord,
             zig15offset,
             num_non_zeros_edge,
-            &ptcc8,
+            best_prior,
         )?;
 
         if coef != 0 {

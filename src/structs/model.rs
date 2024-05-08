@@ -9,14 +9,13 @@ use std::cmp;
 use std::io::{Read, Write};
 
 use crate::consts::*;
-use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length};
+use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length, u32_bit_length};
 use crate::lepton_error::ExitCode;
 use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
 use super::probability_tables::ProbabilityTables;
-use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
@@ -335,9 +334,13 @@ impl ModelPerColor {
         coord: usize,
         zig15offset: usize,
         num_non_zeros_edge: u8,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        best_prior: i32,
     ) -> Result<i16> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
+
+        let best_prior_abs = best_prior.unsigned_abs();
+        let best_prior_bit_len =
+            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
         assert!(
             num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
@@ -346,7 +349,7 @@ impl ModelPerColor {
         );
 
         let length_branches = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
-            .exponent_counts[ptcc8.best_prior_bit_len as usize];
+            .exponent_counts[best_prior_bit_len];
 
         let length = bool_reader
             .get_unary_encoded(
@@ -357,7 +360,7 @@ impl ModelPerColor {
 
         let mut coef = 0;
         if length != 0 {
-            let sign = self.get_sign_counts_mut(ptcc8);
+            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
 
             let neg = !bool_reader
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
@@ -370,8 +373,11 @@ impl ModelPerColor {
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
-                    let thresh_prob =
-                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length);
+                    let thresh_prob = self.get_residual_threshold_counts_mut(
+                        best_prior_abs,
+                        min_threshold,
+                        length,
+                    );
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
@@ -418,10 +424,10 @@ impl ModelPerColor {
         coef: i16,
         coord: usize,
         zig15offset: usize,
-        num_non_zero_edge: u8,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        num_non_zeros_edge: u8,
+        best_prior: i32,
     ) -> Result<()> {
-        let num_non_zeros_edge_bin = usize::from(num_non_zero_edge) - 1;
+        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
         assert!(
             num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
@@ -429,8 +435,12 @@ impl ModelPerColor {
             num_non_zeros_edge_bin
         );
 
+        let best_prior_abs = best_prior.unsigned_abs();
+        let best_prior_bit_len =
+            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
+
         let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
-            [ptcc8.best_prior_bit_len as usize];
+            [best_prior_bit_len];
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
@@ -446,7 +456,7 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
-            let sign = self.get_sign_counts_mut(ptcc8);
+            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
 
             bool_writer.put(
                 coef >= 0,
@@ -459,8 +469,11 @@ impl ModelPerColor {
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {
-                    let thresh_prob =
-                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length as i32);
+                    let thresh_prob = self.get_residual_threshold_counts_mut(
+                        best_prior_abs,
+                        min_threshold,
+                        length as i32,
+                    );
 
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
@@ -505,12 +518,12 @@ impl ModelPerColor {
 
     fn get_residual_threshold_counts_mut(
         &mut self,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        best_prior_abs: u32,
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
         return &mut self.residual_threshold_counts[cmp::min(
-            (ptcc8.best_prior.abs() >> min_threshold) as usize,
+            (best_prior_abs >> min_threshold) as usize,
             self.residual_threshold_counts.len() - 1,
         )][cmp::min(
             (length - min_threshold) as usize,
@@ -530,10 +543,6 @@ impl ModelPerColor {
             return &mut self.num_non_zeros_counts1x8[est_eob as usize]
                 [(num_nonzeros as usize + 3) / 7];
         }
-    }
-
-    fn get_sign_counts_mut(&mut self, ptcc8: &ProbabilityTablesCoefficientContext) -> &mut Branch {
-        &mut self.sign_counts[calc_sign_index(ptcc8.best_prior)][ptcc8.best_prior_bit_len as usize]
     }
 }
 

@@ -4,18 +4,14 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::cmp;
-
 use crate::consts::*;
 use crate::enabled_features;
-use crate::helpers::*;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 
 use super::block_based_image::AlignedBlock;
 use super::block_context::NeighborData;
-use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
 use wide::i16x8;
 use wide::i32x8;
@@ -159,7 +155,7 @@ impl ProbabilityTables {
         here: &AlignedBlock,
         above: &AlignedBlock,
         left: &AlignedBlock,
-    ) -> ProbabilityTablesCoefficientContext {
+    ) -> i32 {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
         let mut compute_lak_coeffs_a: [i32; 8] = [0; 8];
 
@@ -211,10 +207,7 @@ impl ProbabilityTables {
 
             coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
         } else {
-            return ProbabilityTablesCoefficientContext {
-                best_prior: 0,
-                best_prior_bit_len: 0,
-            };
+            return 0;
         }
 
         let mut best_prior: i32 = 0;
@@ -229,10 +222,7 @@ impl ProbabilityTables {
 
         best_prior /= coef_idct[0];
 
-        return ProbabilityTablesCoefficientContext {
-            best_prior,
-            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
-        };
+        return best_prior;
     }
 
     fn from_stride(block: &[i16; 64], offset: usize, stride: usize) -> i16x8 {
