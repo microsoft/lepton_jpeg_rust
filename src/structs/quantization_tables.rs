@@ -6,7 +6,6 @@
 
 use bytemuck::cast;
 use wide::i16x8;
-use wide::i32x8;
 
 use crate::consts::*;
 use crate::helpers::*;
@@ -15,8 +14,8 @@ use super::block_based_image::AlignedBlock;
 use super::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
-    icos_idct_edge8192_dequantized_x: [i32x8; 8],
-    icos_idct_edge8192_dequantized_y: [i32x8; 8],
+    icos_idct_edge8192_dequantized_x: [i32; 64],
+    icos_idct_edge8192_dequantized_y: [i32; 64],
     quantization_table: [u16; 64],
 
     /// quantization_table transposed (as 8x8 matrix rotated by 90 degrees).
@@ -36,8 +35,8 @@ impl QuantizationTables {
 
     pub fn new_from_table(quantization_table: &[u16; 64]) -> Self {
         let mut retval = QuantizationTables {
-            icos_idct_edge8192_dequantized_x: [i32x8::ZERO; 8],
-            icos_idct_edge8192_dequantized_y: [i32x8::ZERO; 8],
+            icos_idct_edge8192_dequantized_x: [0; 64],
+            icos_idct_edge8192_dequantized_y: [0; 64],
             quantization_table_transposed: AlignedBlock::default(),
             quantization_table: [0; 64],
             freq_max: [0; 64],
@@ -61,20 +60,16 @@ impl QuantizationTables {
         self.quantization_table_transposed =
             AlignedBlock::new(cast(i16x8::transpose(cast(self.quantization_table))));
 
-        let mut x = [0; 64];
-        let mut y = [0; 64];
-
         for pixel_row in 0..8 {
             for i in 0..8 {
-                x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED[i * 8]
+                self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
+                    [i * 8]
                     * (self.quantization_table[(i * 8) + pixel_row] as i32);
-                y[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED[i * 8]
+                self.icos_idct_edge8192_dequantized_y[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
+                    [i * 8]
                     * (self.quantization_table[(pixel_row * 8) + i] as i32);
             }
         }
-
-        self.icos_idct_edge8192_dequantized_x = cast(x);
-        self.icos_idct_edge8192_dequantized_y = cast(y);
 
         for coord in 0..64 {
             self.freq_max[coord] = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
@@ -90,12 +85,12 @@ impl QuantizationTables {
         }
     }
 
-    pub fn get_icos_idct_edge8192_dequantized_x(&self, index: usize) -> &i32x8 {
-        &self.icos_idct_edge8192_dequantized_x[index]
+    pub fn get_icos_idct_edge8192_dequantized_x(&self) -> &[i32] {
+        &self.icos_idct_edge8192_dequantized_x
     }
 
-    pub fn get_icos_idct_edge8192_dequantized_y(&self, index: usize) -> &i32x8 {
-        &self.icos_idct_edge8192_dequantized_y[index]
+    pub fn get_icos_idct_edge8192_dequantized_y(&self) -> &[i32] {
+        &self.icos_idct_edge8192_dequantized_y
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
