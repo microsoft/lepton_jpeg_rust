@@ -355,7 +355,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize]);
 
             let coef = model_per_color
                 .read_coef(
