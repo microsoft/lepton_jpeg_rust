@@ -532,8 +532,13 @@ impl ModelPerColor {
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
+        // need to & 0xffff since C++ version casts to a uint16_t in the array lookup
+        // and we need to match that behavior. It's unlikely that this will be a problem
+        // since it would require an extremely large best_prior, which is difficult
+        // due to the range limits of 2047 of the coefficients but still in the
+        // interest of correctness we should match the C++ behavior.
         return &mut self.residual_threshold_counts[cmp::min(
-            (best_prior_abs >> min_threshold) as usize,
+            ((best_prior_abs & 0xffff) >> min_threshold) as usize,
             self.residual_threshold_counts.len() - 1,
         )][cmp::min(
             (length - min_threshold) as usize,

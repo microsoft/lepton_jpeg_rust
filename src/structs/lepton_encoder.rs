@@ -352,8 +352,9 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // these are used as predictors for the number of non-zero edge coefficients
-    let mut eob_x = 0;
-    let mut eob_y = 0;
+    // do math in 32 bits since this is faster on most modern platforms
+    let mut eob_x: u32 = 0;
+    let mut eob_y: u32 = 0;
 
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
@@ -387,8 +388,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let bx = coord & 7;
-                let by = coord >> 3;
+                let bx = u32::from(coord) & 7;
+                let by = u32::from(coord) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
@@ -417,8 +418,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         qt,
         pt,
         num_non_zeros_7x7,
-        eob_x,
-        eob_y,
+        eob_x as u8,
+        eob_y as u8,
     )
     .context(here!())?;
 
