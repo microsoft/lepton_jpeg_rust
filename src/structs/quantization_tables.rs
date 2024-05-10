@@ -13,6 +13,7 @@ pub struct QuantizationTables {
     icos_idct_edge8192_dequantized_x: [i32; 64],
     icos_idct_edge8192_dequantized_y: [i32; 64],
     quantization_table: [u16; 64],
+    quantization_table_transposed: [u16; 64],
     freq_max: [u16; 64],
     min_noise_threshold: [u8; 64],
 }
@@ -29,6 +30,7 @@ impl QuantizationTables {
             icos_idct_edge8192_dequantized_x: [0; 64],
             icos_idct_edge8192_dequantized_y: [0; 64],
             quantization_table: [0; 64],
+            quantization_table_transposed: [0; 64],
             freq_max: [0; 64],
             min_noise_threshold: [0; 64],
         };
@@ -40,11 +42,14 @@ impl QuantizationTables {
 
     fn set_quantization_table(&mut self, quantization_table: &[u16; 64]) {
         for i in 0..64 {
-            self.quantization_table[i] = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
+            let q = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
+            self.quantization_table[i] = q;
+            //self.quantization_table_transposed[(i >> 3) | ((i & 7) << 3)] = q;
         }
 
         for pixel_row in 0..8 {
             for i in 0..8 {
+                self.quantization_table_transposed[(pixel_row * 8) + i] = self.quantization_table[(i * 8) + pixel_row];
                 self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
                     [i]
                     * (self.quantization_table[(i * 8) + pixel_row] as i32);
@@ -77,6 +82,10 @@ impl QuantizationTables {
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
         &self.quantization_table
+    }
+
+    pub fn get_quantization_table_transposed(&self) -> &[u16; 64] {
+        &self.quantization_table_transposed
     }
 
     pub fn get_min_noise_threshold(&self, coef: usize) -> u8 {
