@@ -875,52 +875,45 @@ fn roundtrip_read_write_coefficients(
         NEIGHBOR_DATA_EMPTY
     };
 
-    let mut above_block = AlignedBlock::new(*above.get_block());
-    let mut left_block = AlignedBlock::new(*left.get_block());
+    let neighbors = NeighborData {
+        above: &above,
+        left: &left,
+        above_left: &above,
+        neighbor_context_above: &above_neighbor,
+        neighbor_context_left: &left_neighbor,
+    };
 
-    let mut ns_read: NeighborSummary = NEIGHBOR_DATA_EMPTY;
-
-    {
-        let neighbors = NeighborData {
-            above: &above_block,
-            left: &left_block,
-            above_left: &above_block,
-            neighbor_context_above: &above_neighbor,
-            neighbor_context_left: &left_neighbor,
-        };
-
-        // use the version with ALL_PRESENT is both above and left neighbors are present
-        ns_read = if left_present && above_present {
-            write_coefficient_block::<true, _>(
-                &pt,
-                &neighbors,
-                &here,
-                &mut write_model,
-                &mut bool_writer,
-                &qt,
-                &features,
-            )
-        } else {
-            write_coefficient_block::<false, _>(
-                &pt,
-                &neighbors,
-                &here,
-                &mut write_model,
-                &mut bool_writer,
-                &qt,
-                &features,
-            )
-        }
-        .unwrap();
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+    let ns_read = if left_present && above_present {
+        write_coefficient_block::<true, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+    } else {
+        write_coefficient_block::<false, _>(
+            &pt,
+            &neighbors,
+            &here,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
     }
+    .unwrap();
 
     bool_writer.finish().unwrap();
 
     let mut read_model = make_random_model();
     let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
 
-    *above_block.get_block_mut() = cast(i16x8::transpose(cast(*above_block.get_block())));
-    *left_block.get_block_mut() = cast(i16x8::transpose(cast(*left_block.get_block())));
+    let above_block = AlignedBlock::new(cast(i16x8::transpose(cast(*above.get_block()))));
+    let left_block = AlignedBlock::new(cast(i16x8::transpose(cast(*left.get_block()))));
 
     let neighbors = NeighborData {
         above: &above_block,
@@ -952,13 +945,12 @@ fn roundtrip_read_write_coefficients(
     }
     .unwrap();
 
-    let rows: [i16x8; 8] = cast(*output.get_block());
-    let tr: [i16; 64] = cast(i16x8::transpose(rows));
+    let output_tr: [i16; 64] = cast(i16x8::transpose(cast(*output.get_block())));
 
     assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
     assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
     assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
-    assert_eq!(&tr, here.get_block());
+    assert_eq!(&output_tr, here.get_block());
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 
     let mut h = SipHasher13::new();
