@@ -5,11 +5,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 use anyhow::{Context, Result};
-use bytemuck::cast_ref;
+use bytemuck::cast;
 
-use std::cmp;
 use std::io::Write;
-use wide::{i16x16, CmpEq};
+use wide::{i16x8, CmpEq};
 
 use crate::consts::UNZIGZAG_49;
 use crate::enabled_features::EnabledFeatures;
@@ -337,12 +336,15 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // using SIMD instructions, construct a 64 bit mask of all
     // the non-zero coefficients in the block, cmp_eq returns 0xffff for zero coefficients
-    let block_simd: &[i16x16; 4] = cast_ref(here.get_block());
+    let block_simd: [i16x8; 8] = cast(*here.get_block());
 
-    let mask = !((block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
-        | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
-        | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
-        | ((block_simd[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48));
+    let mut mask = 0;
+    for i in 0..8 {
+        mask |= (block_simd[i].cmp_eq(i16x8::ZERO).move_mask() as u64) << (8 * i);
+    }
+    mask = !mask;
+
+    let mask_7x7 = mask & 0xFEFEFEFEFEFEFE00;
 
     // First we encode the 49 inner coefficients
 
@@ -352,8 +354,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // store how many of these coefficients are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
-    // TODO: vectorize
-    let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
+    let num_non_zeros_7x7 = mask_7x7.count_ones() as u8;
 
     model_per_color
         .write_non_zero_7x7_count(
@@ -363,19 +364,14 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         )
         .context(here!())?;
 
-    // these are used as predictors for the number of non-zero edge coefficients
-    let mut eob_x = 0;
-    let mut eob_y = 0;
-
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
-    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
-        neighbors_data.left,
-        neighbors_data.above,
-        neighbors_data.above_left,
-    );
-
     if num_non_zeros_7x7_remaining > 0 {
+        let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+            neighbors_data.left,
+            neighbors_data.above,
+            neighbors_data.above_left,
+        );
         // calculate the bin we are using for the number of non-zeros
         let mut num_non_zeros_remaining_bin =
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
@@ -396,14 +392,6 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                     .context(here!())?;
             } else {
                 // coef != 0
-                // here we calculate the furthest x and y coordinates that have non-zero coefficients
-                // which is later used as a predictor for the number of edge coefficients
-                let bx = coord & 7;
-                let by = coord >> 3;
-
-                eob_x = cmp::max(eob_x, bx);
-                eob_y = cmp::max(eob_y, by);
-
                 let coef = here.get_coefficient(coord as usize);
 
                 model_per_color
@@ -436,9 +424,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         bool_writer,
         qt,
         pt,
-        num_non_zeros_7x7,
-        eob_x,
-        eob_y,
+        mask,
     )
     .context(here!())?;
 
@@ -476,7 +462,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     summary.calculate_neighbor_summary(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         qt,
-        here,
+        here.get_dc(),
         num_non_zeros_7x7,
         features,
     );
@@ -492,12 +478,21 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
-    eob_x: u8,
-    eob_y: u8,
+    mask: u64,
 ) -> Result<()> {
-    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+    // here we calculate the furthest x and y coordinates that have non-zero coefficients
+    // which are used as predictors for the number of edge coefficients
+    let mask_7x7 = (mask & 0xFEFEFEFEFEFEFE00) | 1;
+    let mut mask_x = mask_7x7 | (mask_7x7 << 32);
+    mask_x |= mask_x << 16;
+    mask_x |= mask_x << 8;
 
+    let eob_x: u8 = mask_x.leading_zeros() as u8;
+    let eob_y: u8 = (mask_7x7.leading_zeros() >> 3) as u8;
+
+    let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
+
+    let num_non_zeros_edge_x = (mask & 0xFE).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, true>(
         neighbors_data,
         here,
@@ -507,8 +502,11 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         pt,
         num_non_zeros_bin,
         eob_x,
+        num_non_zeros_edge_x,
     )
     .context(here!())?;
+
+    let num_non_zeros_edge_y = (mask & 0x0101010101010100).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, false>(
         neighbors_data,
         here,
@@ -518,17 +516,10 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         pt,
         num_non_zeros_bin,
         eob_y,
+        num_non_zeros_edge_y,
     )
     .context(here!())?;
     Ok(())
-}
-
-fn count_non_zero(v: i16) -> u8 {
-    if v == 0 {
-        0
-    } else {
-        1
-    }
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -540,27 +531,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     pt: &ProbabilityTables,
     num_non_zeros_bin: u8,
     est_eob: u8,
+    num_non_zeros_edge: u8,
 ) -> Result<()> {
-    let mut num_non_zeros_edge;
-
-    if HORIZONTAL {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient(1))
-            + count_non_zero(block.get_coefficient(2))
-            + count_non_zero(block.get_coefficient(3))
-            + count_non_zero(block.get_coefficient(4))
-            + count_non_zero(block.get_coefficient(5))
-            + count_non_zero(block.get_coefficient(6))
-            + count_non_zero(block.get_coefficient(7));
-    } else {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient(1 * 8))
-            + count_non_zero(block.get_coefficient(2 * 8))
-            + count_non_zero(block.get_coefficient(3 * 8))
-            + count_non_zero(block.get_coefficient(4 * 8))
-            + count_non_zero(block.get_coefficient(5 * 8))
-            + count_non_zero(block.get_coefficient(6 * 8))
-            + count_non_zero(block.get_coefficient(7 * 8));
-    }
-
     model_per_color
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
@@ -582,8 +554,9 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     let mut coord = delta;
+    let mut num_non_zeros_left = num_non_zeros_edge;
     for _lane in 0..7 {
-        if num_non_zeros_edge == 0 {
+        if num_non_zeros_left == 0 {
             break;
         }
 
@@ -592,7 +565,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             coord,
             &block,
             neighbors_data,
-            num_non_zeros_edge,
+            num_non_zeros_left,
         );
 
         let coef = block.get_coefficient(coord);
@@ -602,7 +575,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             .context(here!())?;
 
         if coef != 0 {
-            num_non_zeros_edge -= 1;
+            num_non_zeros_left -= 1;
         }
 
         coord += delta;
@@ -624,10 +597,10 @@ fn roundtrip_zeros() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x133100e068957963,
-        0x133100e068957963,
-        0x133100e068957963,
-        0x133100e068957963,
+        0x7AC1898CC7C24813,
+        0x7AC1898CC7C24813,
+        0x7AC1898CC7C24813,
+        0x7AC1898CC7C24813,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -649,10 +622,10 @@ fn roundtrip_ones() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0xe5a1980d71891a2b,
-        0x5a8fd92548e2ea07,
-        0xb392ea90d7b31238,
-        0x1a769d84e98a27e,
+        0x9BFB8B62B8F5C8C9,
+        0x93AF2386E2B30C18,
+        0x108F59190036D45A,
+        0xD7A3F6449681E97F,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -676,10 +649,10 @@ fn roundtrip_large_coef() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x506f55523369cf48,
-        0x5b2795bc24a04d2e,
-        0xdcb68ed904cfc4f9,
-        0x80efab28c62db071,
+        0x3195FA3A5611FE57,
+        0xB438BE8570092738,
+        0xD6441DDBA177AC7E,
+        0x15A42C2C0A53C332,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -709,10 +682,10 @@ fn roundtrip_random() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x4b08a910feb758e8,
-        0x44c3f76e93f1d204,
-        0x899bc6e64957e400,
-        0x322e78e37fd7ed13,
+        0x05F9A5949CB1517C,
+        0x006A051435067451,
+        0x42715401410F1602,
+        0x394329CA90795246,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -740,10 +713,10 @@ fn roundtrip_unique() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x31caa65a4af9fe19,
-        0x33622f772a9fc403,
-        0xa2cc76c22f35dfbd,
-        0xdb832d71fc9faf0c,
+        0xEB20783DD8B86A4E,
+        0xFF351314979E8CC6,
+        0xC07C557B9318D5D0,
+        0x38C278C1A08C66B4,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -771,10 +744,10 @@ fn roundtrip_non_zeros_counts() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0xa781963bb25ecfa3,
-        0x4158c01c97aa07d4,
-        0x7744eda601c31332,
-        0x16740ad27fa899fc,
+        0xBB28316BA25CE552,
+        0x3BF2227D37C68152,
+        0xB78F8A203D96A9E6,
+        0x627DB637DA12F0F0,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -853,7 +826,6 @@ fn roundtrip_read_write_coefficients(
     use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
     use crate::structs::vpx_bool_reader::VPXBoolReader;
 
-    use bytemuck::cast;
     use siphasher::sip::SipHasher13;
     use std::hash::Hasher;
     use std::io::Cursor;
@@ -877,7 +849,7 @@ fn roundtrip_read_write_coefficients(
         summary.calculate_neighbor_summary(
             &idct_above,
             &qt,
-            &above,
+            above.get_dc(),
             above.get_count_of_non_zeros_7x7(),
             &features,
         );
@@ -893,7 +865,7 @@ fn roundtrip_read_write_coefficients(
         summary.calculate_neighbor_summary(
             &idct_left,
             &qt,
-            &left,
+            left.get_dc(),
             left.get_count_of_non_zeros_7x7(),
             &features,
         );

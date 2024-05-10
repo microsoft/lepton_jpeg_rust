@@ -15,7 +15,7 @@ use default_boxed::DefaultBoxed;
 
 use std::io::Read;
 
-use crate::consts::UNZIGZAG_49;
+use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u32_bit_length};
 use crate::lepton_error::ExitCode;
@@ -347,10 +347,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
     let mut nonzero_mask: u64 = 0;
 
-    // these are used as predictors for the number of non-zero edge coefficients
-    let mut eob_x: u8 = 0;
-    let mut eob_y: u8 = 0;
-
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
     if num_non_zeros_7x7_remaining > 0 {
@@ -365,8 +361,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
-            let best_prior_bit_length = u32_bit_length(best_priors[coord as usize] as u32);
+        for (zig49, &coord) in UNZIGZAG_49_TR.iter().enumerate() {
+            let best_prior_bit_length = u32_bit_length(best_priors[tr(coord)] as u32);
 
             let coef = model_per_color
                 .read_coef(
@@ -378,8 +374,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                 .context(here!())?;
 
             if coef != 0 {
-                output.set_coefficient(tr(coord), coef);
-                nonzero_mask |= 1 << coord;
+                output.set_coefficient(coord as usize, coef);
+                nonzero_mask |= 1 << tr(coord);
 
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {
@@ -409,22 +405,14 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut vert_pred: i32x8 = cast(*neighbor_data.neighbor_context_left.get_vertical_coef());
 
     let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
-    {
-        for i in 1..8 {
-            if nonzero_mask & (0xFE << (i * 8)) != 0 {
-                // have non-zero coefficients in the row i
-                eob_y = i as u8;
-            }
 
-            if nonzero_mask & (0x0101010101010100 << i) != 0 {
-                // have non-zero coefficients in the column i
-                eob_x = i as u8;
-
-                raster[i] = get_q(i, &output) * get_q(i, &q_tr);
-                // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-                vert_pred -= raster[i] * ICOS_BASED_8192_SCALED[i];
-                h_pred[i] = h_pred[i].wrapping_sub((raster[i] * mult).reduce_add());
-            }
+    for i in 1..8 {
+        if nonzero_mask & (0x0101010101010100 << i) != 0 {
+            // have non-zero coefficients in the column i
+            raster[i] = get_q(i, &output) * get_q(i, &q_tr);
+            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
+            vert_pred -= raster[i] * ICOS_BASED_8192_SCALED[i];
+            h_pred[i] = h_pred[i].wrapping_sub((raster[i] * mult).reduce_add());
         }
     }
 
@@ -440,8 +428,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         pt,
         num_non_zeros_7x7,
         &mut nonzero_mask,
-        eob_x,
-        eob_y,
     )?;
 
     // here we produce first part of edge DCT coefficients predictions for neighborhood blocks
@@ -497,7 +483,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     summary.calculate_neighbor_summary(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         qt,
-        &output,
+        output.get_dc(),
         num_non_zeros_7x7,
         features,
     );
@@ -515,9 +501,15 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
     nonzero_mask: &mut u64,
-    eob_x: u8,
-    eob_y: u8,
 ) -> Result<()> {
+    let mask_7x7 = *nonzero_mask | 1;
+    let mut mask_x = mask_7x7 | (mask_7x7 << 32);
+    mask_x |= mask_x << 16;
+    mask_x |= mask_x << 8;
+
+    let eob_x = mask_x.leading_zeros() as u8;
+    let eob_y = (mask_7x7.leading_zeros() >> 3) as u8;
+
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
     decode_one_edge::<R, ALL_PRESENT, true>(

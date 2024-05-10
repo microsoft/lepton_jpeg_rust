@@ -236,6 +236,7 @@ impl AlignedBlock {
         return sum;
     }
 
+    #[cfg(test)]
     pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
         let mut num_non_zeros7x7: u8 = 0;
         for index in 9..64 {

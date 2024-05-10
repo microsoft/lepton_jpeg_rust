@@ -195,7 +195,7 @@ impl ProbabilityTables {
         coefficient: usize,
         here: &AlignedBlock,
         neighbors_data: &NeighborData,
-        num_non_zeros_x: u8,
+        num_non_zeros_edge: u8,
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
 
@@ -238,7 +238,7 @@ impl ProbabilityTables {
         } else {
             return ProbabilityTablesCoefficientContext {
                 best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_x - 1,
+                num_non_zeros_bin: num_non_zeros_edge - 1,
                 best_prior_bit_len: 0,
             };
         }
@@ -264,7 +264,7 @@ impl ProbabilityTables {
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
-            num_non_zeros_bin: num_non_zeros_x - 1,
+            num_non_zeros_bin: num_non_zeros_edge - 1,
             best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
         };
     }

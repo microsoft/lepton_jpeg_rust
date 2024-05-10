@@ -60,23 +60,15 @@ impl NeighborSummary {
         &mut self,
         here_idct: &AlignedBlock,
         qt: &QuantizationTables,
-        here: &AlignedBlock,
+        dc: i16,
         num_non_zeros_7x7: u8,
         features: &EnabledFeatures,
     ) {
-        self.set_horizontal(
-            here_idct.get_block(),
-            qt.get_quantization_table(),
-            here.get_dc(),
-            features,
-        );
+        let dc_deq = dc as i32 * qt.get_quantization_table()[0] as i32;
 
-        self.set_vertical(
-            here_idct.get_block(),
-            qt.get_quantization_table(),
-            here.get_dc(),
-            features,
-        );
+        self.set_horizontal(here_idct.get_block(), dc_deq, features);
+
+        self.set_vertical(here_idct.get_block(), dc_deq, features);
 
         self.num_non_zeros = num_non_zeros_7x7;
     }
@@ -84,15 +76,14 @@ impl NeighborSummary {
     fn set_horizontal(
         &mut self,
         data: &[i16; 64],
-        qt: &[u16; 64],
-        dc: i16,
+        dc_deq: i32,
         enabled_features: &EnabledFeatures,
     ) {
         if enabled_features.use_16bit_dc_estimate {
             // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
             for i in 0..8 {
                 let delta = data[i + 56].wrapping_sub(data[i + 48]);
-                self.edge_pixels_h[i] = ((dc as i32 * qt[0] as i32) as i16)
+                self.edge_pixels_h[i] = (dc_deq as i16)
                     .wrapping_add(data[i + 56])
                     .wrapping_add(128 * X_IDCT_SCALE as i16)
                     .wrapping_add(delta / 2);
@@ -100,26 +91,18 @@ impl NeighborSummary {
         } else {
             for i in 0..8 {
                 let delta = data[i + 56] as i32 - data[i + 48] as i32;
-                self.edge_pixels_h[i] = ((dc as i32 * qt[0] as i32)
-                    + data[i + 56] as i32
-                    + (128 * X_IDCT_SCALE)
-                    + (delta / 2)) as i16;
+                self.edge_pixels_h[i] =
+                    (dc_deq + data[i + 56] as i32 + (128 * X_IDCT_SCALE) + (delta / 2)) as i16;
             }
         }
     }
 
-    fn set_vertical(
-        &mut self,
-        data: &[i16; 64],
-        qt: &[u16; 64],
-        dc: i16,
-        features: &EnabledFeatures,
-    ) {
+    fn set_vertical(&mut self, data: &[i16; 64], dc_deq: i32, features: &EnabledFeatures) {
         if features.use_16bit_dc_estimate {
             // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
             for i in 0..8 {
                 let delta: i16 = data[(i * 8) + 7].wrapping_sub(data[(i * 8) + 6]);
-                self.edge_pixels_v[i] = ((dc as i32 * qt[0] as i32) as i16)
+                self.edge_pixels_v[i] = (dc_deq as i16)
                     .wrapping_add(data[(i * 8) + 7])
                     .wrapping_add((128 * X_IDCT_SCALE) as i16)
                     .wrapping_add(delta / 2);
@@ -127,10 +110,8 @@ impl NeighborSummary {
         } else {
             for i in 0..8 {
                 let delta = data[(i * 8) + 7] as i32 - data[(i * 8) + 6] as i32;
-                self.edge_pixels_v[i] = ((dc as i32 * qt[0] as i32)
-                    + data[(i * 8) + 7] as i32
-                    + (128 * X_IDCT_SCALE)
-                    + (delta / 2)) as i16;
+                self.edge_pixels_v[i] =
+                    (dc_deq + data[(i * 8) + 7] as i32 + (128 * X_IDCT_SCALE) + (delta / 2)) as i16;
             }
         }
     }
