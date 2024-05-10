@@ -49,7 +49,8 @@ impl QuantizationTables {
 
         for pixel_row in 0..8 {
             for i in 0..8 {
-                self.quantization_table_transposed[(pixel_row * 8) + i] = self.quantization_table[(i * 8) + pixel_row];
+                self.quantization_table_transposed[(pixel_row * 8) + i] =
+                    self.quantization_table[(i * 8) + pixel_row];
                 self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
                     [i]
                     * (self.quantization_table[(i * 8) + pixel_row] as i32);
