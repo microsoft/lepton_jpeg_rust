@@ -401,13 +401,13 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         );
     }
 
+    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
+    // load predictors data from neighborhood blocks
     let mut h_pred: [i32; 8] = *neighbor_data.neighbor_context_above.get_horizontal_coef();
     let mut vert_pred: i32x8 = cast(*neighbor_data.neighbor_context_left.get_vertical_coef());
+
     let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
     {
-        let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
-        // load predictors data from neighborhood blocks
-
         for i in 1..8 {
             if nonzero_mask & (0xFE << (i * 8)) != 0 {
                 // have non-zero coefficients in the row i
@@ -477,37 +477,78 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         eob_y,
     )?;
 
-    let t = i16x8::transpose(cast(*output.get_block()));
-    *output.get_block_mut() = cast(t);
-    raster = i32x8::transpose(raster);
-
     // here we produce first part of edge DCT coefficients predictions for neighborhood blocks
     // and finalize dequantization of raster
-    let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
-    let mut horiz_pred: i32x8 = 0.into();
-    let mut vert_pred: [i32; 8] = [0; 8];
+    // let mut h_pred: i32x8 = 0.into();
+    // let mut v_pred: [i32; 8] = [0; 8];
+
+    // // direct raster
+    // let t = i16x8::transpose(cast(*output.get_block()));
+    // let raster0 = i32x8::transpose(raster);
+    // {
+    //     *output.get_block_mut() = cast(t);
+    //     raster = raster0;
+
+    //     let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
+    //     mult = cast(ICOS_BASED_8192_SCALED_PM);
+
+    //     if nonzero_mask & 0xFE != 0 {
+    //         raster[0] = get_q(0, &output) * get_q(0, &q);
+    //         h_pred += ICOS_BASED_8192_SCALED_PM[0] * raster[0];
+    //         v_pred[0] = (mult * raster[0]).reduce_add();
+    //     }
+    //     for row in 1..8 {
+    //         if nonzero_mask & (0xFF << (row * 8)) != 0 {
+    //             // add row DC coef
+    //             let dc_coef = output.get_coefficient(row << 3) as i32;
+    //             let q = qt.get_quantization_table()[row << 3] as i32;
+    //             raster[row] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
+    //             // produce predictions for edge DCT coefs for the block below
+    //             h_pred += ICOS_BASED_8192_SCALED_PM[row] * raster[row];
+    //             // and for the block to the right
+    //             v_pred[row] = (mult * raster[row]).reduce_add();
+    //         }
+    //     }
+    // }
+
+    // transposed raster
+    // *output.get_block_mut() = cast(i16x8::transpose(t));
+    // let mut raster1 = i32x8::transpose(raster0);
+    let mut horiz_pred: [i32; 8] = [0; 8];
+    let mut vert_pred: i32x8 = 0.into();
     mult = cast(ICOS_BASED_8192_SCALED_PM);
 
-    if nonzero_mask & 0xFE != 0 {
-        raster[0] = get_q(0, &output) * get_q(0, &q);
-        horiz_pred += ICOS_BASED_8192_SCALED_PM[0] * raster[0];
+    if nonzero_mask & 0x0101010101010100 != 0 {
+        raster[0] = get_q(0, &output) * get_q(0, &q_tr);
+        vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
+        horiz_pred[0] = (mult * raster[0]).reduce_add();
     }
-    for row in 1..8 {
-        if nonzero_mask & (0xFF << (row * 8)) != 0 {
-            // add row DC coef
-            let dc_coef = output.get_coefficient(row << 3) as i32;
-            let q = qt.get_quantization_table()[row << 3] as i32;
-            raster[row] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
+    for col in 1..8 {
+        if nonzero_mask & (0x0101010101010101 << col) != 0 {
+            // add column DC coef
+            let dc_coef = output.get_coefficient(col << 3) as i32;
+            let q = qt.get_quantization_table()[col] as i32;
+            raster[col] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
             // produce predictions for edge DCT coefs for the block below
-            horiz_pred += ICOS_BASED_8192_SCALED_PM[row] * raster[row];
+            horiz_pred[col] = (mult * raster[col]).reduce_add();
             // and for the block to the right
-            vert_pred[row] = (mult * raster[row]).reduce_add();
+            vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
         }
     }
 
+    // assert_eq!(raster, i32x8::transpose(raster1));
+    // assert_eq!(h_pred.to_array(), horiz_pred);
+    // assert_eq!(v_pred, vert_pred.to_array());
+
     let mut summary = NEIGHBOR_DATA_EMPTY;
-    summary.set_horizontal_coefs(horiz_pred);
-    summary.set_vertical_coefs(cast(vert_pred));
+    summary.set_horizontal_coefs(cast(horiz_pred));
+    //summary.set_horizontal_coefs(h_pred);
+    summary.set_vertical_coefs(vert_pred);
+    //summary.set_vertical_coefs(cast(v_pred));
+
+    let t = i16x8::transpose(cast(*output.get_block()));
+    *output.get_block_mut() = cast(t);
+    raster = i32x8::transpose(raster);
 
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
