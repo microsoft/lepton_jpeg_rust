@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use crate::consts::{ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
 use crate::structs::idct::get_q;
 use bytemuck::cast;
-use wide::{i16x8, i32x8};
+use wide::i32x8;
 
 use default_boxed::DefaultBoxed;
 
@@ -362,7 +362,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49_TR.iter().enumerate() {
-            let best_prior_bit_length = u32_bit_length(best_priors[tr(coord)] as u32);
+            let best_prior_bit_length = u32_bit_length(best_priors[coord as usize] as u32);
 
             let coef = model_per_color
                 .read_coef(
@@ -457,9 +457,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     summary.set_horizontal_coefs(cast(horiz_pred));
     summary.set_vertical_coefs(vert_pred);
 
-    let t = i16x8::transpose(cast(*output.get_block()));
-    *output.get_block_mut() = cast(t);
-
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
     let predicted_dc =
@@ -487,6 +484,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         num_non_zeros_7x7,
         features,
     );
+
     Ok((output, summary))
 }
 
