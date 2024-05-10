@@ -375,7 +375,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
             if coef != 0 {
                 output.set_coefficient(coord as usize, coef);
-                nonzero_mask |= 1 << tr(coord);
+                nonzero_mask |= 1 << coord;
 
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {
@@ -406,13 +406,13 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
 
-    for i in 1..8 {
-        if nonzero_mask & (0x0101010101010100 << i) != 0 {
+    for col in 1..8 {
+        if nonzero_mask & (0xFE << (col * 8)) != 0 {
             // have non-zero coefficients in the column i
-            raster[i] = get_q(i, &output) * get_q(i, &q_tr);
+            raster[col] = get_q(col, &output) * get_q(col, &q_tr);
             // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-            vert_pred -= raster[i] * ICOS_BASED_8192_SCALED[i];
-            h_pred[i] = h_pred[i].wrapping_sub((raster[i] * mult).reduce_add());
+            vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
+            h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
         }
     }
 
@@ -436,12 +436,12 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut vert_pred: i32x8 = 0.into();
     mult = cast(ICOS_BASED_8192_SCALED_PM);
 
-    if nonzero_mask & 0x0101010101010100 != 0 {
+    if nonzero_mask & 0xFE != 0 {
         raster[0] = get_q(0, &output) * get_q(0, &q_tr);
         vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
     }
     for col in 1..8 {
-        if nonzero_mask & (0x0101010101010101 << col) != 0 {
+        if nonzero_mask & (0xFF << (col * 8)) != 0 {
             // add column DC coef
             let dc_coef = output.get_coefficient(col << 3) as i32;
             let q = qt.get_quantization_table()[col] as i32;
@@ -501,12 +501,12 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     nonzero_mask: &mut u64,
 ) -> Result<()> {
     let mask_7x7 = *nonzero_mask | 1;
-    let mut mask_x = mask_7x7 | (mask_7x7 << 32);
-    mask_x |= mask_x << 16;
-    mask_x |= mask_x << 8;
+    let mut mask_y = mask_7x7 | (mask_7x7 << 32);
+    mask_y |= mask_y << 16;
+    mask_y |= mask_y << 8;
 
-    let eob_x = mask_x.leading_zeros() as u8;
-    let eob_y = (mask_7x7.leading_zeros() >> 3) as u8;
+    let eob_y = mask_y.leading_zeros() as u8;
+    let eob_x = (mask_7x7.leading_zeros() >> 3) as u8;
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
@@ -554,10 +554,10 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     let mut zig15offset;
 
     if HORIZONTAL {
-        delta = 1;
+        delta = 8;
         zig15offset = 0;
     } else {
-        delta = 8;
+        delta = 1;
         zig15offset = 7;
     }
 
@@ -576,11 +576,11 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         );
 
         let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
+            model_per_color.read_edge_coefficient(bool_reader, qt, tr(coord as u8), zig15offset, &ptcc8)?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
-            here_mut.set_coefficient(tr(coord as u8), coef);
+            here_mut.set_coefficient(coord, coef);
 
             *nonzero_mask |= 1 << coord;
         }

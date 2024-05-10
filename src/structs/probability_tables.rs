@@ -158,12 +158,10 @@ impl ProbabilityTables {
     pub fn calc_coefficient_context8_decode_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         &self,
         qt: &QuantizationTables,
-        coefficient: usize,
+        coefficient_tr: usize,
         pred: &[i32; 8],
         num_non_zeros_x: u8,
     ) -> ProbabilityTablesCoefficientContext {
-        debug_assert_eq!(HORIZONTAL, (coefficient & 7) != 0);
-
         if !ALL_PRESENT
             && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
         {
@@ -175,11 +173,11 @@ impl ProbabilityTables {
         }
 
         let mut best_prior: i32 = pred[if HORIZONTAL {
-            coefficient
+            coefficient_tr >> 3
         } else {
-            coefficient >> 3
+            coefficient_tr
         }];
-        best_prior /= (qt.get_quantization_table()[coefficient] as i32) << 13;
+        best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
 
         return ProbabilityTablesCoefficientContext {
             best_prior,
