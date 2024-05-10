@@ -284,12 +284,12 @@ impl ProbabilityTables {
 
     pub fn adv_predict_dc_pix_decode<const ALL_PRESENT: bool>(
         &self,
-        raster_rows: &[i32x8; 8],
+        raster_cols: &[i32x8; 8],
         q0: i32,
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
-        let pixels_sans_dc = run_idct_decode(raster_rows);
+        let pixels_sans_dc = run_idct_decode(raster_cols);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 

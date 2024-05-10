@@ -548,7 +548,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     let t = i16x8::transpose(cast(*output.get_block()));
     *output.get_block_mut() = cast(t);
-    raster = i32x8::transpose(raster);
+    //raster = i32x8::transpose(raster);
 
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;

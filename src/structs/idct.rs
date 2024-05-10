@@ -174,7 +174,8 @@ pub fn run_idct<const IGNORE_DC: bool>(
 
 #[inline(always)]
 pub fn run_idct_decode(block: &[i32x8; 8]) -> AlignedBlock {
-    let t = i32x8::transpose(*block);
+    //let t = i32x8::transpose(*block);
+    let t = *block;
 
     let mut xv0 = (t[0] << 11) + 128;
     let mut xv1 = t[1];
