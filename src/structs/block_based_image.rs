@@ -6,7 +6,7 @@
 
 use log::info;
 
-use crate::consts::{ZIGZAG_TO_RASTER, ZIGZAG_TO_TRANSPOSED};
+use crate::consts::ZIGZAG_TO_TRANSPOSED;
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
 
@@ -265,17 +265,17 @@ impl AlignedBlock {
         self.raw_data[index] = v;
     }
 
-    pub fn set_coefficient_zigzag(&mut self, index: usize, v: i16) {
-        self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])] = v;
-    }
-
-    // pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
-    //     self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
+    // pub fn set_coefficient_zigzag(&mut self, index: usize, v: i16) {
+    //     self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])] = v;
     // }
 
-    pub fn get_coefficient_zigzag(&self, index: usize) -> i16 {
-        return self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])];
+    pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
+        self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
     }
+
+    // pub fn get_coefficient_zigzag(&self, index: usize) -> i16 {
+    //     return self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])];
+    // }
 
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
         return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];

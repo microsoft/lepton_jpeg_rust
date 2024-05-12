@@ -6,8 +6,6 @@
 
 use anyhow::{Context, Result};
 
-use crate::consts::{ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
-use crate::structs::idct::get_q;
 use bytemuck::cast;
 use wide::i32x8;
 
@@ -15,10 +13,11 @@ use default_boxed::DefaultBoxed;
 
 use std::io::Read;
 
-use crate::consts::UNZIGZAG_49_TR;
+use crate::consts::{UNZIGZAG_49_TR, ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u32_bit_length};
 use crate::lepton_error::ExitCode;
+use crate::structs::idct::get_q;
 
 use crate::metrics::Metrics;
 use crate::structs::{
@@ -396,9 +395,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         );
     }
 
-    // here we calculate the furthest x and y coordinates that have non-zero coefficients
-    // which is later used as a predictor for the number of edge coefficients,
-    // dequantize raster coefficients, and produce predictors for edge DCT coefficients
+    // here we dequantize raster coefficients and produce predictors for edge DCT coefficients
     let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
     // load predictors data from neighborhood blocks
     let mut h_pred: [i32; 8] = *neighbor_data.neighbor_context_above.get_horizontal_coef();

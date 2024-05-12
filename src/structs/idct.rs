@@ -39,8 +39,8 @@ pub fn get_q(offset: usize, q: &AlignedBlock) -> i32x8 {
 
 #[inline(never)]
 pub fn run_idct<const IGNORE_DC: bool>(
-    block: &AlignedBlock,
-    q: &AlignedBlock,
+    block: &AlignedBlock, // transposed
+    q: &AlignedBlock, // transposed
 ) -> (AlignedBlock, NeighborSummary) {
     let mut neighbor_summary: NeighborSummary = NEIGHBOR_DATA_EMPTY;
 
@@ -52,36 +52,35 @@ pub fn run_idct<const IGNORE_DC: bool>(
         c[i] = i32x8::from_i16x8(v[i]) * get_q(i, q);
     }
     if IGNORE_DC {
-        c[0] = c[0] & i32x8::new([0, -1, -1, -1, -1, -1, -1, -1])
+        c[0] = c[0] & i32x8::new([0, -1, -1, -1, -1, -1, -1, -1]);
     }
 
     // produce predictions for edge DCT coefs:
     // for the block below
-    let mut horiz_pred = ICOS_BASED_8192_SCALED_PM[0] * c[0];
+    let mut horiz_pred: [i32; 8] = [0; 8];
+    let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
     for i in 1..8 {
-        horiz_pred += ICOS_BASED_8192_SCALED_PM[i] * c[i];
+        horiz_pred[i] = (mult * c[i]).reduce_add();
     }
 
-    neighbor_summary.set_horizontal_coefs(horiz_pred);
-
-    let t = i32x8::transpose(c);
+    neighbor_summary.set_horizontal_coefs(cast(horiz_pred));
 
     // for the block to the right
-    let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * t[0];
+    let mut vert_pred: i32x8 = ICOS_BASED_8192_SCALED_PM[0] * c[0];
     for i in 1..8 {
-        vert_pred += ICOS_BASED_8192_SCALED_PM[i] * t[i];
+        vert_pred += ICOS_BASED_8192_SCALED_PM[i] * c[i];
     }
 
     neighbor_summary.set_vertical_coefs(vert_pred);
 
-    let mut xv0 = (t[0] << 11) + 128;
-    let mut xv1 = t[1];
-    let mut xv2 = t[2];
-    let mut xv3 = t[3];
-    let mut xv4 = t[4] << 11;
-    let mut xv5 = t[5];
-    let mut xv6 = t[6];
-    let mut xv7 = t[7];
+    let mut xv0 = (c[0] << 11) + 128;
+    let mut xv1 = c[1];
+    let mut xv2 = c[2];
+    let mut xv3 = c[3];
+    let mut xv4 = c[4] << 11;
+    let mut xv5 = c[5];
+    let mut xv6 = c[6];
+    let mut xv7 = c[7];
 
     // Stage 1.
     let mut xv8 = _W7 * (xv1 + xv7);
@@ -273,6 +272,11 @@ pub fn run_idct_decode(block: &[i32x8; 8]) -> AlignedBlock {
 }
 
 #[cfg(test)]
+fn transpose(block: &AlignedBlock) -> AlignedBlock {
+    return AlignedBlock::new(cast(i16x8::transpose(cast(*block.get_block()))));
+}
+
+#[cfg(test)]
 fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     use std::num::Wrapping;
 
@@ -422,15 +426,17 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     }
 
     let q = AlignedBlock::new(cast(*test_q));
+    let data_tr = transpose(test_data);
+    let q_tr = transpose(&q);
 
-    let outp = run_idct::<true>(test_data, &q).0;
+    let outp = run_idct::<true>(&data_tr, &q_tr).0;
 
     let mut outp2 = [0; 64];
     run_idct_old(test_data, test_q, &mut outp2, true);
 
     assert_eq!(*outp.get_block(), outp2);
 
-    let outp = run_idct::<false>(test_data, &q).0;
+    let outp = run_idct::<false>(&data_tr, &q_tr).0;
 
     let mut outp2 = [0; 64];
     run_idct_old(test_data, test_q, &mut outp2, false);

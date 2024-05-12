@@ -107,7 +107,7 @@ pub fn read_scan<R: Read>(
                 let v = coef.wrapping_add(last_dc[state.get_cmp()]);
                 last_dc[state.get_cmp()] = v;
 
-                current_block.set_coefficient_zigzag(0, v << jf.cs_sal);
+                current_block.set_transposed_from_zigzag(0, v << jf.cs_sal);
 
                 let old_mcu = state.get_mcu();
                 sta = state.next_mcu_pos(jf);
@@ -218,10 +218,10 @@ pub fn read_progressive_scan<R: Read>(
                 // ---> succesive approximation later stage <---
                 let value = bit_reader.read(1)? as i16;
 
-                current_block.set_coefficient_zigzag(
+                current_block.set_transposed_from_zigzag(
                     0,
                     current_block
-                        .get_coefficient_zigzag(0)
+                        .get_transposed_from_zigzag(0)
                         .wrapping_add(value << jf.cs_sal),
                 );
 
@@ -278,7 +278,7 @@ pub fn read_progressive_scan<R: Read>(
                             .context(here!())?;
 
                         for bpos in jf.cs_from..eob {
-                            current_block.set_coefficient_zigzag(
+                            current_block.set_transposed_from_zigzag(
                                 usize::from(bpos),
                                 block[usize::from(bpos)] << jf.cs_sal,
                             );
@@ -302,7 +302,7 @@ pub fn read_progressive_scan<R: Read>(
 
                     for bpos in jf.cs_from..jf.cs_to + 1 {
                         block[usize::from(bpos)] =
-                            current_block.get_coefficient_zigzag(usize::from(bpos));
+                            current_block.get_transposed_from_zigzag(usize::from(bpos));
                     }
 
                     if state.eobrun == 0 {
@@ -337,10 +337,10 @@ pub fn read_progressive_scan<R: Read>(
 
                     // copy back to colldata
                     for bpos in jf.cs_from..jf.cs_to + 1 {
-                        current_block.set_coefficient_zigzag(
+                        current_block.set_transposed_from_zigzag(
                             usize::from(bpos),
                             current_block
-                                .get_coefficient_zigzag(usize::from(bpos))
+                                .get_transposed_from_zigzag(usize::from(bpos))
                                 .wrapping_add(block[usize::from(bpos)] << jf.cs_sal),
                         );
                     }
@@ -418,14 +418,13 @@ fn decode_baseline_rst<R: Read>(
         block[0] = block[0].wrapping_add(lastdc[state.get_cmp()]);
         lastdc[state.get_cmp()] = block[0];
 
-        // prepare zigzagged block
-        let mut zzblock = AlignedBlock::default();
+        // prepare and set transposed raster block from zigzagged
+        let mut block_tr = AlignedBlock::default();
         for bpos in 0..eob {
-            zzblock.set_coefficient_zigzag(bpos, block[bpos]);
+            block_tr.set_transposed_from_zigzag(bpos, block[bpos]);
         }
 
-        // set block data
-        image_data[state.get_cmp()].set_block_data(state.get_dpos(), &zzblock);
+        image_data[state.get_cmp()].set_block_data(state.get_dpos(), &block_tr);
 
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();

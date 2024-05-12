@@ -197,39 +197,37 @@ impl ProbabilityTables {
     ) -> ProbabilityTablesCoefficientContext {
         let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
 
-        debug_assert_eq!(HORIZONTAL, (coefficient & 7) != 0);
-
         let coef_idct; // have 0 in 0th element
         if HORIZONTAL && (ALL_PRESENT || self.above_present) {
-            assert!(coefficient < 8); // avoid bounds check later
+            assert!(coefficient <= 56); // avoid bounds check later
 
             // y == 0: we're the x
 
             coef_idct =
-                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8];
+                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient..coefficient + 8];
             //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8].try_into().unwrap());
 
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
             for i in 1..8 {
-                let cur_coef = coefficient + (i * 8);
+                let cur_coef = coefficient + i;
 
                 compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
             }
         } else if !HORIZONTAL && (ALL_PRESENT || self.left_present) {
-            assert!(coefficient <= 56); // avoid bounds check later
+            assert!(coefficient < 8); // avoid bounds check later
 
             // x == 0: we're the y
 
-            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8];
+            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient * 8..(coefficient + 1) * 8];
             //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8].try_into().unwrap());
 
             // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
             // so no need to complicate the code by doing anything manual
 
             for i in 1..8 {
-                let cur_coef = coefficient + i;
+                let cur_coef = coefficient + (i * 8);
 
                 compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
             }
@@ -242,9 +240,9 @@ impl ProbabilityTables {
         }
 
         let mut best_prior: i32 = if HORIZONTAL {
-            neighbors_data.neighbor_context_above.get_horizontal_coef()[coefficient]
+            neighbors_data.neighbor_context_above.get_horizontal_coef()[coefficient >> 3]
         } else {
-            neighbors_data.neighbor_context_left.get_vertical_coef()[coefficient >> 3]
+            neighbors_data.neighbor_context_left.get_vertical_coef()[coefficient]
         };
         // // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
         // best_prior = best_prior.wrapping_sub((coef_idct * i32x8::new(compute_lak_coeffs_x)).reduce_add());
@@ -408,11 +406,9 @@ impl ProbabilityTables {
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> (PredictDCResult, NeighborSummary) {
-        //let q_transposed = qt.get_quantization_table_transposed();
-        let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table()));
+        let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
-        //let pixels_sans_dc = run_idct::<true>(here, q_transposed, neighbor_summary);
-        let (pixels_sans_dc, summary) = run_idct::<true>(here, &q);
+        let (pixels_sans_dc, summary) = run_idct::<true>(here, &q_tr);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
@@ -523,7 +519,7 @@ impl ProbabilityTables {
 
         return (
             PredictDCResult {
-                predicted_dc: ((avgmed / i32::from(q.get_coefficient(0))) + 4) >> 3,
+                predicted_dc: ((avgmed / i32::from(q_tr.get_coefficient(0))) + 4) >> 3,
                 uncertainty: uncertainty_val,
                 uncertainty2: uncertainty2_val,
                 advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
