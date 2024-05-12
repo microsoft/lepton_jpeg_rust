@@ -15,7 +15,6 @@ use crate::structs::quantization_tables::*;
 
 use super::block_based_image::AlignedBlock;
 use super::block_context::NeighborData;
-use super::neighbor_summary::NeighborSummary;
 use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
 use wide::i16x8;
@@ -154,8 +153,108 @@ impl ProbabilityTables {
         return best_prior;
     }
 
+    // here we dequantize raster coefficients
+    // and produce current block predictors for edge DCT coefficients
+    // TODO: use XXX_present to reduce number of operations
     #[inline(always)]
-    pub fn calc_coefficient_context8_decode_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
+    pub fn predict_current_edges(
+        &self,
+        neighbors_data: &NeighborData,
+        here_tr: &AlignedBlock,
+        q_tr: &AlignedBlock,
+        nonzero_mask: u64,
+    ) -> ([i32x8; 8], i32x8, i32x8) {
+        let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
+
+        // load initial predictors data from neighborhood blocks
+        let mut h_pred: [i32; 8] = *neighbors_data.neighbor_context_above.get_horizontal_coef();
+        let mut vert_pred: i32x8 = cast(*neighbors_data.neighbor_context_left.get_vertical_coef());
+
+        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
+
+        for col in 1..8 {
+            if nonzero_mask & (0xFF << (col * 8)) != 0 {
+                // have non-zero coefficients in the column i
+                raster[col] = get_i32x8(col, &here_tr) * get_i32x8(col, &q_tr);
+                // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
+                vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
+                h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
+            }
+        }
+
+        let horiz_pred: i32x8 = cast(h_pred);
+
+        (raster, horiz_pred, vert_pred)
+    }
+
+    // In these two functions we produce first part of edge DCT coefficients predictions
+    // for neighborhood blocks  and finalize dequantization of transposed raster
+    #[inline(always)]
+    pub fn predict_next_edges_encode(
+        raster: &mut [i32x8; 8],
+        here_tr: &AlignedBlock,
+        q_tr: &AlignedBlock,
+        nonzero_mask: u64,
+    ) -> (i32x8, i32x8) {
+        let mut horiz_pred: [i32; 8] = [0; 8];
+        let mut vert_pred: i32x8 = 0.into();
+
+        let all_but_first_mask = i32x8::new([0, -1, -1, -1, -1, -1, -1, -1]);
+        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
+
+        if nonzero_mask & 0xFE != 0 {
+            raster[0] = get_i32x8(0, &here_tr) * get_i32x8(0, &q_tr);
+            raster[0] &= all_but_first_mask; // DC should be zero for adv_predict_dc_pix
+
+            vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
+        }
+        for col in 1..8 {
+            if nonzero_mask & (0xFF << (col * 8)) != 0 {
+                // produce predictions for edge DCT coefs for the block below
+                horiz_pred[col] = (mult * raster[col]).reduce_add();
+                // and for the block to the right
+                vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
+            }
+        }
+
+        (cast(horiz_pred), vert_pred)
+    }
+
+    #[inline(always)]
+    pub fn predict_next_edges_decode(
+        raster: &mut [i32x8; 8],
+        here_tr: &AlignedBlock,
+        q_tr: &AlignedBlock,
+        nonzero_mask: u64,
+    ) -> (i32x8, i32x8) {
+        let mut horiz_pred: [i32; 8] = [0; 8];
+        let mut vert_pred: i32x8 = 0.into();
+
+        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
+
+        if nonzero_mask & 0xFE != 0 {
+            raster[0] = get_i32x8(0, &here_tr) * get_i32x8(0, &q_tr);
+
+            vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
+        }
+        for col in 1..8 {
+            if nonzero_mask & (0xFF << (col * 8)) != 0 {
+                // add column DC coef
+                let dc_coef = here_tr.get_coefficient(col << 3) as i32;
+                let q = q_tr.get_coefficient(col << 3) as i32;
+                raster[col] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
+                // produce predictions for edge DCT coefs for the block below
+                horiz_pred[col] = (mult * raster[col]).reduce_add();
+                // and for the block to the right
+                vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
+            }
+        }
+
+        (cast(horiz_pred), vert_pred)
+    }
+
+    #[inline(always)]
+    pub fn calc_coefficient_context8_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         &self,
         qt: &QuantizationTables,
         coefficient_tr: usize,
@@ -186,85 +285,6 @@ impl ProbabilityTables {
         };
     }
 
-    #[inline(always)]
-    pub fn calc_coefficient_context8_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
-        &self,
-        qt: &QuantizationTables,
-        coefficient: usize,
-        here: &AlignedBlock,
-        neighbors_data: &NeighborData,
-        num_non_zeros_edge: u8,
-    ) -> ProbabilityTablesCoefficientContext {
-        let mut compute_lak_coeffs_x: [i32; 8] = [0; 8];
-
-        let coef_idct; // have 0 in 0th element
-        if HORIZONTAL && (ALL_PRESENT || self.above_present) {
-            assert!(coefficient <= 56); // avoid bounds check later
-
-            // y == 0: we're the x
-
-            coef_idct =
-                &qt.get_icos_idct_edge8192_dequantized_x()[coefficient..coefficient + 8];
-            //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_x()[coefficient * 8..(coefficient + 1) * 8].try_into().unwrap());
-
-            // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
-            // so no need to complicate the code by doing anything manual
-
-            for i in 1..8 {
-                let cur_coef = coefficient + i;
-
-                compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
-            }
-        } else if !HORIZONTAL && (ALL_PRESENT || self.left_present) {
-            assert!(coefficient < 8); // avoid bounds check later
-
-            // x == 0: we're the y
-
-            coef_idct = &qt.get_icos_idct_edge8192_dequantized_y()[coefficient * 8..(coefficient + 1) * 8];
-            //coef_idct = i32x8::new(qt.get_icos_idct_edge8192_dequantized_y()[coefficient..coefficient + 8].try_into().unwrap());
-
-            // the compiler is smart enough to unroll this loop and merge it with the subsequent loop
-            // so no need to complicate the code by doing anything manual
-
-            for i in 1..8 {
-                let cur_coef = coefficient + (i * 8);
-
-                compute_lak_coeffs_x[i] = here.get_coefficient(cur_coef).into();
-            }
-        } else {
-            return ProbabilityTablesCoefficientContext {
-                best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_edge - 1,
-                best_prior_bit_len: 0,
-            };
-        }
-
-        let mut best_prior: i32 = if HORIZONTAL {
-            neighbors_data.neighbor_context_above.get_horizontal_coef()[coefficient >> 3]
-        } else {
-            neighbors_data.neighbor_context_left.get_vertical_coef()[coefficient]
-        };
-        // // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-        // best_prior = best_prior.wrapping_sub((coef_idct * i32x8::new(compute_lak_coeffs_x)).reduce_add());
-        // // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        // //best_prior /= (qt.get_quantization_table()[coefficient] as i32) << 13;
-        // best_prior /= coef_idct.to_array()[0];
-
-        for i in 1..8 {
-            // some extreme coefficents can cause this to overflow, but since this is just a predictor, no need to panic
-            best_prior =
-                best_prior.wrapping_sub(coef_idct[i].wrapping_mul(compute_lak_coeffs_x[i]));
-            // rounding towards zero before adding coeffs_a[0] helps ratio slightly, but this is cheaper
-        }
-        best_prior /= coef_idct[0];
-
-        return ProbabilityTablesCoefficientContext {
-            best_prior,
-            num_non_zeros_bin: num_non_zeros_edge - 1,
-            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
-        };
-    }
-
     fn from_stride(block: &[i16; 64], offset: usize, stride: usize) -> i16x8 {
         return i16x8::new([
             block[offset],
@@ -278,14 +298,15 @@ impl ProbabilityTables {
         ]);
     }
 
-    pub fn adv_predict_dc_pix_decode<const ALL_PRESENT: bool>(
+    pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         raster_cols: &[i32x8; 8],
         q0: i32,
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
-        let pixels_sans_dc = run_idct_decode(raster_cols);
+        // here DC in raster_cols should be 0
+        let pixels_sans_dc = run_idct(raster_cols);
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
@@ -397,134 +418,5 @@ impl ProbabilityTables {
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
         };
-    }
-
-    pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
-        &self,
-        here: &AlignedBlock,
-        qt: &QuantizationTables,
-        neighbor_data: &NeighborData,
-        enabled_features: &enabled_features::EnabledFeatures,
-    ) -> (PredictDCResult, NeighborSummary) {
-        let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
-
-        let (pixels_sans_dc, summary) = run_idct::<true>(here, &q_tr);
-
-        // helper functions to avoid code duplication that calculate the left and above prediction values
-
-        let calc_left = || {
-            let left_context = neighbor_data.neighbor_context_left;
-
-            if enabled_features.use_16bit_adv_predict {
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
-                let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
-
-                b - a
-            } else {
-                let mut dc_estimates = [0i16; 8];
-                for i in 0..8 {
-                    let a = i32::from(pixels_sans_dc.get_block()[i << 3]) + 1024;
-                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i << 3])
-                        - i32::from(pixels_sans_dc.get_block()[(i << 3) + 1]);
-                    let b = i32::from(left_context.get_vertical()[i]) - (pixel_delta / 2); //round to zero
-                    dc_estimates[i] = (b - a) as i16;
-                }
-
-                i16x8::from(dc_estimates)
-            }
-        };
-
-        let calc_above = || {
-            let above_context = neighbor_data.neighbor_context_above;
-
-            if enabled_features.use_16bit_adv_predict {
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
-                let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
-
-                b - a
-            } else {
-                let mut dc_estimates = [0i16; 8];
-                for i in 0..8 {
-                    let a = i32::from(pixels_sans_dc.get_block()[i]) + 1024;
-                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i])
-                        - i32::from(pixels_sans_dc.get_block()[i + 8]);
-                    let b = i32::from(above_context.get_horizontal()[i]) - (pixel_delta / 2); //round to zero
-                    dc_estimates[i] = (b - a) as i16;
-                }
-
-                i16x8::from(dc_estimates)
-            }
-        };
-
-        let min_dc;
-        let max_dc;
-        let mut avg_horizontal: i32;
-        let mut avg_vertical: i32;
-
-        if ALL_PRESENT || self.left_present {
-            if ALL_PRESENT || self.above_present {
-                // most common case where we have both left and above
-                let horiz = calc_left();
-                let vert = calc_above();
-
-                min_dc = horiz.min(vert).reduce_min();
-                max_dc = horiz.max(vert).reduce_max();
-
-                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
-                avg_vertical = i32x8::from_i16x8(vert).reduce_add();
-            } else {
-                let horiz = calc_left();
-                min_dc = horiz.reduce_min();
-                max_dc = horiz.reduce_max();
-
-                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
-                avg_vertical = avg_horizontal;
-            }
-        } else if self.above_present {
-            let vert = calc_above();
-            min_dc = vert.reduce_min();
-            max_dc = vert.reduce_max();
-
-            avg_vertical = i32x8::from_i16x8(vert).reduce_add();
-            avg_horizontal = avg_vertical;
-        } else {
-            return (
-                PredictDCResult {
-                    predicted_dc: 0,
-                    uncertainty: 0,
-                    uncertainty2: 0,
-                    advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-                },
-                summary,
-            );
-        }
-
-        let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
-        let uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
-        avg_horizontal -= avgmed;
-        avg_vertical -= avgmed;
-
-        let mut far_afield_value = avg_vertical;
-        if avg_horizontal.abs() < avg_vertical.abs() {
-            far_afield_value = avg_horizontal;
-        }
-
-        let uncertainty2_val = (far_afield_value >> 3) as i16;
-
-        return (
-            PredictDCResult {
-                predicted_dc: ((avgmed / i32::from(q_tr.get_coefficient(0))) + 4) >> 3,
-                uncertainty: uncertainty_val,
-                uncertainty2: uncertainty2_val,
-                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
-            },
-            summary,
-        );
     }
 }

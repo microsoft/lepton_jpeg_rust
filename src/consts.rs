@@ -50,8 +50,9 @@ pub const UNZIGZAG_49_TR: [u8; 49] = [
     63,
 ];
 
-// precalculated int base values for 8x8 dct scaled by 8192
-pub const ICOS_BASED_8192_SCALED: [i32; 8] = [8192, 11363, 10703, 9633, 8192, 6436, 4433, 2260];
+// precalculated int base values for 8x8 IDCT scaled by 8192
+// DC coef is zeroed intentionally
+pub const ICOS_BASED_8192_SCALED: [i32; 8] = [0, 11363, 10703, 9633, 8192, 6436, 4433, 2260];
 
 pub const ICOS_BASED_8192_SCALED_PM: [i32; 8] =
     [8192, -11363, 10703, -9633, 8192, -6436, 4433, -2260];

@@ -6,11 +6,11 @@
 
 use std::num::Wrapping;
 
+use wide::i32x8;
+
 use crate::enabled_features::EnabledFeatures;
 
-use super::{block_based_image::AlignedBlock, quantization_tables::QuantizationTables};
-
-use wide::i32x8;
+use super::block_based_image::AlignedBlock;
 
 #[derive(Copy, Clone)]
 pub struct NeighborSummary {
@@ -57,20 +57,26 @@ impl NeighborSummary {
     }
 
     pub fn calculate_neighbor_summary(
-        &mut self,
         here_idct: &AlignedBlock,
-        qt: &QuantizationTables,
-        dc: i16,
+        dc_deq: i32,
         num_non_zeros_7x7: u8,
+        horiz_pred: i32x8,
+        vert_pred: i32x8,
         features: &EnabledFeatures,
-    ) {
-        let dc_deq = dc as i32 * qt.get_quantization_table()[0] as i32;
+    ) -> NeighborSummary {
+        let mut summary = NeighborSummary {
+            edge_pixels_h: [0; 8],
+            edge_pixels_v: [0; 8],
+            edge_coefs_h: horiz_pred.to_array(),
+            edge_coefs_v: vert_pred.to_array(),
+            num_non_zeros: num_non_zeros_7x7,
+        };
 
-        self.set_horizontal(here_idct.get_block(), dc_deq, features);
+        summary.set_horizontal(here_idct.get_block(), dc_deq, features);
 
-        self.set_vertical(here_idct.get_block(), dc_deq, features);
+        summary.set_vertical(here_idct.get_block(), dc_deq, features);
 
-        self.num_non_zeros = num_non_zeros_7x7;
+        summary
     }
 
     fn set_horizontal(
@@ -122,14 +128,6 @@ impl NeighborSummary {
 
     pub fn get_horizontal_coef(&self) -> &[i32; 8] {
         return &self.edge_coefs_h;
-    }
-
-    pub fn set_horizontal_coefs(&mut self, pred: i32x8) {
-        self.edge_coefs_h = pred.to_array();
-    }
-
-    pub fn set_vertical_coefs(&mut self, pred: i32x8) {
-        self.edge_coefs_v = pred.to_array();
     }
 
     // used for debugging

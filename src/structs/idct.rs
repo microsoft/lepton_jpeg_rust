@@ -4,12 +4,10 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use super::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use bytemuck::{cast, cast_ref};
 use wide::{i16x8, i32x8};
 
 use super::block_based_image::AlignedBlock;
-use crate::consts::ICOS_BASED_8192_SCALED_PM;
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)
@@ -32,147 +30,13 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-pub fn get_q(offset: usize, q: &AlignedBlock) -> i32x8 {
+pub fn get_i32x8(offset: usize, q: &AlignedBlock) -> i32x8 {
     let rows: &[i16x8; 8] = cast_ref(q.get_block());
     i32x8::from_i16x8(rows[offset])
 }
 
-#[inline(never)]
-pub fn run_idct<const IGNORE_DC: bool>(
-    block: &AlignedBlock, // transposed
-    q: &AlignedBlock, // transposed
-) -> (AlignedBlock, NeighborSummary) {
-    let mut neighbor_summary: NeighborSummary = NEIGHBOR_DATA_EMPTY;
-
-    let v: &[i16x8; 8] = cast_ref(block.get_block());
-
-    // multiply by quant table
-    let mut c: [i32x8; 8] = Default::default();
-    for i in 0..8 {
-        c[i] = i32x8::from_i16x8(v[i]) * get_q(i, q);
-    }
-    if IGNORE_DC {
-        c[0] = c[0] & i32x8::new([0, -1, -1, -1, -1, -1, -1, -1]);
-    }
-
-    // produce predictions for edge DCT coefs:
-    // for the block below
-    let mut horiz_pred: [i32; 8] = [0; 8];
-    let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
-    for i in 1..8 {
-        horiz_pred[i] = (mult * c[i]).reduce_add();
-    }
-
-    neighbor_summary.set_horizontal_coefs(cast(horiz_pred));
-
-    // for the block to the right
-    let mut vert_pred: i32x8 = ICOS_BASED_8192_SCALED_PM[0] * c[0];
-    for i in 1..8 {
-        vert_pred += ICOS_BASED_8192_SCALED_PM[i] * c[i];
-    }
-
-    neighbor_summary.set_vertical_coefs(vert_pred);
-
-    let mut xv0 = (c[0] << 11) + 128;
-    let mut xv1 = c[1];
-    let mut xv2 = c[2];
-    let mut xv3 = c[3];
-    let mut xv4 = c[4] << 11;
-    let mut xv5 = c[5];
-    let mut xv6 = c[6];
-    let mut xv7 = c[7];
-
-    // Stage 1.
-    let mut xv8 = _W7 * (xv1 + xv7);
-    xv1 = xv8 + (W1MW7 * xv1);
-    xv7 = xv8 - (W1PW7 * xv7);
-    xv8 = _W3 * (xv5 + xv3);
-    xv5 = xv8 - (W3MW5 * xv5);
-    xv3 = xv8 - (W3PW5 * xv3);
-
-    // Stage 2.
-    xv8 = xv0 + xv4;
-    xv0 -= xv4;
-    xv4 = W6 * (xv2 + xv6);
-    xv6 = xv4 - (W2PW6 * xv6);
-    xv2 = xv4 + (W2MW6 * xv2);
-    xv4 = xv1 + xv5;
-    xv1 -= xv5;
-    xv5 = xv7 + xv3;
-    xv7 -= xv3;
-
-    // Stage 3.
-    xv3 = xv8 + xv2;
-    xv8 -= xv2;
-    xv2 = xv0 + xv6;
-    xv0 -= xv6;
-    xv6 = ((R2 * (xv1 + xv7)) + 128) >> 8;
-    xv1 = ((R2 * (xv1 - xv7)) + 128) >> 8;
-
-    // Stage 4.
-    let row = [
-        (xv3 + xv4) >> 8,
-        (xv2 + xv6) >> 8,
-        (xv0 + xv1) >> 8,
-        (xv8 + xv5) >> 8,
-        (xv8 - xv5) >> 8,
-        (xv0 - xv1) >> 8,
-        (xv2 - xv6) >> 8,
-        (xv3 - xv4) >> 8,
-    ];
-
-    // transpose and now do vertical
-    let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
-        i32x8::transpose(row);
-
-    yv0 = (yv0 << 8) + 8192;
-    yv4 = yv4 << 8;
-
-    // Stage 1.
-    let mut yv8 = (W7 * (yv1 + yv7)) + 4;
-    yv1 = (yv8 + (W1MW7 * yv1)) >> 3;
-    yv7 = (yv8 - (W1PW7 * yv7)) >> 3;
-    yv8 = (W3 * (yv5 + yv3)) + 4;
-    yv5 = (yv8 - (W3MW5 * yv5)) >> 3;
-    yv3 = (yv8 - (W3PW5 * yv3)) >> 3;
-
-    // Stage 2.
-    yv8 = yv0 + yv4;
-    yv0 -= yv4;
-    yv4 = ((W6) * (yv2 + yv6)) + 4;
-    yv6 = (yv4 - (W2PW6 * yv6)) >> 3;
-    yv2 = (yv4 + (W2MW6 * yv2)) >> 3;
-    yv4 = yv1 + yv5;
-    yv1 -= yv5;
-    yv5 = yv7 + yv3;
-    yv7 -= yv3;
-
-    // Stage 3.
-    yv3 = yv8 + yv2;
-    yv8 -= yv2;
-    yv2 = yv0 + yv6;
-    yv0 -= yv6;
-    yv6 = ((R2 * (yv1 + yv7)) + 128) >> 8;
-    yv1 = ((R2 * (yv1 - yv7)) + 128) >> 8;
-
-    // Stage 4.
-    (
-        AlignedBlock::new(cast([
-            i16x8::from_i32x8_truncate((yv3 + yv4) >> 11),
-            i16x8::from_i32x8_truncate((yv2 + yv6) >> 11),
-            i16x8::from_i32x8_truncate((yv0 + yv1) >> 11),
-            i16x8::from_i32x8_truncate((yv8 + yv5) >> 11),
-            i16x8::from_i32x8_truncate((yv8 - yv5) >> 11),
-            i16x8::from_i32x8_truncate((yv0 - yv1) >> 11),
-            i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
-            i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
-        ])),
-        neighbor_summary,
-    )
-}
-
 #[inline(always)]
-pub fn run_idct_decode(block: &[i32x8; 8]) -> AlignedBlock {
+pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
     //let t = i32x8::transpose(*block);
     let t = *block;
 
@@ -429,14 +293,13 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     let data_tr = transpose(test_data);
     let q_tr = transpose(&q);
 
-    let outp = run_idct::<true>(&data_tr, &q_tr).0;
+    let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
+    let block_simd: [i16x8; 8] = cast(*data_tr.get_block());
+    for col in 0..8 {
+        raster[col] = i32x8::from_i16x8(block_simd[col]) * get_i32x8(col, &q_tr);
+    }
 
-    let mut outp2 = [0; 64];
-    run_idct_old(test_data, test_q, &mut outp2, true);
-
-    assert_eq!(*outp.get_block(), outp2);
-
-    let outp = run_idct::<false>(&data_tr, &q_tr).0;
+    let outp = run_idct(&raster);
 
     let mut outp2 = [0; 64];
     run_idct_old(test_data, test_q, &mut outp2, false);

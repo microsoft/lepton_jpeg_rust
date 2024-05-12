@@ -10,11 +10,10 @@ use wide::{i16x8, i32x8, CmpEq};
 
 use std::io::Write;
 
-use crate::consts::{UNZIGZAG_49_TR, ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
+use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
-use crate::structs::idct::get_q;
 
 use crate::metrics::Metrics;
 use crate::structs::{
@@ -28,7 +27,6 @@ use crate::structs::{
 use default_boxed::DefaultBoxed;
 
 use super::block_context::NeighborData;
-use super::neighbor_summary::NEIGHBOR_DATA_EMPTY;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -320,10 +318,6 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     Ok(())
 }
 
-fn tr(i: u8) -> usize {
-    (((i & 7) << 3) | ((i & 56) >> 3)) as usize
-}
-
 /// Writes the 8x8 coefficient block to the bit writer, taking into account the neighboring
 /// blocks, probability tables and model.
 ///
@@ -339,8 +333,6 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     features: &EnabledFeatures,
 ) -> Result<NeighborSummary> {
     let model_per_color = model.get_per_color(pt);
-
-    //let here_tr = AlignedBlock::new(cast(i16x8::transpose(cast(*here.get_block()))));
 
     // using SIMD instructions, construct a 64 bit mask of all
     // the non-zero coefficients in the block, cmp_eq returns 0xffff for zero coefficients
@@ -424,73 +416,24 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         }
     }
 
-    let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
-
-    // here we dequantize raster coefficients and produce predictors for edge DCT coefficients
-    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
-    // load predictors data from neighborhood blocks
-    let mut h_pred: [i32; 8] = *neighbors_data.neighbor_context_above.get_horizontal_coef();
-    let mut vert_pred: i32x8 = cast(*neighbors_data.neighbor_context_left.get_vertical_coef());
-
-    let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
-    let all_but_first_mask = i32x8::new([0, -1, -1, -1, -1, -1, -1, -1]);
-    mult &= all_but_first_mask;
-
-    for col in 1..8 {
-        if nonzero_mask & (0xFF << (col * 8)) != 0 {
-            // have non-zero coefficients in the column i
-            raster[col] = i32x8::from_i16x8(block_simd[col]) * get_q(col, &q_tr);
-            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-            vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
-            h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
-        }
-    }
-
-    let v_pred = vert_pred.to_array();
-
-    // next step is the edge coefficients
-    encode_edge::<W, ALL_PRESENT>(
+    // Next step is the edge coefficients.
+    // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
+    // and transposed raster of dequantized DCT coefficients with 0 in DC
+    let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
+        neighbors_data,
         &here_tr,
         model_per_color,
         bool_writer,
-        &h_pred,
-        &v_pred,
         qt,
         pt,
         nonzero_mask,
     )
     .context(here!())?;
 
-    // here we produce first part of edge DCT coefficients predictions for neighborhood blocks
-    // and finalize dequantization of transposed raster
-    let mut horiz_pred: [i32; 8] = [0; 8];
-    let mut vert_pred: i32x8 = 0.into();
-    mult = cast(ICOS_BASED_8192_SCALED_PM);
-
-    if nonzero_mask & 0xFE != 0 {
-        raster[0] = i32x8::from_i16x8(block_simd[0]) * get_q(0, &q_tr);
-        raster[0] &= all_but_first_mask; // DC should be zero for adv_predict_dc_pix
-        vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
-    }
-    for col in 1..8 {
-        if nonzero_mask & (0xFF << (col * 8)) != 0 {
-            // produce predictions for edge DCT coefs for the block below
-            horiz_pred[col] = (mult * raster[col]).reduce_add();
-            // and for the block to the right
-            vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
-        }
-    }
-
-    let mut summary = NEIGHBOR_DATA_EMPTY;
-    summary.set_horizontal_coefs(cast(horiz_pred));
-    summary.set_vertical_coefs(vert_pred);
-
     // finally the DC coefficient (at 0,0)
-    // let (predicted_val, mut summary) =
-    //     pt.adv_predict_dc_pix::<ALL_PRESENT>(&here_tr, qt, neighbors_data, features);
     let q0 = qt.get_quantization_table()[0] as i32;
     let predicted_val =
-        pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         here_tr.get_dc(),
@@ -519,31 +462,36 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // neighbor summary is used as a predictor for the next block
-    summary.calculate_neighbor_summary(
+    let summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
-        qt,
-        here_tr.get_dc(),
+        here_tr.get_dc() as i32 * q0,
         num_non_zeros_7x7,
+        horiz_pred,
+        vert_pred,
         features,
     );
 
     Ok(summary)
 }
 
-#[inline(never)] // don't inline so that the profiler can get proper data
+//#[inline(never)] // don't inline so that the profiler can get proper data
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
+    neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
-    horiz_pred: &[i32; 8],
-    vert_pred: &[i32; 8],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    mask: u64,
-) -> Result<()> {
+    nonzero_mask: u64,
+) -> Result<([i32x8; 8], i32x8, i32x8)> {
+    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
+
+    let (mut raster, h_pred, v_pred) =
+        pt.predict_current_edges(neighbors_data, here_tr, &q_tr, nonzero_mask);
+
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
-    let mask_7x7 = (mask & 0xFEFEFEFEFEFEFE00) | 1;
+    let mask_7x7 = (nonzero_mask & 0xFEFEFEFEFEFEFE00) | 1;
     let mut mask_y = mask_7x7 | (mask_7x7 << 32);
     mask_y |= mask_y << 16;
     mask_y |= mask_y << 8;
@@ -553,12 +501,12 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 
     let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
 
-    let num_non_zeros_edge_x = (mask & 0x0101010101010100).count_ones() as u8;
+    let num_non_zeros_edge_x = (nonzero_mask & 0x0101010101010100).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, true>(
         here_tr,
         model_per_color,
         bool_writer,
-        horiz_pred,
+        &h_pred.to_array(),
         qt,
         pt,
         num_non_zeros_bin,
@@ -567,12 +515,12 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    let num_non_zeros_edge_y = (mask & 0xFE).count_ones() as u8;
+    let num_non_zeros_edge_y = (nonzero_mask & 0xFE).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, false>(
         here_tr,
         model_per_color,
         bool_writer,
-        vert_pred,
+        &v_pred.to_array(),
         qt,
         pt,
         num_non_zeros_bin,
@@ -580,7 +528,10 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         num_non_zeros_edge_y,
     )
     .context(here!())?;
-    Ok(())
+
+    let (h_pred, v_pred) =
+        ProbabilityTables::predict_next_edges_encode(&mut raster, here_tr, &q_tr, nonzero_mask);
+    Ok((raster, h_pred, v_pred))
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -621,14 +572,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        // let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-        //     qt,
-        //     coord,
-        //     block,
-        //     neighbors_data,
-        //     num_non_zeros_left,
-        // );
-        let ptcc8 = pt.calc_coefficient_context8_decode_lak::<ALL_PRESENT, HORIZONTAL>(
+        let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
             coord,
             pred,
@@ -638,7 +582,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         let coef = block.get_coefficient(coord);
 
         model_per_color
-            .write_edge_coefficient(bool_writer, qt, coef, tr(coord as u8), zig15offset, &ptcc8)
+            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
             .context(here!())?;
 
         if coef != 0 {
@@ -888,8 +832,10 @@ fn roundtrip_read_write_coefficients(
     verified_output: u64,
     features: &EnabledFeatures,
 ) {
+    use crate::structs::idct::get_i32x8;
     use crate::structs::idct::run_idct;
     use crate::structs::lepton_decoder::read_coefficient_block;
+    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
     use crate::structs::vpx_bool_reader::VPXBoolReader;
 
     use siphasher::sip::SipHasher13;
@@ -914,34 +860,36 @@ fn roundtrip_read_write_coefficients(
 
     // calculate the neighbor values. Normally this is done by recycling the previous results
     // but since we are testing a one-off here, manually calculate the values
-    let above_neighbor = if above_present {
-        let (idct_above, mut summary) = run_idct::<true>(&above_block, &q);
+    let calculate_summary = |block: &AlignedBlock| {
+        let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
 
-        summary.calculate_neighbor_summary(
+        for col in 1..8 {
+            raster[col] = get_i32x8(col, &block) * get_i32x8(col, &q);
+        }
+
+        let (h_pred, v_pred) =
+            ProbabilityTables::predict_next_edges_encode(&mut raster, &block, &q, u64::MAX);
+
+        let idct_above = run_idct(&raster);
+
+        NeighborSummary::calculate_neighbor_summary(
             &idct_above,
-            &qt,
-            above_block.get_dc(),
-            above_block.get_count_of_non_zeros_7x7(),
+            block.get_dc() as i32 * q.get_coefficient(0) as i32,
+            block.get_count_of_non_zeros_7x7(),
+            h_pred,
+            v_pred,
             &features,
-        );
+        )
+    };
 
-        summary
+    let above_neighbor = if above_present {
+        calculate_summary(&above_block)
     } else {
         NEIGHBOR_DATA_EMPTY
     };
 
     let left_neighbor = if left_present {
-        let (idct_left, mut summary) = run_idct::<true>(&left_block, &q);
-
-        summary.calculate_neighbor_summary(
-            &idct_left,
-            &qt,
-            left_block.get_dc(),
-            left_block.get_count_of_non_zeros_7x7(),
-            &features,
-        );
-
-        summary
+        calculate_summary(&left_block)
     } else {
         NEIGHBOR_DATA_EMPTY
     };

@@ -13,11 +13,10 @@ use default_boxed::DefaultBoxed;
 
 use std::io::Read;
 
-use crate::consts::{UNZIGZAG_49_TR, ICOS_BASED_8192_SCALED, ICOS_BASED_8192_SCALED_PM};
+use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::{err_exit_code, here, u32_bit_length};
 use crate::lepton_error::ExitCode;
-use crate::structs::idct::get_q;
 
 use crate::metrics::Metrics;
 use crate::structs::{
@@ -28,7 +27,6 @@ use crate::structs::{
 };
 
 use super::block_context::{BlockContext, NeighborData};
-use super::neighbor_summary::NEIGHBOR_DATA_EMPTY;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -306,10 +304,6 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     Ok(())
 }
 
-fn tr(i: u8) -> usize {
-    (((i & 7) << 3) | ((i & 56) >> 3)) as usize
-}
-
 /// Reads the 8x8 coefficient block from the bit reader, taking into account the neighboring
 /// blocks, probability tables and model.
 ///
@@ -343,7 +337,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     }
 
     let mut output = AlignedBlock::default();
-    let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
     let mut nonzero_mask: u64 = 0;
 
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
@@ -381,7 +374,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                     break;
                 }
 
-                // update the bin since we've chance the number of non-zeros
+                // update the bin since we've changed the number of non-zeros
                 num_non_zeros_bin =
                     ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
             }
@@ -395,31 +388,13 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         );
     }
 
-    // here we dequantize raster coefficients and produce predictors for edge DCT coefficients
-    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
-    // load predictors data from neighborhood blocks
-    let mut h_pred: [i32; 8] = *neighbor_data.neighbor_context_above.get_horizontal_coef();
-    let mut vert_pred: i32x8 = cast(*neighbor_data.neighbor_context_left.get_vertical_coef());
-
-    let mut mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
-
-    for col in 1..8 {
-        if nonzero_mask & (0xFE << (col * 8)) != 0 {
-            // have non-zero coefficients in the column i
-            raster[col] = get_q(col, &output) * get_q(col, &q_tr);
-            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-            vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
-            h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
-        }
-    }
-
-    let v_pred = vert_pred.to_array();
-
-    decode_edge::<R, ALL_PRESENT>(
+    // Next step is the edge coefficients.
+    // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
+    // and transposed raster of dequantized DCT coefficients with 0 in DC
+    let (raster, horiz_pred, vert_pred) = decode_edge::<R, ALL_PRESENT>(
+        neighbor_data,
         model_per_color,
         bool_reader,
-        &h_pred,
-        &v_pred,
         &mut output,
         qt,
         pt,
@@ -427,37 +402,9 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         &mut nonzero_mask,
     )?;
 
-    // here we produce first part of edge DCT coefficients predictions for neighborhood blocks
-    // and finalize dequantization of transposed raster
-    let mut horiz_pred: [i32; 8] = [0; 8];
-    let mut vert_pred: i32x8 = 0.into();
-    mult = cast(ICOS_BASED_8192_SCALED_PM);
-
-    if nonzero_mask & 0xFE != 0 {
-        raster[0] = get_q(0, &output) * get_q(0, &q_tr);
-        vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
-    }
-    for col in 1..8 {
-        if nonzero_mask & (0xFF << (col * 8)) != 0 {
-            // add column DC coef
-            let dc_coef = output.get_coefficient(col << 3) as i32;
-            let q = qt.get_quantization_table()[col] as i32;
-            raster[col] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
-            // produce predictions for edge DCT coefs for the block below
-            horiz_pred[col] = (mult * raster[col]).reduce_add();
-            // and for the block to the right
-            vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
-        }
-    }
-
-    let mut summary = NEIGHBOR_DATA_EMPTY;
-    summary.set_horizontal_coefs(cast(horiz_pred));
-    summary.set_vertical_coefs(vert_pred);
-
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc =
-        pt.adv_predict_dc_pix_decode::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
 
     let coef = model
         .read_dc(
@@ -474,29 +421,29 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     ) as i16);
 
     // neighbor summary is used as a predictor for the next block
-    summary.calculate_neighbor_summary(
+    let summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
-        qt,
-        output.get_dc(),
+        output.get_dc() as i32 * q0,
         num_non_zeros_7x7,
+        horiz_pred,
+        vert_pred,
         features,
     );
 
     Ok((output, summary))
 }
 
-#[inline(never)] // don't inline so that the profiler can get proper data
+//#[inline(never)] // don't inline so that the profiler can get proper data
 fn decode_edge<R: Read, const ALL_PRESENT: bool>(
+    neighbor_data: &NeighborData,
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    horiz_pred: &[i32; 8],
-    vert_pred: &[i32; 8],
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
     nonzero_mask: &mut u64,
-) -> Result<()> {
+) -> Result<([i32x8; 8], i32x8, i32x8)> {
     let mask_7x7 = *nonzero_mask | 1;
     let mut mask_y = mask_7x7 | (mask_7x7 << 32);
     mask_y |= mask_y << 16;
@@ -507,10 +454,15 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
+    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
+
+    let (mut raster, h_pred, v_pred) =
+        pt.predict_current_edges(neighbor_data, here_mut, &q_tr, *nonzero_mask);
+
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        horiz_pred,
+        &h_pred.to_array(),
         here_mut,
         qt,
         pt,
@@ -521,7 +473,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        vert_pred,
+        &v_pred.to_array(),
         here_mut,
         qt,
         pt,
@@ -529,7 +481,11 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         nonzero_mask,
         eob_y,
     )?;
-    Ok(())
+
+    let (horiz_pred, vert_pred) =
+        ProbabilityTables::predict_next_edges_decode(&mut raster, here_mut, &q_tr, *nonzero_mask);
+
+    Ok((raster, horiz_pred, vert_pred))
 }
 
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -565,7 +521,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        let ptcc8 = pt.calc_coefficient_context8_decode_lak::<ALL_PRESENT, HORIZONTAL>(
+        let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
             coord,
             pred,
@@ -573,7 +529,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         );
 
         let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, tr(coord as u8), zig15offset, &ptcc8)?;
+            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;

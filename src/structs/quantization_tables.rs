@@ -10,11 +10,8 @@ use crate::helpers::*;
 use super::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
-    icos_idct_edge8192_dequantized_x: [i32; 64],
-    icos_idct_edge8192_dequantized_y: [i32; 64],
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
-    freq_max: [u16; 64],
     min_noise_threshold: [u8; 64],
 }
 
@@ -27,11 +24,8 @@ impl QuantizationTables {
 
     pub fn new_from_table(quantization_table: &[u16; 64]) -> Self {
         let mut retval = QuantizationTables {
-            icos_idct_edge8192_dequantized_x: [0; 64],
-            icos_idct_edge8192_dequantized_y: [0; 64],
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
-            freq_max: [0; 64],
             min_noise_threshold: [0; 64],
         };
 
@@ -44,41 +38,25 @@ impl QuantizationTables {
         for i in 0..64 {
             let q = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
             self.quantization_table[i] = q;
-            //self.quantization_table_transposed[(i >> 3) | ((i & 7) << 3)] = q;
         }
 
         for pixel_row in 0..8 {
             for i in 0..8 {
-                self.quantization_table_transposed[(pixel_row * 8) + i] =
-                    self.quantization_table[(i * 8) + pixel_row];
-                self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i]
-                    * (self.quantization_table[(i * 8) + pixel_row] as i32);
-                self.icos_idct_edge8192_dequantized_y[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i]
-                    * (self.quantization_table[(pixel_row * 8) + i] as i32);
+                let coord = (pixel_row * 8) + i;
+                let coord_tr = (i * 8) + pixel_row;
+                self.quantization_table_transposed[coord] = self.quantization_table[coord_tr];
+
+                let mut freq_max = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
+                if self.quantization_table[coord] != 0 {
+                    freq_max /= self.quantization_table[coord];
+                }
+
+                let max_len = u16_bit_length(freq_max) as u8;
+                if max_len > RESIDUAL_NOISE_FLOOR as u8 {
+                    self.min_noise_threshold[coord_tr] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                }
             }
         }
-
-        for coord in 0..64 {
-            self.freq_max[coord] = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
-            if self.quantization_table[coord] != 0 {
-                self.freq_max[coord] /= self.quantization_table[coord];
-            }
-
-            let max_len = u16_bit_length(self.freq_max[coord]) as u8;
-            if max_len > RESIDUAL_NOISE_FLOOR as u8 {
-                self.min_noise_threshold[coord] = max_len - RESIDUAL_NOISE_FLOOR as u8;
-            }
-        }
-    }
-
-    pub fn get_icos_idct_edge8192_dequantized_x(&self) -> &[i32] {
-        &self.icos_idct_edge8192_dequantized_x
-    }
-
-    pub fn get_icos_idct_edge8192_dequantized_y(&self) -> &[i32] {
-        &self.icos_idct_edge8192_dequantized_y
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
