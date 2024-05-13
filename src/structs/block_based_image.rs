@@ -205,15 +205,6 @@ impl AlignedBlock {
     }
 
     /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
-    // #[unroll_for_loops]
-    // pub fn zigzag(&self) -> AlignedBlock {
-    //     let mut block = AlignedBlock::default();
-    //     for i in 0..64 {
-    //         block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_RASTER[i])];
-    //     }
-    //     return block;
-    // }
-
     #[unroll_for_loops]
     pub fn zigzag_from_transposed(&self) -> AlignedBlock {
         let mut block = AlignedBlock::default();
@@ -265,17 +256,9 @@ impl AlignedBlock {
         self.raw_data[index] = v;
     }
 
-    // pub fn set_coefficient_zigzag(&mut self, index: usize, v: i16) {
-    //     self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])] = v;
-    // }
-
     pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
         self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
     }
-
-    // pub fn get_coefficient_zigzag(&self, index: usize) -> i16 {
-    //     return self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])];
-    // }
 
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
         return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];

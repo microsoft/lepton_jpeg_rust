@@ -388,9 +388,9 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         );
     }
 
-    // Next step is the edge coefficients.
+    // step 2, read the edge coefficients
     // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
-    // and transposed raster of dequantized DCT coefficients with 0 in DC
+    // and build transposed raster of dequantized DCT coefficients with 0 in DC
     let (raster, horiz_pred, vert_pred) = decode_edge::<R, ALL_PRESENT>(
         neighbor_data,
         model_per_color,
@@ -421,7 +421,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     ) as i16);
 
     // neighbor summary is used as a predictor for the next block
-    let summary = NeighborSummary::calculate_neighbor_summary(
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         output.get_dc() as i32 * q0,
         num_non_zeros_7x7,
@@ -430,7 +430,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         features,
     );
 
-    Ok((output, summary))
+    Ok((output, neighbor_summary))
 }
 
 //#[inline(never)] // don't inline so that the profiler can get proper data

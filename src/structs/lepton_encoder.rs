@@ -462,7 +462,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // neighbor summary is used as a predictor for the next block
-    let summary = NeighborSummary::calculate_neighbor_summary(
+    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         here_tr.get_dc() as i32 * q0,
         num_non_zeros_7x7,
@@ -471,7 +471,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         features,
     );
 
-    Ok(summary)
+    Ok(neighbor_summary)
 }
 
 //#[inline(never)] // don't inline so that the profiler can get proper data

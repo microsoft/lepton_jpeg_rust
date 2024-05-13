@@ -155,7 +155,6 @@ impl ProbabilityTables {
 
     // here we dequantize raster coefficients
     // and produce current block predictors for edge DCT coefficients
-    // TODO: use XXX_present to reduce number of operations
     #[inline(always)]
     pub fn predict_current_edges(
         neighbors_data: &NeighborData,
@@ -169,6 +168,7 @@ impl ProbabilityTables {
         let mut h_pred: [i32; 8] = *neighbors_data.neighbor_context_above.get_horizontal_coef();
         let mut vert_pred: i32x8 = cast(*neighbors_data.neighbor_context_left.get_vertical_coef());
 
+        // don't bother about DC in encoding - 0th component of ICOS_BASED_8192_SCALED is 0
         let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
 
         for col in 1..8 {
@@ -185,7 +185,7 @@ impl ProbabilityTables {
     }
 
     // In these two functions we produce first part of edge DCT coefficients predictions
-    // for neighborhood blocks  and finalize dequantization of transposed raster
+    // for neighborhood blocks and finalize dequantization of transposed raster
     #[inline(always)]
     pub fn predict_next_edges_encode(
         raster: &mut [i32x8; 8],

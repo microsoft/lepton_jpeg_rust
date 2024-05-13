@@ -37,7 +37,6 @@ pub fn get_i32x8(offset: usize, q: &AlignedBlock) -> i32x8 {
 
 #[inline(always)]
 pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
-    //let t = i32x8::transpose(*block);
     let t = *block;
 
     let mut xv0 = (t[0] << 11) + 128;
@@ -294,9 +293,8 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     let q_tr = transpose(&q);
 
     let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
-    let block_simd: [i16x8; 8] = cast(*data_tr.get_block());
     for col in 0..8 {
-        raster[col] = i32x8::from_i16x8(block_simd[col]) * get_i32x8(col, &q_tr);
+        raster[col] = get_i32x8(col, &data_tr) * get_i32x8(col, &q_tr);
     }
 
     let outp = run_idct(&raster);
