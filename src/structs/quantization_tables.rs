@@ -12,7 +12,7 @@ use super::jpeg_header::JPegHeader;
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
-    min_noise_threshold: [u8; 64],
+    min_noise_threshold: [u8; 14],
 }
 
 impl QuantizationTables {
@@ -26,7 +26,7 @@ impl QuantizationTables {
         let mut retval = QuantizationTables {
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
-            min_noise_threshold: [0; 64],
+            min_noise_threshold: [0; 14],
         };
 
         retval.set_quantization_table(quantization_table);
@@ -45,16 +45,19 @@ impl QuantizationTables {
                 let coord = (pixel_row * 8) + i;
                 let coord_tr = (i * 8) + pixel_row;
                 self.quantization_table_transposed[coord] = self.quantization_table[coord_tr];
+            }
+        }
 
-                let mut freq_max = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
-                if self.quantization_table[coord] != 0 {
-                    freq_max /= self.quantization_table[coord];
-                }
+        for i in 0..14 {
+            let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
+            let mut freq_max = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
+            if self.quantization_table[coord] != 0 {
+                freq_max /= self.quantization_table[coord];
+            }
 
-                let max_len = u16_bit_length(freq_max) as u8;
-                if max_len > RESIDUAL_NOISE_FLOOR as u8 {
-                    self.min_noise_threshold[coord_tr] = max_len - RESIDUAL_NOISE_FLOOR as u8;
-                }
+            let max_len = u16_bit_length(freq_max) as u8;
+            if max_len > RESIDUAL_NOISE_FLOOR as u8 {
+                self.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
             }
         }
     }

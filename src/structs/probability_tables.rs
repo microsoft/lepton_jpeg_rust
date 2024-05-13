@@ -158,7 +158,6 @@ impl ProbabilityTables {
     // TODO: use XXX_present to reduce number of operations
     #[inline(always)]
     pub fn predict_current_edges(
-        &self,
         neighbors_data: &NeighborData,
         here_tr: &AlignedBlock,
         q_tr: &AlignedBlock,
@@ -182,9 +181,7 @@ impl ProbabilityTables {
             }
         }
 
-        let horiz_pred: i32x8 = cast(h_pred);
-
-        (raster, horiz_pred, vert_pred)
+        (raster, cast(h_pred), vert_pred)
     }
 
     // In these two functions we produce first part of edge DCT coefficients predictions
@@ -281,7 +278,7 @@ impl ProbabilityTables {
         return ProbabilityTablesCoefficientContext {
             best_prior,
             num_non_zeros_bin: num_non_zeros_x - 1,
-            best_prior_bit_len: u32_bit_length(cmp::min(best_prior.unsigned_abs(), 1023)),
+            best_prior_bit_len: cmp::min(u32_bit_length(best_prior.unsigned_abs()), 10),
         };
     }
 

@@ -487,7 +487,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
     let (mut raster, h_pred, v_pred) =
-        pt.predict_current_edges(neighbors_data, here_tr, &q_tr, nonzero_mask);
+        ProbabilityTables::predict_current_edges(neighbors_data, here_tr, &q_tr, nonzero_mask);
 
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
@@ -565,8 +565,9 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         zig15offset = 7;
     }
 
-    let mut coord = delta;
+    let mut coord_tr = delta;
     let mut num_non_zeros_left = num_non_zeros_edge;
+
     for _lane in 0..7 {
         if num_non_zeros_left == 0 {
             break;
@@ -574,22 +575,22 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
-            coord,
+            coord_tr,
             pred,
             num_non_zeros_left,
         );
 
-        let coef = block.get_coefficient(coord);
+        let coef = block.get_coefficient(coord_tr);
 
         model_per_color
-            .write_edge_coefficient(bool_writer, qt, coef, coord, zig15offset, &ptcc8)
+            .write_edge_coefficient(bool_writer, qt, coef, zig15offset, &ptcc8)
             .context(here!())?;
 
         if coef != 0 {
             num_non_zeros_left -= 1;
         }
 
-        coord += delta;
+        coord_tr += delta;
         zig15offset += 1;
     }
 

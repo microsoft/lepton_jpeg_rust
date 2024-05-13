@@ -332,7 +332,6 @@ impl ModelPerColor {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
-        coord: usize,
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<i16> {
@@ -357,7 +356,7 @@ impl ModelPerColor {
             coef = 1;
 
             if length > 1 {
-                let min_threshold: i32 = qt.get_min_noise_threshold(coord).into();
+                let min_threshold: i32 = qt.get_min_noise_threshold(zig15offset).into();
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
@@ -414,7 +413,6 @@ impl ModelPerColor {
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         coef: i16,
-        coord: usize,
         zig15offset: usize,
         ptcc8: &ProbabilityTablesCoefficientContext,
     ) -> Result<()> {
@@ -444,7 +442,7 @@ impl ModelPerColor {
             )?;
 
             if length > 1 {
-                let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
+                let min_threshold = i32::from(qt.get_min_noise_threshold(zig15offset));
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {

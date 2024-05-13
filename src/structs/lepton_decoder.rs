@@ -457,7 +457,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
     let (mut raster, h_pred, v_pred) =
-        pt.predict_current_edges(neighbor_data, here_mut, &q_tr, *nonzero_mask);
+        ProbabilityTables::predict_current_edges(neighbor_data, here_mut, &q_tr, *nonzero_mask);
 
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
@@ -499,7 +499,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     nonzero_mask: &mut u64,
     est_eob: u8,
 ) -> Result<()> {
-    let mut num_non_zeros_edge = model_per_color
+    let num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context(here!())?;
 
@@ -514,35 +514,35 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         zig15offset = 7;
     }
 
-    let mut coord = delta;
+    let mut coord_tr = delta;
+    let mut num_non_zeros_remaining = num_non_zeros_edge;
 
     for _lane in 0..7 {
-        if num_non_zeros_edge == 0 {
+        if num_non_zeros_remaining == 0 {
             break;
         }
 
         let ptcc8 = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
             qt,
-            coord,
+            coord_tr,
             pred,
-            num_non_zeros_edge,
+            num_non_zeros_remaining,
         );
 
-        let coef =
-            model_per_color.read_edge_coefficient(bool_reader, qt, coord, zig15offset, &ptcc8)?;
+        let coef = model_per_color.read_edge_coefficient(bool_reader, qt, zig15offset, &ptcc8)?;
 
         if coef != 0 {
-            num_non_zeros_edge -= 1;
-            here_mut.set_coefficient(coord, coef);
+            num_non_zeros_remaining -= 1;
+            here_mut.set_coefficient(coord_tr, coef);
 
-            *nonzero_mask |= 1 << coord;
+            *nonzero_mask |= 1 << coord_tr;
         }
 
-        coord += delta;
+        coord_tr += delta;
         zig15offset += 1;
     }
 
-    if num_non_zeros_edge != 0 {
+    if num_non_zeros_remaining != 0 {
         return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
     }
 
