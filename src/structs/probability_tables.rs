@@ -158,12 +158,9 @@ impl ProbabilityTables {
     #[inline(always)]
     pub fn predict_current_edges(
         neighbors_data: &NeighborData,
-        here_tr: &AlignedBlock,
-        q_tr: &AlignedBlock,
         nonzero_mask: u64,
-    ) -> ([i32x8; 8], i32x8, i32x8) {
-        let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
-
+        raster: &[i32x8; 8],
+    ) -> (i32x8, i32x8) {
         // load initial predictors data from neighborhood blocks
         let mut h_pred: [i32; 8] = *neighbors_data.neighbor_context_above.get_horizontal_coef();
         let mut vert_pred: i32x8 = cast(*neighbors_data.neighbor_context_left.get_vertical_coef());
@@ -173,73 +170,32 @@ impl ProbabilityTables {
 
         for col in 1..8 {
             if nonzero_mask & (0xFF << (col * 8)) != 0 {
-                // have non-zero coefficients in the column i
-                raster[col] = get_i32x8(col, &here_tr) * get_i32x8(col, &q_tr);
                 // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
                 vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
                 h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
             }
         }
 
-        (raster, cast(h_pred), vert_pred)
+        (cast(h_pred), vert_pred)
     }
 
     // In these two functions we produce first part of edge DCT coefficients predictions
     // for neighborhood blocks and finalize dequantization of transposed raster
-    #[inline(always)]
-    pub fn predict_next_edges_encode(
-        raster: &mut [i32x8; 8],
-        here_tr: &AlignedBlock,
-        q_tr: &AlignedBlock,
-        nonzero_mask: u64,
-    ) -> (i32x8, i32x8) {
-        let mut horiz_pred: [i32; 8] = [0; 8];
-        let mut vert_pred: i32x8 = 0.into();
-
-        let all_but_first_mask = i32x8::new([0, -1, -1, -1, -1, -1, -1, -1]);
-        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
-
-        if nonzero_mask & 0xFE != 0 {
-            raster[0] = get_i32x8(0, &here_tr) * get_i32x8(0, &q_tr);
-            raster[0] &= all_but_first_mask; // DC should be zero for adv_predict_dc_pix
-
-            vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
-        }
-        for col in 1..8 {
-            if nonzero_mask & (0xFF << (col * 8)) != 0 {
-                // produce predictions for edge DCT coefs for the block below
-                horiz_pred[col] = (mult * raster[col]).reduce_add();
-                // and for the block to the right
-                vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
-            }
-        }
-
-        (cast(horiz_pred), vert_pred)
-    }
-
-    #[inline(always)]
-    pub fn predict_next_edges_decode(
-        raster: &mut [i32x8; 8],
-        here_tr: &AlignedBlock,
-        q_tr: &AlignedBlock,
-        nonzero_mask: u64,
-    ) -> (i32x8, i32x8) {
+    ///#[inline(always)]
+    pub fn predict_next_edges(raster: &[i32x8; 8], nonzero_mask: u64) -> (i32x8, i32x8) {
         let mut horiz_pred: [i32; 8] = [0; 8];
         let mut vert_pred: i32x8 = 0.into();
 
         let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
 
         if nonzero_mask & 0xFE != 0 {
-            raster[0] = get_i32x8(0, &here_tr) * get_i32x8(0, &q_tr);
+            //raster[0] = get_i32x8(0, &here_tr) * get_i32x8(0, &q_tr);
+            //raster[0] &= all_but_first_mask; // DC should be zero for adv_predict_dc_pix
 
             vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
         }
         for col in 1..8 {
             if nonzero_mask & (0xFF << (col * 8)) != 0 {
-                // add column DC coef
-                let dc_coef = here_tr.get_coefficient(col << 3) as i32;
-                let q = q_tr.get_coefficient(col << 3) as i32;
-                raster[col] |= i32x8::new([dc_coef * q, 0, 0, 0, 0, 0, 0, 0]);
                 // produce predictions for edge DCT coefs for the block below
                 horiz_pred[col] = (mult * raster[col]).reduce_add();
                 // and for the block to the right

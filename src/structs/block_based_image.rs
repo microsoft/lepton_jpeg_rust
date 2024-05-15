@@ -4,7 +4,9 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use bytemuck::cast_ref;
 use log::info;
+use wide::i16x8;
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
 
@@ -194,6 +196,11 @@ impl Default for AlignedBlock {
 impl AlignedBlock {
     pub fn new(block: [i16; 64]) -> Self {
         AlignedBlock { raw_data: block }
+    }
+
+    pub fn as_i16x8(&self, index: usize) -> i16x8 {
+        let v: &[i16x8; 8] = cast_ref(&self.raw_data);
+        v[index]
     }
 
     pub fn get_dc(&self) -> i16 {

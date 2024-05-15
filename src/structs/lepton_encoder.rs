@@ -486,8 +486,20 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 ) -> Result<([i32x8; 8], i32x8, i32x8)> {
     let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
-    let (mut raster, h_pred, v_pred) =
-        ProbabilityTables::predict_current_edges(neighbors_data, here_tr, &q_tr, nonzero_mask);
+    let raster: [i32x8; 8] = [
+        (q_tr.as_i16x8(0) & i16x8::new([0, -1, -1, -1, -1, -1, -1, -1]))
+            .mul_widen(here_tr.as_i16x8(0)),
+        q_tr.as_i16x8(1).mul_widen(here_tr.as_i16x8(1)),
+        q_tr.as_i16x8(2).mul_widen(here_tr.as_i16x8(2)),
+        q_tr.as_i16x8(3).mul_widen(here_tr.as_i16x8(3)),
+        q_tr.as_i16x8(4).mul_widen(here_tr.as_i16x8(4)),
+        q_tr.as_i16x8(5).mul_widen(here_tr.as_i16x8(5)),
+        q_tr.as_i16x8(6).mul_widen(here_tr.as_i16x8(6)),
+        q_tr.as_i16x8(7).mul_widen(here_tr.as_i16x8(7)),
+    ];
+
+    let (h_pred, v_pred) =
+        ProbabilityTables::predict_current_edges(neighbors_data, nonzero_mask, &raster);
 
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
@@ -529,8 +541,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    let (h_pred, v_pred) =
-        ProbabilityTables::predict_next_edges_encode(&mut raster, here_tr, &q_tr, nonzero_mask);
+    let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&raster, nonzero_mask);
     Ok((raster, h_pred, v_pred))
 }
 
@@ -864,12 +875,12 @@ fn roundtrip_read_write_coefficients(
     let calculate_summary = |block: &AlignedBlock| {
         let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
 
-        for col in 1..8 {
+        for col in 0..8 {
             raster[col] = get_i32x8(col, &block) * get_i32x8(col, &q);
         }
+        raster[0].as_array_mut()[0] = 0; // DC coefficient is always 0 since it is calculated last
 
-        let (h_pred, v_pred) =
-            ProbabilityTables::predict_next_edges_encode(&mut raster, &block, &q, u64::MAX);
+        let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&mut raster, u64::MAX);
 
         let idct_above = run_idct(&raster);
 

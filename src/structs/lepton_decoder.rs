@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 
-use bytemuck::cast;
+use bytemuck::cast_mut;
 use wide::i32x8;
 
 use default_boxed::DefaultBoxed;
@@ -337,6 +337,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     }
 
     let mut output = AlignedBlock::default();
+    let mut raster = [i32x8::ZERO; 8];
+    let raster_col: &mut [i32; 64] = cast_mut(&mut raster);
     let mut nonzero_mask: u64 = 0;
 
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
@@ -367,6 +369,9 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
             if coef != 0 {
                 output.set_coefficient(coord as usize, coef);
+                raster_col[coord as usize] = i32::from(coef)
+                    * i32::from(qt.get_quantization_table_transposed()[coord as usize]);
+
                 nonzero_mask |= 1 << coord;
 
                 num_non_zeros_7x7_remaining -= 1;
@@ -391,7 +396,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     // step 2, read the edge coefficients
     // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
     // and build transposed raster of dequantized DCT coefficients with 0 in DC
-    let (raster, horiz_pred, vert_pred) = decode_edge::<R, ALL_PRESENT>(
+    let (horiz_pred, vert_pred) = decode_edge::<R, ALL_PRESENT>(
         neighbor_data,
         model_per_color,
         bool_reader,
@@ -400,6 +405,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         pt,
         num_non_zeros_7x7,
         &mut nonzero_mask,
+        &mut raster,
     )?;
 
     // step 3, read the DC coefficient (0,0 of the block)
@@ -443,7 +449,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
     nonzero_mask: &mut u64,
-) -> Result<([i32x8; 8], i32x8, i32x8)> {
+    raster: &mut [i32x8; 8],
+) -> Result<(i32x8, i32x8)> {
     let mask_7x7 = *nonzero_mask | 1;
     let mut mask_y = mask_7x7 | (mask_7x7 << 32);
     mask_y |= mask_y << 16;
@@ -454,10 +461,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
-    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
-
-    let (mut raster, h_pred, v_pred) =
-        ProbabilityTables::predict_current_edges(neighbor_data, here_mut, &q_tr, *nonzero_mask);
+    let (h_pred, v_pred) =
+        ProbabilityTables::predict_current_edges(neighbor_data, *nonzero_mask, raster);
 
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
@@ -469,6 +474,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         num_non_zeros_bin,
         nonzero_mask,
         eob_x,
+        cast_mut(raster),
     )?;
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
@@ -480,12 +486,12 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         num_non_zeros_bin,
         nonzero_mask,
         eob_y,
+        cast_mut(raster),
     )?;
 
-    let (horiz_pred, vert_pred) =
-        ProbabilityTables::predict_next_edges_decode(&mut raster, here_mut, &q_tr, *nonzero_mask);
+    let (horiz_pred, vert_pred) = ProbabilityTables::predict_next_edges(raster, *nonzero_mask);
 
-    Ok((raster, horiz_pred, vert_pred))
+    Ok((horiz_pred, vert_pred))
 }
 
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -498,6 +504,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     num_non_zeros_bin: u8,
     nonzero_mask: &mut u64,
     est_eob: u8,
+    raster: &mut [i32; 64],
 ) -> Result<()> {
     let num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
@@ -534,6 +541,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         if coef != 0 {
             num_non_zeros_remaining -= 1;
             here_mut.set_coefficient(coord_tr, coef);
+            raster[coord_tr as usize] =
+                i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
 
             *nonzero_mask |= 1 << coord_tr;
         }
