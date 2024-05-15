@@ -56,7 +56,7 @@ pub fn lepton_decode_row_range<R: Read>(
         let num_non_zeros_length = (image_data[i].get_block_width() << 1) as usize;
 
         let mut num_non_zero_list = Vec::new();
-        num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::new());
+        num_non_zero_list.resize(num_non_zeros_length, NeighborSummary::default());
 
         neighbor_summary_cache.push(num_non_zero_list);
     }
@@ -427,7 +427,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     ) as i16);
 
     // neighbor summary is used as a predictor for the next block
-    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+    let neighbor_summary = NeighborSummary::new(
         &predicted_dc.advanced_predict_dc_pixels_sans_dc,
         output.get_dc() as i32 * q0,
         num_non_zeros_7x7,
@@ -451,11 +451,14 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     nonzero_mask: &mut u64,
     raster: &mut [i32x8; 8],
 ) -> Result<(i32x8, i32x8)> {
+    // here we calculate the furthest x and y coordinates that have non-zero coefficients
+    // which are used as predictors for the number of edge coefficients
     let mask_7x7 = *nonzero_mask | 1;
     let mut mask_y = mask_7x7 | (mask_7x7 << 32);
     mask_y |= mask_y << 16;
     mask_y |= mask_y << 8;
 
+    // effectively (7 - eob) of DB Lepton
     let eob_y = mask_y.leading_zeros() as u8;
     let eob_x = (mask_7x7.leading_zeros() >> 3) as u8;
 

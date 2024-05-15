@@ -55,7 +55,7 @@ pub fn lepton_encode_row_range<W: Write>(
         let num_non_zeros_length = (image_data[i].get_block_width() << 1) as usize;
 
         let mut neighbor_summary_component = Vec::new();
-        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::new());
+        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::default());
 
         neighbor_summary_cache.push(neighbor_summary_component);
     }
@@ -462,7 +462,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // neighbor summary is used as a predictor for the next block
-    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+    let neighbor_summary = NeighborSummary::new(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
         here_tr.get_dc() as i32 * q0,
         num_non_zeros_7x7,
@@ -508,6 +508,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     mask_y |= mask_y << 16;
     mask_y |= mask_y << 8;
 
+    // effectively (7 - eob) of DB Lepton
     let eob_y: u8 = mask_y.leading_zeros() as u8;
     let eob_x: u8 = (mask_7x7.leading_zeros() >> 3) as u8;
 
@@ -863,7 +864,7 @@ fn roundtrip_read_write_coefficients(
     let mut bool_writer = VPXBoolWriter::new(&mut buffer).unwrap();
 
     let qt = QuantizationTables::new_from_table(&[1; 64]);
-    let q: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
+    let q = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
     // all the work is done in transposed raster coefficients order
     let here_block = AlignedBlock::new(cast(i16x8::transpose(cast(*here.get_block()))));
@@ -884,7 +885,7 @@ fn roundtrip_read_write_coefficients(
 
         let idct_above = run_idct(&raster);
 
-        NeighborSummary::calculate_neighbor_summary(
+        NeighborSummary::new(
             &idct_above,
             block.get_dc() as i32 * q.get_coefficient(0) as i32,
             block.get_count_of_non_zeros_7x7(),

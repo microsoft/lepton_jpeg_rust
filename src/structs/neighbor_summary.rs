@@ -31,39 +31,23 @@ pub static NEIGHBOR_DATA_EMPTY: NeighborSummary = NeighborSummary {
     num_non_zeros: 0,
 };
 
+impl Default for NeighborSummary {
+    fn default() -> Self {
+        NEIGHBOR_DATA_EMPTY
+    }
+}
+
 const X_IDCT_SCALE: i32 = 8;
 
 impl NeighborSummary {
-    pub fn new() -> Self {
-        return NeighborSummary {
-            edge_pixels_h: [0; 8],
-            edge_pixels_v: [0; 8],
-            edge_coefs_h: [0; 8],
-            edge_coefs_v: [0; 8],
-            num_non_zeros: 0,
-        };
-    }
-
-    pub fn get_num_non_zeros(&self) -> u8 {
-        self.num_non_zeros
-    }
-
-    pub fn get_vertical(&self) -> &[i16; 8] {
-        return &self.edge_pixels_v;
-    }
-
-    pub fn get_horizontal(&self) -> &[i16; 8] {
-        return &self.edge_pixels_h;
-    }
-
-    pub fn calculate_neighbor_summary(
+    pub fn new(
         here_idct: &AlignedBlock,
         dc_deq: i32,
         num_non_zeros_7x7: u8,
         horiz_pred: i32x8,
         vert_pred: i32x8,
         features: &EnabledFeatures,
-    ) -> NeighborSummary {
+    ) -> Self {
         let mut summary = NeighborSummary {
             edge_pixels_h: [0; 8],
             edge_pixels_v: [0; 8],
@@ -77,6 +61,18 @@ impl NeighborSummary {
         summary.set_vertical(here_idct.get_block(), dc_deq, features);
 
         summary
+    }
+
+    pub fn get_num_non_zeros(&self) -> u8 {
+        self.num_non_zeros
+    }
+
+    pub fn get_vertical(&self) -> &[i16; 8] {
+        return &self.edge_pixels_v;
+    }
+
+    pub fn get_horizontal(&self) -> &[i16; 8] {
+        return &self.edge_pixels_h;
     }
 
     fn set_horizontal(
