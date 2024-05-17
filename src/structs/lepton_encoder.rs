@@ -512,16 +512,9 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
     let mask_7x7 = (nonzero_mask & 0xFEFEFEFEFEFEFE00) | 1;
-    let mut mask_y = mask_7x7 | (mask_7x7 << 32);
-    mask_y |= mask_y << 16;
-    mask_y |= mask_y << 8;
-
-    assert_eq!(eob_y, 7 - mask_y.leading_zeros() as u8);
-    assert_eq!(eob_x, 7 - (mask_7x7.leading_zeros() >> 3) as u8);
 
     let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
 
-    let num_non_zeros_edge_x = (nonzero_mask & 0x0101010101010100).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, true>(
         here_tr,
         model_per_color,
@@ -531,11 +524,9 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         pt,
         num_non_zeros_bin,
         eob_x,
-        num_non_zeros_edge_x,
     )
     .context(here!())?;
 
-    let num_non_zeros_edge_y = (nonzero_mask & 0xFE).count_ones() as u8;
     encode_one_edge::<W, ALL_PRESENT, false>(
         here_tr,
         model_per_color,
@@ -545,12 +536,19 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         pt,
         num_non_zeros_bin,
         eob_y,
-        num_non_zeros_edge_y,
     )
     .context(here!())?;
 
-    let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&raster, nonzero_mask);
+    let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&raster);
     Ok((raster, h_pred, v_pred))
+}
+
+fn count_non_zero(v: i16) -> u8 {
+    if v == 0 {
+        0
+    } else {
+        1
+    }
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -562,8 +560,27 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     pt: &ProbabilityTables,
     num_non_zeros_bin: u8,
     est_eob: u8,
-    num_non_zeros_edge: u8,
 ) -> Result<()> {
+    let mut num_non_zeros_edge;
+
+    if !HORIZONTAL {
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(1))
+            + count_non_zero(block.get_coefficient(2))
+            + count_non_zero(block.get_coefficient(3))
+            + count_non_zero(block.get_coefficient(4))
+            + count_non_zero(block.get_coefficient(5))
+            + count_non_zero(block.get_coefficient(6))
+            + count_non_zero(block.get_coefficient(7));
+    } else {
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(1 * 8))
+            + count_non_zero(block.get_coefficient(2 * 8))
+            + count_non_zero(block.get_coefficient(3 * 8))
+            + count_non_zero(block.get_coefficient(4 * 8))
+            + count_non_zero(block.get_coefficient(5 * 8))
+            + count_non_zero(block.get_coefficient(6 * 8))
+            + count_non_zero(block.get_coefficient(7 * 8));
+    }
+
     model_per_color
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
@@ -585,10 +602,9 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     let mut coord_tr = delta;
-    let mut num_non_zeros_left = num_non_zeros_edge;
 
     for _lane in 0..7 {
-        if num_non_zeros_left == 0 {
+        if num_non_zeros_edge == 0 {
             break;
         }
 
@@ -603,13 +619,13 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
                 qt,
                 coef,
                 zig15offset,
-                num_non_zeros_left,
+                num_non_zeros_edge,
                 best_prior,
             )
             .context(here!())?;
 
         if coef != 0 {
-            num_non_zeros_left -= 1;
+            num_non_zeros_edge -= 1;
         }
 
         coord_tr += delta;
@@ -891,7 +907,7 @@ fn roundtrip_read_write_coefficients(
         }
         raster[0].as_array_mut()[0] = 0; // DC coefficient is always 0 since it is calculated last
 
-        let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&mut raster, u64::MAX);
+        let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&mut raster);
 
         let idct_above = run_idct(&raster);
 

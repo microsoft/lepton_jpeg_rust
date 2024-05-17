@@ -502,7 +502,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         cast_mut(raster),
     )?;
 
-    let (horiz_pred, vert_pred) = ProbabilityTables::predict_next_edges(raster, *nonzero_mask);
+    let (horiz_pred, vert_pred) = ProbabilityTables::predict_next_edges(raster);
 
     Ok((horiz_pred, vert_pred))
 }
