@@ -26,7 +26,6 @@ mod model;
 mod multiplexer;
 mod neighbor_summary;
 mod probability_tables;
-mod probability_tables_coefficient_context;
 mod probability_tables_set;
 mod quantization_tables;
 mod row_spec;

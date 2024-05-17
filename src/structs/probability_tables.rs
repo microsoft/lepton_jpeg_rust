@@ -4,18 +4,14 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::cmp;
-
 use crate::consts::*;
 use crate::enabled_features;
-use crate::helpers::*;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
 
 use super::block_based_image::AlignedBlock;
 use super::block_context::NeighborData;
-use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 
 use wide::i16x8;
 use wide::i32x8;
@@ -212,16 +208,11 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         coefficient_tr: usize,
         pred: &[i32; 8],
-        num_non_zeros_x: u8,
-    ) -> ProbabilityTablesCoefficientContext {
+    ) -> i32 {
         if !ALL_PRESENT
             && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
         {
-            return ProbabilityTablesCoefficientContext {
-                best_prior: 0,
-                num_non_zeros_bin: num_non_zeros_x - 1,
-                best_prior_bit_len: 0,
-            };
+            return 0;
         }
 
         let mut best_prior: i32 = pred[if HORIZONTAL {
@@ -231,11 +222,7 @@ impl ProbabilityTables {
         }];
         best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
 
-        return ProbabilityTablesCoefficientContext {
-            best_prior,
-            num_non_zeros_bin: num_non_zeros_x - 1,
-            best_prior_bit_len: cmp::min(u32_bit_length(best_prior.unsigned_abs()), 10),
-        };
+        best_prior
     }
 
     fn from_stride(block: &[i16; 64], offset: usize, stride: usize) -> i16x8 {

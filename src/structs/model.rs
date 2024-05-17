@@ -9,14 +9,13 @@ use std::cmp;
 use std::io::{Read, Write};
 
 use crate::consts::*;
-use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length};
+use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length, u32_bit_length};
 use crate::lepton_error::ExitCode;
 use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
 use super::probability_tables::ProbabilityTables;
-use super::probability_tables_coefficient_context::ProbabilityTablesCoefficientContext;
 use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
@@ -333,10 +332,28 @@ impl ModelPerColor {
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
         zig15offset: usize,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        num_non_zeros_edge: u8,
+        best_prior: i32,
     ) -> Result<i16> {
-        let length_branches = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
-            .exponent_counts[ptcc8.best_prior_bit_len as usize];
+        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
+
+        // bounds checks will test these anyway, so check here for better
+        // error messages and also gives the optimizer more freedom to move code around
+        assert!(
+            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
+            "num_non_zeros_edge_bin {0} too high",
+            num_non_zeros_edge_bin
+        );
+
+        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
+
+        // we cap the bit length since the prior prediction can be wonky
+        let best_prior_abs = best_prior.unsigned_abs();
+        let best_prior_bit_len =
+            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
+
+        let length_branches = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
+            .exponent_counts[best_prior_bit_len];
 
         let length = bool_reader
             .get_unary_encoded(
@@ -347,7 +364,7 @@ impl ModelPerColor {
 
         let mut coef = 0;
         if length != 0 {
-            let sign = self.get_sign_counts_mut(ptcc8);
+            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
 
             let neg = !bool_reader
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
@@ -360,8 +377,11 @@ impl ModelPerColor {
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
-                    let thresh_prob =
-                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length);
+                    let thresh_prob = self.get_residual_threshold_counts_mut(
+                        best_prior_abs,
+                        min_threshold,
+                        length,
+                    );
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
@@ -382,14 +402,7 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
-                        [zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
                         .residual_noise_counts;
 
                     coef <<= i + 1;
@@ -414,13 +427,31 @@ impl ModelPerColor {
         qt: &QuantizationTables,
         coef: i16,
         zig15offset: usize,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        num_non_zeros_edge: u8,
+        best_prior: i32,
     ) -> Result<()> {
-        let exp_array = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize][zig15offset]
-            .exponent_counts[ptcc8.best_prior_bit_len as usize];
+        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
+
+        // bounds checks will test these anyway, so check here for better
+        // error messages and also gives the optimizer more freedom to move code around
+        assert!(
+            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
+            "num_non_zeros_edge_bin {0} too high",
+            num_non_zeros_edge_bin
+        );
+
+        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
+
+        // we cap the bit length since the prior prediction can be wonky
+        let best_prior_abs = best_prior.unsigned_abs();
+        let best_prior_bit_len =
+            cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
+
+        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
+            [best_prior_bit_len];
 
         if length > MAX_EXPONENT {
             return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
@@ -433,7 +464,7 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
-            let sign = self.get_sign_counts_mut(ptcc8);
+            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
 
             bool_writer.put(
                 coef >= 0,
@@ -446,8 +477,11 @@ impl ModelPerColor {
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {
-                    let thresh_prob =
-                        self.get_residual_threshold_counts_mut(ptcc8, min_threshold, length as i32);
+                    let thresh_prob = self.get_residual_threshold_counts_mut(
+                        best_prior_abs,
+                        min_threshold,
+                        length as i32,
+                    );
 
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
@@ -472,14 +506,7 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    debug_assert!(
-                        (ptcc8.num_non_zeros_bin as usize) < self.counts_x.len(),
-                        "d1 {0} too high",
-                        ptcc8.num_non_zeros_bin
-                    );
-
-                    let res_prob = &mut self.counts_x[ptcc8.num_non_zeros_bin as usize]
-                        [zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
                         .residual_noise_counts;
 
                     bool_writer
@@ -499,12 +526,17 @@ impl ModelPerColor {
 
     fn get_residual_threshold_counts_mut(
         &mut self,
-        ptcc8: &ProbabilityTablesCoefficientContext,
+        best_prior_abs: u32,
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
+        // need to & 0xffff since C++ version casts to a uint16_t in the array lookup
+        // and we need to match that behavior. It's unlikely that this will be a problem
+        // since it would require an extremely large best_prior, which is difficult
+        // due to the range limits of 2047 of the coefficients but still in the
+        // interest of correctness we should match the C++ behavior.
         return &mut self.residual_threshold_counts[cmp::min(
-            (ptcc8.best_prior.abs() >> min_threshold) as usize,
+            ((best_prior_abs & 0xffff) >> min_threshold) as usize,
             self.residual_threshold_counts.len() - 1,
         )][cmp::min(
             (length - min_threshold) as usize,
@@ -522,10 +554,6 @@ impl ModelPerColor {
         } else {
             return &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize];
         }
-    }
-
-    fn get_sign_counts_mut(&mut self, ptcc8: &ProbabilityTablesCoefficientContext) -> &mut Branch {
-        &mut self.sign_counts[calc_sign_index(ptcc8.best_prior)][ptcc8.best_prior_bit_len as usize]
     }
 }
 
