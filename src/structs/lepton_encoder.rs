@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use bytemuck::cast;
 use wide::{i16x8, i32x8, CmpEq};
 
+use std::cmp;
 use std::io::Write;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -364,6 +365,11 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         )
         .context(here!())?;
 
+    // these are used as predictors for the number of non-zero edge coefficients
+    // do math in 32 bits since this is faster on most modern platforms
+    let mut eob_x: u32 = 0;
+    let mut eob_y: u32 = 0;
+
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
     if num_non_zeros_7x7_remaining > 0 {
@@ -393,6 +399,16 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                 .context(here!())?;
 
             if coef != 0 {
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                let bx = u32::from(coord) & 7;
+                let by = u32::from(coord) >> 3;
+
+                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
+
+                eob_x = cmp::max(eob_x, bx);
+                eob_y = cmp::max(eob_y, by);
+
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {
                     break;
@@ -497,9 +513,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     mask_y |= mask_y << 16;
     mask_y |= mask_y << 8;
 
-    // effectively (7 - eob) of DB Lepton
-    let eob_y: u8 = mask_y.leading_zeros() as u8;
-    let eob_x: u8 = (mask_7x7.leading_zeros() >> 3) as u8;
+    let eob_y: u8 = 7 - mask_y.leading_zeros() as u8;
+    let eob_x: u8 = 7 - (mask_7x7.leading_zeros() >> 3) as u8;
 
     let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
 
@@ -613,10 +628,10 @@ fn roundtrip_zeros() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x7AC1898CC7C24813,
-        0x7AC1898CC7C24813,
-        0x7AC1898CC7C24813,
-        0x7AC1898CC7C24813,
+        0x133100e068957963,
+        0x133100e068957963,
+        0x133100e068957963,
+        0x133100e068957963,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -638,10 +653,10 @@ fn roundtrip_ones() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x9BFB8B62B8F5C8C9,
-        0x93AF2386E2B30C18,
-        0x108F59190036D45A,
-        0xD7A3F6449681E97F,
+        0xe5a1980d71891a2b,
+        0x5a8fd92548e2ea07,
+        0xb392ea90d7b31238,
+        0x1a769d84e98a27e,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -665,10 +680,10 @@ fn roundtrip_large_coef() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x3195FA3A5611FE57,
-        0xB438BE8570092738,
-        0xD6441DDBA177AC7E,
-        0x15A42C2C0A53C332,
+        0x506f55523369cf48,
+        0x5b2795bc24a04d2e,
+        0xdcb68ed904cfc4f9,
+        0x80efab28c62db071,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -698,10 +713,10 @@ fn roundtrip_random() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0x05F9A5949CB1517C,
-        0x006A051435067451,
-        0x42715401410F1602,
-        0x394329CA90795246,
+        0x4b08a910feb758e8,
+        0x44c3f76e93f1d204,
+        0x899bc6e64957e400,
+        0x322e78e37fd7ed13,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -729,10 +744,10 @@ fn roundtrip_unique() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0xEB20783DD8B86A4E,
-        0xFF351314979E8CC6,
-        0xC07C557B9318D5D0,
-        0x38C278C1A08C66B4,
+        0x31caa65a4af9fe19,
+        0x33622f772a9fc403,
+        0xa2cc76c22f35dfbd,
+        0xdb832d71fc9faf0c,
     ];
 
     roundtrip_read_write_coefficients_all(
@@ -760,10 +775,10 @@ fn roundtrip_non_zeros_counts() {
     // to the binary format of the compressor and probably shouldn't do that since then
     // the compressor and decompressor won't be compatible anymore.
     let verified_output = [
-        0xBB28316BA25CE552,
-        0x3BF2227D37C68152,
-        0xB78F8A203D96A9E6,
-        0x627DB637DA12F0F0,
+        0xa781963bb25ecfa3,
+        0x4158c01c97aa07d4,
+        0x7744eda601c31332,
+        0x16740ad27fa899fc,
     ];
 
     roundtrip_read_write_coefficients_all(

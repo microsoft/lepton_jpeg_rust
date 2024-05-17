@@ -459,8 +459,8 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     mask_y |= mask_y << 8;
 
     // effectively (7 - eob) of DB Lepton
-    let eob_y = mask_y.leading_zeros() as u8;
-    let eob_x = (mask_7x7.leading_zeros() >> 3) as u8;
+    let eob_y = 7 - mask_y.leading_zeros() as u8;
+    let eob_x = 7 - (mask_7x7.leading_zeros() >> 3) as u8;
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
