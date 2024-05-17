@@ -17,8 +17,8 @@ pub struct NeighborSummary {
     edge_pixels_h: [i16; 8],
     edge_pixels_v: [i16; 8],
 
-    edge_coefs_h: [i32; 8],
-    edge_coefs_v: [i32; 8],
+    edge_coefs_h: i32x8,
+    edge_coefs_v: i32x8,
 
     num_non_zeros: u8,
 }
@@ -26,8 +26,8 @@ pub struct NeighborSummary {
 pub static NEIGHBOR_DATA_EMPTY: NeighborSummary = NeighborSummary {
     edge_pixels_h: [0; 8],
     edge_pixels_v: [0; 8],
-    edge_coefs_h: [0; 8],
-    edge_coefs_v: [0; 8],
+    edge_coefs_h: i32x8::ZERO,
+    edge_coefs_v: i32x8::ZERO,
     num_non_zeros: 0,
 };
 
@@ -51,8 +51,8 @@ impl NeighborSummary {
         let mut summary = NeighborSummary {
             edge_pixels_h: [0; 8],
             edge_pixels_v: [0; 8],
-            edge_coefs_h: horiz_pred.to_array(),
-            edge_coefs_v: vert_pred.to_array(),
+            edge_coefs_h: horiz_pred,
+            edge_coefs_v: vert_pred,
             num_non_zeros: num_non_zeros_7x7,
         };
 
@@ -118,12 +118,12 @@ impl NeighborSummary {
         }
     }
 
-    pub fn get_vertical_coef(&self) -> &[i32; 8] {
-        return &self.edge_coefs_v;
+    pub fn get_vertical_coef(&self) -> i32x8 {
+        return self.edge_coefs_v;
     }
 
-    pub fn get_horizontal_coef(&self) -> &[i32; 8] {
-        return &self.edge_coefs_h;
+    pub fn get_horizontal_coef(&self) -> i32x8 {
+        return self.edge_coefs_h;
     }
 
     // used for debugging

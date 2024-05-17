@@ -16,8 +16,6 @@ use super::block_context::NeighborData;
 use wide::i16x8;
 use wide::i32x8;
 
-use bytemuck::cast;
-
 pub struct ProbabilityTables {
     left_present: bool,
     above_present: bool,
@@ -162,11 +160,14 @@ impl ProbabilityTables {
         raster: &[i32x8; 8],
     ) -> (i32x8, i32x8) {
         // load initial predictors data from neighborhood blocks
-        let mut h_pred: [i32; 8] = *neighbors_data.neighbor_context_above.get_horizontal_coef();
-        let mut vert_pred: i32x8 = cast(*neighbors_data.neighbor_context_left.get_vertical_coef());
+        let mut h_pred: [i32; 8] = neighbors_data
+            .neighbor_context_above
+            .get_horizontal_coef()
+            .to_array();
+        let mut vert_pred: i32x8 = neighbors_data.neighbor_context_left.get_vertical_coef();
 
         // don't bother about DC in encoding - 0th component of ICOS_BASED_8192_SCALED is 0
-        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
+        let mult: i32x8 = i32x8::from(ICOS_BASED_8192_SCALED);
 
         for col in 1..8 {
             // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
@@ -174,7 +175,7 @@ impl ProbabilityTables {
             h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
         }
 
-        (cast(h_pred), vert_pred)
+        (i32x8::from(h_pred), vert_pred)
     }
 
     // In these two functions we produce first part of edge DCT coefficients predictions
@@ -183,7 +184,7 @@ impl ProbabilityTables {
     pub fn predict_next_edges(raster: &[i32x8; 8]) -> (i32x8, i32x8) {
         let mut horiz_pred: [i32; 8] = [0; 8];
 
-        let mult: i32x8 = cast(ICOS_BASED_8192_SCALED_PM);
+        let mult = i32x8::from(ICOS_BASED_8192_SCALED_PM);
 
         let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
         for col in 1..8 {
@@ -193,7 +194,7 @@ impl ProbabilityTables {
             vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
         }
 
-        (cast(horiz_pred), vert_pred)
+        (i32x8::from(horiz_pred), vert_pred)
     }
 
     #[inline(always)]
