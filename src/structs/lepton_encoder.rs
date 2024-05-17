@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use bytemuck::cast;
-use wide::{i16x8, i32x8, CmpEq};
+use wide::{i16x8, i32x8};
 
 use std::cmp;
 use std::io::Write;
@@ -335,18 +335,6 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 ) -> Result<NeighborSummary> {
     let model_per_color = model.get_per_color(pt);
 
-    // using SIMD instructions, construct a 64 bit mask of all
-    // the non-zero coefficients in the block, cmp_eq returns 0xffff for zero coefficients
-    let block_simd: [i16x8; 8] = cast(*here_tr.get_block());
-
-    let mut nonzero_mask = 0;
-    for i in 0..8 {
-        nonzero_mask |= (block_simd[i].cmp_eq(i16x8::ZERO).move_mask() as u64) << (8 * i);
-    }
-    nonzero_mask = !nonzero_mask;
-
-    let mask_7x7 = nonzero_mask & 0xFEFEFEFEFEFEFE00;
-
     // First we encode the 49 inner coefficients
 
     // calculate the predictor context bin based on the neighbors
@@ -355,7 +343,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // store how many of these coefficients are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
-    let num_non_zeros_7x7 = mask_7x7.count_ones() as u8;
+    let num_non_zeros_7x7 = here_tr.get_count_of_non_zeros_7x7();
 
     model_per_color
         .write_non_zero_7x7_count(
@@ -431,7 +419,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         bool_writer,
         qt,
         pt,
-        nonzero_mask,
+        num_non_zeros_7x7,
         eob_x as u8,
         eob_y as u8,
     )
@@ -481,7 +469,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     Ok(neighbor_summary)
 }
 
-//#[inline(never)] // don't inline so that the profiler can get proper data
+#[inline(never)] // don't inline so that the profiler can get proper data
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
@@ -489,7 +477,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    nonzero_mask: u64,
+    num_non_zeros_7x7: u8,
     eob_x: u8,
     eob_y: u8,
 ) -> Result<([i32x8; 8], i32x8, i32x8)> {
@@ -509,11 +497,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 
     let (h_pred, v_pred) = ProbabilityTables::predict_current_edges(neighbors_data, &raster);
 
-    // here we calculate the furthest x and y coordinates that have non-zero coefficients
-    // which are used as predictors for the number of edge coefficients
-    let mask_7x7 = (nonzero_mask & 0xFEFEFEFEFEFEFE00) | 1;
-
-    let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
+    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
     encode_one_edge::<W, ALL_PRESENT, true>(
         here_tr,
