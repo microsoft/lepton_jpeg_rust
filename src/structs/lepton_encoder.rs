@@ -378,32 +378,21 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
         for (zig49, &coord) in UNZIGZAG_49_TR.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize] as u16);
+            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize]);
 
-            if nonzero_mask & (1 << coord) == 0 {
-                model_per_color
-                    .write_coef(
-                        bool_writer,
-                        0,
-                        zig49,
-                        num_non_zeros_remaining_bin,
-                        best_prior_bit_length as usize,
-                    )
-                    .context(here!())?;
-            } else {
-                // coef != 0
-                let coef = here_tr.get_coefficient(coord as usize);
+            let coef = here_tr.get_coefficient(coord as usize);
 
-                model_per_color
-                    .write_coef(
-                        bool_writer,
-                        coef,
-                        zig49,
-                        num_non_zeros_remaining_bin,
-                        best_prior_bit_length as usize,
-                    )
-                    .context(here!())?;
+            model_per_color
+                .write_coef(
+                    bool_writer,
+                    coef,
+                    zig49,
+                    num_non_zeros_remaining_bin,
+                    best_prior_bit_length as usize,
+                )
+                .context(here!())?;
 
+            if coef != 0 {
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {
                     break;
