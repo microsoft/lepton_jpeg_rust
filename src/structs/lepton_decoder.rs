@@ -340,7 +340,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut output = AlignedBlock::default();
     let mut raster = [i32x8::ZERO; 8];
     let raster_col: &mut [i32; 64] = cast_mut(&mut raster);
-    let mut nonzero_mask: u64 = 0;
 
     // these are used as predictors for the number of non-zero edge coefficients
     // do math in 32 bits since this is faster on most platforms
@@ -384,8 +383,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                 eob_x = cmp::max(eob_x, bx);
                 eob_y = cmp::max(eob_y, by);
 
-                nonzero_mask |= 1 << coord_tr;
-
                 output.set_coefficient(coord_tr as usize, coef);
                 raster_col[coord_tr as usize] = i32::from(coef)
                     * i32::from(qt.get_quantization_table_transposed()[coord_tr as usize]);
@@ -420,7 +417,6 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         qt,
         pt,
         num_non_zeros_7x7,
-        &mut nonzero_mask,
         &mut raster,
         eob_x as u8,
         eob_y as u8,
@@ -466,7 +462,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
-    nonzero_mask: &mut u64,
     raster: &mut [i32x8; 8],
     eob_x: u8,
     eob_y: u8,
@@ -485,7 +480,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         qt,
         pt,
         num_non_zeros_bin,
-        nonzero_mask,
         eob_x,
         cast_mut(raster),
     )?;
@@ -497,7 +491,6 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         qt,
         pt,
         num_non_zeros_bin,
-        nonzero_mask,
         eob_y,
         cast_mut(raster),
     )?;
@@ -515,7 +508,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_bin: u8,
-    nonzero_mask: &mut u64,
     est_eob: u8,
     raster: &mut [i32; 64],
 ) -> Result<()> {
@@ -557,8 +549,6 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             here_mut.set_coefficient(coord_tr, coef);
             raster[coord_tr as usize] =
                 i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
-
-            *nonzero_mask |= 1 << coord_tr;
         }
 
         coord_tr += delta;
