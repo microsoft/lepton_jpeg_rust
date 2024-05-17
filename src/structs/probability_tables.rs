@@ -159,7 +159,6 @@ impl ProbabilityTables {
     #[inline(always)]
     pub fn predict_current_edges(
         neighbors_data: &NeighborData,
-        nonzero_mask: u64,
         raster: &[i32x8; 8],
     ) -> (i32x8, i32x8) {
         // load initial predictors data from neighborhood blocks
@@ -170,11 +169,9 @@ impl ProbabilityTables {
         let mult: i32x8 = cast(ICOS_BASED_8192_SCALED);
 
         for col in 1..8 {
-            if nonzero_mask & (0xFF << (col * 8)) != 0 {
-                // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
-                vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
-                h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
-            }
+            // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
+            vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
+            h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
         }
 
         (cast(h_pred), vert_pred)

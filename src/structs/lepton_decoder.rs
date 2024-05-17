@@ -11,11 +11,12 @@ use wide::i32x8;
 
 use default_boxed::DefaultBoxed;
 
+use std::cmp;
 use std::io::Read;
 
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
-use crate::helpers::{err_exit_code, here, u32_bit_length};
+use crate::helpers::{err_exit_code, here, u16_bit_length};
 use crate::lepton_error::ExitCode;
 
 use crate::metrics::Metrics;
@@ -341,6 +342,11 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let raster_col: &mut [i32; 64] = cast_mut(&mut raster);
     let mut nonzero_mask: u64 = 0;
 
+    // these are used as predictors for the number of non-zero edge coefficients
+    // do math in 32 bits since this is faster on most platforms
+    let mut eob_x: u32 = 0;
+    let mut eob_y: u32 = 0;
+
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
     if num_non_zeros_7x7_remaining > 0 {
@@ -355,8 +361,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        for (zig49, &coord) in UNZIGZAG_49_TR.iter().enumerate() {
-            let best_prior_bit_length = u32_bit_length(best_priors[coord as usize] as u32);
+        for (zig49, &coord_tr) in UNZIGZAG_49_TR.iter().enumerate() {
+            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr as usize]);
 
             let coef = model_per_color
                 .read_coef(
@@ -368,11 +374,21 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                 .context(here!())?;
 
             if coef != 0 {
-                output.set_coefficient(coord as usize, coef);
-                raster_col[coord as usize] = i32::from(coef)
-                    * i32::from(qt.get_quantization_table_transposed()[coord as usize]);
+                // here we calculate the furthest x and y coordinates that have non-zero coefficients
+                // which is later used as a predictor for the number of edge coefficients
+                let by = u32::from(coord_tr) & 7;
+                let bx = u32::from(coord_tr) >> 3;
 
-                nonzero_mask |= 1 << coord;
+                debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
+
+                eob_x = cmp::max(eob_x, bx);
+                eob_y = cmp::max(eob_y, by);
+
+                nonzero_mask |= 1 << coord_tr;
+
+                output.set_coefficient(coord_tr as usize, coef);
+                raster_col[coord_tr as usize] = i32::from(coef)
+                    * i32::from(qt.get_quantization_table_transposed()[coord_tr as usize]);
 
                 num_non_zeros_7x7_remaining -= 1;
                 if num_non_zeros_7x7_remaining == 0 {
@@ -406,6 +422,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         num_non_zeros_7x7,
         &mut nonzero_mask,
         &mut raster,
+        eob_x as u8,
+        eob_y as u8,
     )?;
 
     // step 3, read the DC coefficient (0,0 of the block)
@@ -450,22 +468,14 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     num_non_zeros_7x7: u8,
     nonzero_mask: &mut u64,
     raster: &mut [i32x8; 8],
+    eob_x: u8,
+    eob_y: u8,
 ) -> Result<(i32x8, i32x8)> {
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
-    let mask_7x7 = *nonzero_mask | 1;
-    let mut mask_y = mask_7x7 | (mask_7x7 << 32);
-    mask_y |= mask_y << 16;
-    mask_y |= mask_y << 8;
-
-    // effectively (7 - eob) of DB Lepton
-    let eob_y = 7 - mask_y.leading_zeros() as u8;
-    let eob_x = 7 - (mask_7x7.leading_zeros() >> 3) as u8;
-
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
-    let (h_pred, v_pred) =
-        ProbabilityTables::predict_current_edges(neighbor_data, *nonzero_mask, raster);
+    let (h_pred, v_pred) = ProbabilityTables::predict_current_edges(neighbor_data, raster);
 
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
@@ -509,7 +519,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     est_eob: u8,
     raster: &mut [i32; 64],
 ) -> Result<()> {
-    let num_non_zeros_edge = model_per_color
+    let mut num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context(here!())?;
 
@@ -525,10 +535,9 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     let mut coord_tr = delta;
-    let mut num_non_zeros_remaining = num_non_zeros_edge;
 
     for _lane in 0..7 {
-        if num_non_zeros_remaining == 0 {
+        if num_non_zeros_edge == 0 {
             break;
         }
 
@@ -539,12 +548,12 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             bool_reader,
             qt,
             zig15offset,
-            num_non_zeros_remaining,
+            num_non_zeros_edge,
             best_prior,
         )?;
 
         if coef != 0 {
-            num_non_zeros_remaining -= 1;
+            num_non_zeros_edge -= 1;
             here_mut.set_coefficient(coord_tr, coef);
             raster[coord_tr as usize] =
                 i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
@@ -556,7 +565,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         zig15offset += 1;
     }
 
-    if num_non_zeros_remaining != 0 {
+    if num_non_zeros_edge != 0 {
         return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
     }
 

@@ -383,10 +383,10 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        for (zig49, &coord) in UNZIGZAG_49_TR.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize]);
+        for (zig49, &coord_tr) in UNZIGZAG_49_TR.iter().enumerate() {
+            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr as usize]);
 
-            let coef = here_tr.get_coefficient(coord as usize);
+            let coef = here_tr.get_coefficient(coord_tr as usize);
 
             model_per_color
                 .write_coef(
@@ -401,8 +401,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let bx = u32::from(coord) & 7;
-                let by = u32::from(coord) >> 3;
+                let by = u32::from(coord_tr) & 7;
+                let bx = u32::from(coord_tr) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
@@ -432,6 +432,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         qt,
         pt,
         nonzero_mask,
+        eob_x as u8,
+        eob_y as u8,
     )
     .context(here!())?;
 
@@ -488,6 +490,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     nonzero_mask: u64,
+    eob_x: u8,
+    eob_y: u8,
 ) -> Result<([i32x8; 8], i32x8, i32x8)> {
     let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
 
@@ -503,8 +507,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         q_tr.as_i16x8(7).mul_widen(here_tr.as_i16x8(7)),
     ];
 
-    let (h_pred, v_pred) =
-        ProbabilityTables::predict_current_edges(neighbors_data, nonzero_mask, &raster);
+    let (h_pred, v_pred) = ProbabilityTables::predict_current_edges(neighbors_data, &raster);
 
     // here we calculate the furthest x and y coordinates that have non-zero coefficients
     // which are used as predictors for the number of edge coefficients
@@ -513,8 +516,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     mask_y |= mask_y << 16;
     mask_y |= mask_y << 8;
 
-    let eob_y: u8 = 7 - mask_y.leading_zeros() as u8;
-    let eob_x: u8 = 7 - (mask_7x7.leading_zeros() >> 3) as u8;
+    assert_eq!(eob_y, 7 - mask_y.leading_zeros() as u8);
+    assert_eq!(eob_x, 7 - (mask_7x7.leading_zeros() >> 3) as u8);
 
     let num_non_zeros_bin = (mask_7x7.count_ones() as u8 + 2) / 7;
 
