@@ -784,6 +784,18 @@ fn roundtrip_random() {
     let above_left = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
     let qt = arr.map(|_| rng.gen_range(1u16..=65535));
 
+    // using 32 bit math (test emulating both scalar and vector C++ code)
+    roundtrip_read_write_coefficients(
+        &left,
+        &above,
+        &above_left,
+        &here,
+        qt,
+        0xddae63102f8762ff,
+        &EnabledFeatures::compat_lepton_scalar_read(),
+    );
+
+    // using 16 bit math
     roundtrip_read_write_coefficients(
         &left,
         &above,
