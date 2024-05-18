@@ -45,7 +45,7 @@ impl QuantizationTables {
                 let coord_tr = (pixel_column * 8) + pixel_row;
                 let q = quantization_table[RASTER_TO_ZIGZAG[coord] as usize];
 
-                self.quantization_table[cooord] = q;
+                self.quantization_table[coord] = q;
                 self.quantization_table_transposed[coord_tr] = q;
             }
         }

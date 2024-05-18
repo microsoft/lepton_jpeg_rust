@@ -157,7 +157,7 @@ impl ProbabilityTables {
     // "almost-pixel" equal to that of neighbor block (see https://arxiv.org/abs/1704.06192, section A.2.2).
     // These 1D IDCT can be conveniently done separately for current block and neighbor one
     // storing components of predictor formula - dot products of dequantized DCT coefficients columns/rows
-    // with `ICOS_BASED_8192_SCALED/_PM` (equivalent to former dot products of quantized DCT coefs
+    // with `ICOS_BASED_8192_SCALED/_PM` (equivalent to former dot products of quantized DCT coefficients
     // with `icos_idct_edge_8192_dequantized_x/y`) - inside `NeighborSummary` of corresponding block.
     // Instead of non-continuous memory accesses to blocks we can use dequantized raster DCT coefficients
     // needed for DC prediction and apply horizontal SIMD instructions for direction along the raster order.
@@ -195,7 +195,7 @@ impl ProbabilityTables {
         let mut horiz_pred: [i32; 8] = [0; 8];
         let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
         for col in 1..8 {
-            // produce predictions for edge DCT coefs for the block below
+            // produce predictions for edge DCT coefficientss for the block below
             horiz_pred[col] = (mult * raster[col]).reduce_add();
             // and for the block to the right
             vert_pred += ICOS_BASED_8192_SCALED_PM[col] * raster[col];
