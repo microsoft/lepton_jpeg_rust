@@ -602,36 +602,91 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 /// complicated so if tests start failing, you have some idea of where to start looking.
 #[test]
 fn roundtrip_zeros() {
-    let left = AlignedBlock::new([0; 64]);
-    let above = AlignedBlock::new([0; 64]);
-    let above_left = AlignedBlock::new([0; 64]);
-    let here = AlignedBlock::new([0; 64]);
+    let block = AlignedBlock::new([0; 64]);
 
     roundtrip_read_write_coefficients(
-        &left,
-        &above,
-        &above_left,
-        &here,
+        &block,
+        &block,
+        &block,
+        &block,
         [1; 64],
-        0,
+        0xab1fb00d453815d,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests blocks with only DC coefficient set
+#[test]
+fn roundtrip_dc_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    block.set_dc(-100);
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x443581ddf596285b,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests blocks with only edge coefficients set
+#[test]
+fn roundtrip_edges_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    for i in 1..7 {
+        block.set_coefficient(i, -100);
+        block.set_coefficient(i * 8, 100);
+    }
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x9536ea459997cf17,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests blocks with only 7x7 coefficients set
+#[test]
+fn roundtrip_ac_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    for i in 0..64 {
+        let x = i & 7;
+        let y = i >> 3;
+
+        if x > 0 && y > 0 {
+            block.set_coefficient(i, (x * y) as i16);
+        }
+    }
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x748485fdac88e95d,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
 
 #[test]
 fn roundtrip_ones() {
-    let left = AlignedBlock::new([1; 64]);
-    let above = AlignedBlock::new([1; 64]);
-    let above_left = AlignedBlock::new([1; 64]);
-    let here = AlignedBlock::new([1; 64]);
+    let block = AlignedBlock::new([1; 64]);
 
     roundtrip_read_write_coefficients(
-        &left,
-        &above,
-        &above_left,
-        &here,
+        &block,
+        &block,
+        &block,
+        &block,
         [1; 64],
-        0,
+        0xe0776aaab1542fde,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -673,63 +728,48 @@ fn roundtrip_large_coef() {
 fn roundtrip_large_coef_alternate_sign() {
     let mut large_coef = [0i16; 64];
     for i in 0..64 {
-        if i % 2 == 0 {
+        if i % 2 == 1 {
             large_coef[i] = 2047;
         } else {
             large_coef[i] = -2047;
         }
     }
 
-    large_coef[0] = -6400;
+    large_coef[0] = 0;
 
-    let left = AlignedBlock::new(large_coef);
-    let above = AlignedBlock::new(large_coef);
-    let above_left = AlignedBlock::new(large_coef);
-    let here = AlignedBlock::new(large_coef);
+    let block = AlignedBlock::new(large_coef);
 
     roundtrip_read_write_coefficients(
-        &left,
-        &above,
-        &above_left,
-        &here,
+        &block,
+        &block,
+        &block,
+        &block,
         [1; 64],
-        0,
+        0x48d9325a6e83189e,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
-    /*
+
     // now test with maximum quantization table. In theory this is legal according
     // the JPEG format and there is no code preventing this from being attempted
     // by the encoder.
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0,
-        0,
-        0,
-        0,
-    ];
-
-    let mut qt = [0;64];
-    for i in 0..64
-    {
+    let mut qt = [0; 64];
+    for i in 0..64 {
         qt[i] = 65535 - i as u16;
     }
 
-    large_coef[0] = -6400;
-
-    roundtrip_read_write_coefficients_all(
-        &left,
-        &above,
-        &here,
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
         qt,
-        &verified_output,
+        0x31f482326dbe11a8,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
-    */
 }
 
+/// random set of blocks to ensure that all ranges of coefficients work properly
 #[test]
 fn roundtrip_random() {
     use rand::Rng;
@@ -750,7 +790,7 @@ fn roundtrip_random() {
         &above_left,
         &here,
         qt,
-        0,
+        0xa411adedb31505b2,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -791,7 +831,7 @@ fn roundtrip_non_zeros_counts() {
         let x = i & 7;
         let y = i >> 3;
 
-        arr[i] = if x < 4 || y < 3 { 50 } else { 0 };
+        arr[i] = if x < 4 && y < 3 { 50 } else { 0 };
     }
 
     let block = AlignedBlock::new(arr);
@@ -802,7 +842,7 @@ fn roundtrip_non_zeros_counts() {
         &block,
         &block,
         [1; 64],
-        0,
+        0xe2e5a44fab9697f7,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -841,11 +881,12 @@ fn roundtrip_read_write_coefficients(
     verified_output: u64,
     features: &EnabledFeatures,
 ) {
-    use crate::structs::block_based_image::EMPTY_BLOCK;
-    use crate::structs::lepton_decoder::read_coefficient_block;
-    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
-    use crate::structs::vpx_bool_reader::VPXBoolReader;
+    use crate::structs::{
+        block_based_image::EMPTY_BLOCK, lepton_decoder::read_coefficient_block,
+        neighbor_summary::NEIGHBOR_DATA_EMPTY, vpx_bool_reader::VPXBoolReader,
+    };
 
+    // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
     use std::hash::Hasher;
     use std::io::Cursor;
@@ -860,6 +901,8 @@ fn roundtrip_read_write_coefficients(
 
     let qt = QuantizationTables::new_from_table(&qt);
 
+    // stage 1
+    // start with the top left corner, no neighbors
     let pt_no_neighbors = ProbabilityTables::new(0, false, false);
 
     let nd_no_neighbors = NeighborData {
@@ -892,6 +935,10 @@ fn roundtrip_read_write_coefficients(
     )
     .unwrap();
 
+    // stage 2
+    // now we write the actual block
+    // use the version with ALL_PRESENT is both above and left neighbors are present
+
     let neighbors_write = NeighborData {
         above: &above,
         left: &left,
@@ -900,7 +947,6 @@ fn roundtrip_read_write_coefficients(
         neighbor_context_left: &write_left_neighbor,
     };
 
-    // use the version with ALL_PRESENT is both above and left neighbors are present
     let ns_write = write_coefficient_block::<true, _>(
         &pt_all,
         &neighbors_write,
@@ -914,10 +960,12 @@ fn roundtrip_read_write_coefficients(
 
     bool_writer.finish().unwrap();
 
+    // now re-read the model and make sure everything matches
     let mut read_model = make_random_model();
     let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
 
-    let (read_left, read_left_neighbor) = read_coefficient_block::<false, _>(
+    // stage 1
+    let (left_read, read_left_neighbor) = read_coefficient_block::<false, _>(
         &pt_no_neighbors,
         &nd_no_neighbors,
         &mut read_model,
@@ -927,9 +975,10 @@ fn roundtrip_read_write_coefficients(
     )
     .unwrap();
 
+    assert_eq!(left.get_block(), left_read.get_block());
     assert_eq!(read_left_neighbor, write_left_neighbor);
 
-    let (read_above, read_above_neighbor) = read_coefficient_block::<false, _>(
+    let (above_read, read_above_neighbor) = read_coefficient_block::<false, _>(
         &pt_no_neighbors,
         &nd_no_neighbors,
         &mut read_model,
@@ -939,18 +988,20 @@ fn roundtrip_read_write_coefficients(
     )
     .unwrap();
 
+    assert_eq!(above.get_block(), above_read.get_block());
     assert_eq!(read_above_neighbor, write_above_neighbor);
 
     let neighbors_read = NeighborData {
-        above: &read_above,
-        left: &read_left,
+        above: &above_read,
+        left: &left_read,
         above_left: &above_left,
         neighbor_context_above: &write_above_neighbor,
         neighbor_context_left: &write_left_neighbor,
     };
 
+    // stage 2
     // use the version with ALL_PRESENT is both above and left neighbors are present
-    let (output, ns_read) = read_coefficient_block::<true, _>(
+    let (here_read, ns_read) = read_coefficient_block::<true, _>(
         &pt_all,
         &neighbors_read,
         &mut read_model,
@@ -963,7 +1014,7 @@ fn roundtrip_read_write_coefficients(
     assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
     assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
     assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
-    assert_eq!(output.get_block(), here.get_block());
+    assert_eq!(here_read.get_block(), here.get_block());
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 
     let mut h = SipHasher13::new();
