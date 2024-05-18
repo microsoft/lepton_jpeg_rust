@@ -12,6 +12,10 @@ use super::jpeg_header::JPegHeader;
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
+    // Values for discrimination between "regular" and "noise" part of
+    // edge AC coefficients, used in `read/write_edge_coefficient`.
+    // Calculated using approximate maximal magnitudes
+    // of these coefficients `FREQ_MAX`
     min_noise_threshold: [u8; 14],
 }
 
@@ -35,16 +39,14 @@ impl QuantizationTables {
     }
 
     fn set_quantization_table(&mut self, quantization_table: &[u16; 64]) {
-        for i in 0..64 {
-            let q = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
-            self.quantization_table[i] = q;
-        }
-
         for pixel_row in 0..8 {
-            for i in 0..8 {
-                let coord = (pixel_row * 8) + i;
-                let coord_tr = (i * 8) + pixel_row;
-                self.quantization_table_transposed[coord] = self.quantization_table[coord_tr];
+            for pixel_column in 0..8 {
+                let coord = (pixel_row * 8) + pixel_column;
+                let coord_tr = (pixel_column * 8) + pixel_row;
+                let q = quantization_table[RASTER_TO_ZIGZAG[coord] as usize];
+
+                self.quantization_table[cooord] = q;
+                self.quantization_table_transposed[coord_tr] = q;
             }
         }
 

@@ -152,8 +152,17 @@ impl ProbabilityTables {
         best_prior
     }
 
-    // here we dequantize raster coefficients
-    // and produce current block predictors for edge DCT coefficients
+    // Predictor calculations in `compute_lak` are made using partial IDCT along only one dimension
+    // on neighbor and current blocks row/column and finding predictor that makes current block edge
+    // "almost-pixel" equal to that of neighbor block (see https://arxiv.org/abs/1704.06192, section A.2.2).
+    // These 1D IDCT can be conveniently done separately for current block and neighbour one
+    // storing components of predictor formula - dot products of dequantized DCT coefficients columns/rows
+    // with `ICOS_BASED_8192_SCALED/_PM` (equivalent to former dot products of quantized DCT coefs
+    // with `icos_idct_edge_8192_dequantized_x/y`).
+    // Instead of non-continuous memory accesses to blocks we can use dequantized raster DCT coefficients
+    // needed for DC prediction and apply horizontal SIMD instructions for direction along the raster order.
+
+    // Produce current block predictors for edge DCT coefficients
     #[inline(always)]
     pub fn predict_current_edges(
         neighbors_data: &NeighborData,
@@ -178,8 +187,7 @@ impl ProbabilityTables {
         (i32x8::from(h_pred), vert_pred)
     }
 
-    // In these two functions we produce first part of edge DCT coefficients predictions
-    // for neighborhood blocks and finalize dequantization of transposed raster
+    // Produce first part of edge DCT coefficients predictions for neighborhood blocks
     #[inline(always)]
     pub fn predict_next_edges(raster: &[i32x8; 8]) -> (i32x8, i32x8) {
         let mut horiz_pred: [i32; 8] = [0; 8];

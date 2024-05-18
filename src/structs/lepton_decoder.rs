@@ -466,16 +466,16 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     eob_x: u8,
     eob_y: u8,
 ) -> Result<(i32x8, i32x8)> {
-    // here we calculate the furthest x and y coordinates that have non-zero coefficients
-    // which are used as predictors for the number of edge coefficients
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
-    let (h_pred, v_pred) = ProbabilityTables::predict_current_edges(neighbor_data, raster);
+    // get predictors for edge coefficients of the current block
+    let (curr_horiz_pred, curr_vert_pred) =
+        ProbabilityTables::predict_current_edges(neighbor_data, raster);
 
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        &h_pred.to_array(),
+        &curr_horiz_pred.to_array(),
         here_mut,
         qt,
         pt,
@@ -486,7 +486,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        &v_pred.to_array(),
+        &curr_vert_pred.to_array(),
         here_mut,
         qt,
         pt,
@@ -495,9 +495,10 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         cast_mut(raster),
     )?;
 
-    let (horiz_pred, vert_pred) = ProbabilityTables::predict_next_edges(raster);
+    // prepare predictors for edge coefficients of the blocks below and to the right of current one
+    let (next_horiz_pred, next_vert_pred) = ProbabilityTables::predict_next_edges(raster);
 
-    Ok((horiz_pred, vert_pred))
+    Ok((next_horiz_pred, next_vert_pred))
 }
 
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(

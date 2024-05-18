@@ -495,7 +495,9 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         q_tr.as_i16x8(7).mul_widen(here_tr.as_i16x8(7)),
     ];
 
-    let (h_pred, v_pred) = ProbabilityTables::predict_current_edges(neighbors_data, &raster);
+    // get predictors for edge coefficients of the current block
+    let (curr_horiz_pred, curr_vert_pred) =
+        ProbabilityTables::predict_current_edges(neighbors_data, &raster);
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
@@ -503,7 +505,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         here_tr,
         model_per_color,
         bool_writer,
-        &h_pred.to_array(),
+        &curr_horiz_pred.to_array(),
         qt,
         pt,
         num_non_zeros_bin,
@@ -515,7 +517,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         here_tr,
         model_per_color,
         bool_writer,
-        &v_pred.to_array(),
+        &curr_vert_pred.to_array(),
         qt,
         pt,
         num_non_zeros_bin,
@@ -523,8 +525,10 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    let (h_pred, v_pred) = ProbabilityTables::predict_next_edges(&raster);
-    Ok((raster, h_pred, v_pred))
+    // prepare predictors for edge coefficients of the blocks below and to the right of current one
+    let (next_horiz_pred, next_vert_pred) = ProbabilityTables::predict_next_edges(&raster);
+
+    Ok((raster, next_horiz_pred, next_vert_pred))
 }
 
 fn count_non_zero(v: i16) -> u8 {
