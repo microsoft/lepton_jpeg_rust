@@ -981,8 +981,8 @@ fn roundtrip_read_write_coefficients(
     .unwrap();
 
     assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
-    assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
-    assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
+    assert_eq!(ns_write.get_horizontal_pix(), ns_read.get_horizontal_pix());
+    assert_eq!(ns_write.get_vertical_pix(), ns_read.get_vertical_pix());
     assert_eq!(output.get_block(), here_block.get_block());
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 

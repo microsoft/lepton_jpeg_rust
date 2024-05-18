@@ -227,19 +227,6 @@ impl ProbabilityTables {
         best_prior
     }
 
-    fn from_stride(block: &[i16; 64], offset: usize, stride: usize) -> i16x8 {
-        return i16x8::new([
-            block[offset],
-            block[offset + (1 * stride)],
-            block[offset + (2 * stride)],
-            block[offset + (3 * stride)],
-            block[offset + (4 * stride)],
-            block[offset + (5 * stride)],
-            block[offset + (6 * stride)],
-            block[offset + (7 * stride)],
-        ]);
-    }
-
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         raster_cols: &[i32x8; 8],
@@ -252,54 +239,37 @@ impl ProbabilityTables {
 
         // helper functions to avoid code duplication that calculate the left and above prediction values
 
-        let calc_left = || {
-            let left_context = neighbor_data.neighbor_context_left;
-
+        let calc_pred = |init_pred: i16x8, a1: i16x8, a2: i16x8| {
             if enabled_features.use_16bit_adv_predict {
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 8);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 1, 8);
                 let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*left_context.get_vertical()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
+                let half_delta = (pixel_delta - (pixel_delta >> 15)) >> 1; /* divide pixel_delta by 2 rounding towards 0 */
 
-                b - a
+                init_pred - a1 - 128 * X_IDCT_SCALE as i16 - half_delta
             } else {
-                let mut dc_estimates = [0i16; 8];
-                for i in 0..8 {
-                    let a = i32::from(pixels_sans_dc.get_block()[i << 3]) + 1024;
-                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i << 3])
-                        - i32::from(pixels_sans_dc.get_block()[(i << 3) + 1]);
-                    let b = i32::from(left_context.get_vertical()[i]) - (pixel_delta / 2); //round to zero
-                    dc_estimates[i] = (b - a) as i16;
-                }
+                let a1 = i32x8::from_i16x8(a1);
+                let a2 = i32x8::from_i16x8(a2);
+                let pixel_delta = a1 - a2;
+                let half_delta = (pixel_delta - (pixel_delta >> 31)) >> 1; /* divide pixel_delta by 2 rounding towards 0 */
+                let result = i32x8::from_i16x8(init_pred) - a1 - 128 * X_IDCT_SCALE - half_delta;
 
-                i16x8::from(dc_estimates)
+                i16x8::from_i32x8_truncate(result)
             }
         };
 
+        let calc_left = || {
+            let left_pred = neighbor_data.neighbor_context_left.get_vertical_pix();
+            let a1 = pixels_sans_dc.from_stride(0, 8);
+            let a2 = pixels_sans_dc.from_stride(1, 8);
+
+            calc_pred(left_pred, a1, a2)
+        };
+
         let calc_above = || {
-            let above_context = neighbor_data.neighbor_context_above;
+            let above_pred = neighbor_data.neighbor_context_above.get_horizontal_pix();
+            let a1 = pixels_sans_dc.from_stride(0, 1);
+            let a2 = pixels_sans_dc.from_stride(8, 1);
 
-            if enabled_features.use_16bit_adv_predict {
-                let a1 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 0, 1);
-                let a2 = ProbabilityTables::from_stride(&pixels_sans_dc.get_block(), 8, 1);
-                let pixel_delta = a1 - a2;
-                let a: i16x8 = a1 + 1024;
-                let b : i16x8 = i16x8::new(*above_context.get_horizontal()) - (pixel_delta - (pixel_delta>>15) >> 1) /* divide pixel_delta by 2 rounding towards 0 */;
-
-                b - a
-            } else {
-                let mut dc_estimates = [0i16; 8];
-                for i in 0..8 {
-                    let a = i32::from(pixels_sans_dc.get_block()[i]) + 1024;
-                    let pixel_delta = i32::from(pixels_sans_dc.get_block()[i])
-                        - i32::from(pixels_sans_dc.get_block()[i + 8]);
-                    let b = i32::from(above_context.get_horizontal()[i]) - (pixel_delta / 2); //round to zero
-                    dc_estimates[i] = (b - a) as i16;
-                }
-
-                i16x8::from(dc_estimates)
-            }
+            calc_pred(above_pred, a1, a2)
         };
 
         let min_dc;
@@ -307,25 +277,23 @@ impl ProbabilityTables {
         let mut avg_horizontal: i32;
         let mut avg_vertical: i32;
 
-        if ALL_PRESENT || self.left_present {
-            if ALL_PRESENT || self.above_present {
-                // most common case where we have both left and above
-                let horiz = calc_left();
-                let vert = calc_above();
+        if ALL_PRESENT {
+            // most common case where we have both left and above
+            let horiz = calc_left();
+            let vert = calc_above();
 
-                min_dc = horiz.min(vert).reduce_min();
-                max_dc = horiz.max(vert).reduce_max();
+            min_dc = horiz.min(vert).reduce_min();
+            max_dc = horiz.max(vert).reduce_max();
 
-                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
-                avg_vertical = i32x8::from_i16x8(vert).reduce_add();
-            } else {
-                let horiz = calc_left();
-                min_dc = horiz.reduce_min();
-                max_dc = horiz.reduce_max();
+            avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
+            avg_vertical = i32x8::from_i16x8(vert).reduce_add();
+        } else if self.left_present {
+            let horiz = calc_left();
+            min_dc = horiz.reduce_min();
+            max_dc = horiz.reduce_max();
 
-                avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
-                avg_vertical = avg_horizontal;
-            }
+            avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
+            avg_vertical = avg_horizontal;
         } else if self.above_present {
             let vert = calc_above();
             min_dc = vert.reduce_min();

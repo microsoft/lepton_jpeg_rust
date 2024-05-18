@@ -269,4 +269,17 @@ impl AlignedBlock {
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
         return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];
     }
+
+    pub fn from_stride(&self, offset: usize, stride: usize) -> i16x8 {
+        return i16x8::new([
+            self.raw_data[offset],
+            self.raw_data[offset + (1 * stride)],
+            self.raw_data[offset + (2 * stride)],
+            self.raw_data[offset + (3 * stride)],
+            self.raw_data[offset + (4 * stride)],
+            self.raw_data[offset + (5 * stride)],
+            self.raw_data[offset + (6 * stride)],
+            self.raw_data[offset + (7 * stride)],
+        ]);
+    }
 }
