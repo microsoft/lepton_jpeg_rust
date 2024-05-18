@@ -344,11 +344,9 @@ pub fn test_idct_with_simple_block() {
 /// implemenation from the original scalar C++ code
 #[test]
 pub fn test_idct_with_random_blocks() {
-    use rand::rngs::StdRng;
     use rand::Rng;
-    use rand::SeedableRng;
 
-    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut rng = crate::helpers::get_rand_from_seed([0u8; 32]);
     let mut test_data = AlignedBlock::default();
     let mut test_q = [0u16; 64];
 

@@ -72,7 +72,9 @@ impl QuantizationTables {
         }
 
         for coord in 0..64 {
-            self.freq_max[coord] = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
+            self.freq_max[coord] = FREQ_MAX[coord]
+                .wrapping_add(self.quantization_table[coord])
+                .wrapping_sub(1);
             if self.quantization_table[coord] != 0 {
                 self.freq_max[coord] /= self.quantization_table[coord];
             }
