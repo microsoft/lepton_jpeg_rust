@@ -155,10 +155,10 @@ impl ProbabilityTables {
     // Predictor calculations in `compute_lak` are made using partial IDCT along only one dimension
     // on neighbor and current blocks row/column and finding predictor that makes current block edge
     // "almost-pixel" equal to that of neighbor block (see https://arxiv.org/abs/1704.06192, section A.2.2).
-    // These 1D IDCT can be conveniently done separately for current block and neighbour one
+    // These 1D IDCT can be conveniently done separately for current block and neighbor one
     // storing components of predictor formula - dot products of dequantized DCT coefficients columns/rows
     // with `ICOS_BASED_8192_SCALED/_PM` (equivalent to former dot products of quantized DCT coefs
-    // with `icos_idct_edge_8192_dequantized_x/y`).
+    // with `icos_idct_edge_8192_dequantized_x/y`) - inside `NeighborSummary` of corresponding block.
     // Instead of non-continuous memory accesses to blocks we can use dequantized raster DCT coefficients
     // needed for DC prediction and apply horizontal SIMD instructions for direction along the raster order.
 
@@ -168,32 +168,31 @@ impl ProbabilityTables {
         neighbors_data: &NeighborData,
         raster: &[i32x8; 8],
     ) -> (i32x8, i32x8) {
+        // don't bother about DC in encoding - 0th component of ICOS_BASED_8192_SCALED is 0
+        let mult: i32x8 = i32x8::from(ICOS_BASED_8192_SCALED);
+
         // load initial predictors data from neighborhood blocks
-        let mut h_pred: [i32; 8] = neighbors_data
+        let mut horiz_pred: [i32; 8] = neighbors_data
             .neighbor_context_above
             .get_horizontal_coef()
             .to_array();
         let mut vert_pred: i32x8 = neighbors_data.neighbor_context_left.get_vertical_coef();
 
-        // don't bother about DC in encoding - 0th component of ICOS_BASED_8192_SCALED is 0
-        let mult: i32x8 = i32x8::from(ICOS_BASED_8192_SCALED);
-
         for col in 1..8 {
             // some extreme coefficents can cause overflows, but since this is just predictors, no need to panic
             vert_pred -= raster[col] * ICOS_BASED_8192_SCALED[col];
-            h_pred[col] = h_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
+            horiz_pred[col] = horiz_pred[col].wrapping_sub((raster[col] * mult).reduce_add());
         }
 
-        (i32x8::from(h_pred), vert_pred)
+        (i32x8::from(horiz_pred), vert_pred)
     }
 
     // Produce first part of edge DCT coefficients predictions for neighborhood blocks
     #[inline(always)]
     pub fn predict_next_edges(raster: &[i32x8; 8]) -> (i32x8, i32x8) {
-        let mut horiz_pred: [i32; 8] = [0; 8];
-
         let mult = i32x8::from(ICOS_BASED_8192_SCALED_PM);
 
+        let mut horiz_pred: [i32; 8] = [0; 8];
         let mut vert_pred = ICOS_BASED_8192_SCALED_PM[0] * raster[0];
         for col in 1..8 {
             // produce predictions for edge DCT coefs for the block below
