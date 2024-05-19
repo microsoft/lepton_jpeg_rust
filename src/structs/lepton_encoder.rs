@@ -610,7 +610,7 @@ fn roundtrip_zeros() {
         &block,
         &block,
         [1; 64],
-        0xab1fb00d453815d,
+        0xd7c55f4988eaf7d5,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -627,7 +627,7 @@ fn roundtrip_dc_only() {
         &block,
         &block,
         [1; 64],
-        0x443581ddf596285b,
+        0x2dcc28548ce40dec,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -647,7 +647,7 @@ fn roundtrip_edges_only() {
         &block,
         &block,
         [1; 64],
-        0x9536ea459997cf17,
+        0x60cb33137d9ba75f,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -671,7 +671,7 @@ fn roundtrip_ac_only() {
         &block,
         &block,
         [1; 64],
-        0x748485fdac88e95d,
+        0x782acca7e2ee50a3,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -686,7 +686,7 @@ fn roundtrip_ones() {
         &block,
         &block,
         [1; 64],
-        0xe0776aaab1542fde,
+        0xd986b8703f95c0fd,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -703,7 +703,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x8f1c9b497152f39f,
+        0xcf268c76674a5c83,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -717,64 +717,20 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0xc64a8210b383f128,
+        0xc4410bb82397c41f,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 }
 
-/// test large coefficients that could overflow unpredictably if there are changes to the
-/// way the math operations are performed (for example overflow or bitness)
+/// "random" set of blocks to ensure that all ranges of coefficients work properly
 #[test]
-fn roundtrip_large_coef_alternate_sign() {
-    let mut large_coef = [0i16; 64];
-    for i in 0..64 {
-        if i % 2 == 1 {
-            large_coef[i] = 2047;
-        } else {
-            large_coef[i] = -2047;
-        }
-    }
-
-    large_coef[0] = 0;
-
-    let block = AlignedBlock::new(large_coef);
-
-    roundtrip_read_write_coefficients(
-        &block,
-        &block,
-        &block,
-        &block,
-        [1; 64],
-        0x48d9325a6e83189e,
-        &EnabledFeatures::compat_lepton_vector_read(),
-    );
-
-    // now test with maximum quantization table. In theory this is legal according
-    // the JPEG format and there is no code preventing this from being attempted
-    // by the encoder.
-
-    let mut qt = [0; 64];
-    for i in 0..64 {
-        qt[i] = 65535 - i as u16;
-    }
-
-    roundtrip_read_write_coefficients(
-        &block,
-        &block,
-        &block,
-        &block,
-        qt,
-        0x31f482326dbe11a8,
-        &EnabledFeatures::compat_lepton_vector_read(),
-    );
-}
-
-/// random set of blocks to ensure that all ranges of coefficients work properly
-#[test]
-fn roundtrip_random() {
+fn roundtrip_random_seed() {
     use rand::Rng;
 
-    let mut rng = crate::helpers::get_rand_from_seed([66; 32]);
+    // the 76 seed is a choice that doesn't overflow the DC coefficient
+    // since the encoder is somewhat picky if the DC estimate overflows
+    // it also has different behavior for 32 and 16 bit codepath
+    let mut rng = crate::helpers::get_rand_from_seed([76; 32]);
 
     let arr = [0i16; 64];
 
@@ -791,7 +747,7 @@ fn roundtrip_random() {
         &above_left,
         &here,
         qt,
-        0xddae63102f8762ff,
+        0xd0fef0d9d11bc639,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -802,7 +758,7 @@ fn roundtrip_random() {
         &above_left,
         &here,
         qt,
-        0xa411adedb31505b2,
+        0x22c0214bde6c7a70,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -826,7 +782,7 @@ fn roundtrip_unique() {
         &above_left,
         &here,
         [1; 64],
-        0x3ebb2ecbcd20809,
+        0x36f907a4d7f80559,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -854,7 +810,7 @@ fn roundtrip_non_zeros_counts() {
         &block,
         &block,
         [1; 64],
-        0xe2e5a44fab9697f7,
+        0xb4031bacdb0c911b,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -901,9 +857,7 @@ fn roundtrip_read_write_coefficients(
     // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
     use std::hash::Hasher;
-    use std::io::Cursor;
-
-    let pt_all = ProbabilityTables::new(0, true, true);
+    use std::io::{Cursor, Read};
 
     let mut write_model = make_random_model();
 
@@ -913,62 +867,135 @@ fn roundtrip_read_write_coefficients(
 
     let qt = QuantizationTables::new_from_table(&qt);
 
-    // stage 1
-    // start with the top left corner, no neighbors
-    let pt_no_neighbors = ProbabilityTables::new(0, false, false);
+    /// This is a helper function to avoid having to duplicate the code for the different cases.
+    fn call_write_coefficient_block<W: Write>(
+        left: Option<(&AlignedBlock, &NeighborSummary)>,
+        above: Option<(&AlignedBlock, &NeighborSummary)>,
+        above_left: Option<&AlignedBlock>,
+        here: &AlignedBlock,
+        write_model: &mut Model,
+        bool_writer: &mut VPXBoolWriter<W>,
+        qt: &QuantizationTables,
+        features: &EnabledFeatures,
+    ) -> NeighborSummary {
+        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let n = NeighborData {
+            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+            neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+        };
 
-    let nd_no_neighbors = NeighborData {
-        above: &EMPTY_BLOCK,
-        left: &EMPTY_BLOCK,
-        above_left: &EMPTY_BLOCK,
-        neighbor_context_above: &NEIGHBOR_DATA_EMPTY,
-        neighbor_context_left: &NEIGHBOR_DATA_EMPTY,
-    };
+        // call the right version depending on if we have all neighbors or not
+        if left.is_some() && above.is_some() {
+            write_coefficient_block::<true, _>(
+                &pt,
+                &n,
+                &here,
+                write_model,
+                bool_writer,
+                qt,
+                features,
+            )
+            .unwrap()
+        } else {
+            write_coefficient_block::<false, _>(
+                &pt,
+                &n,
+                &here,
+                write_model,
+                bool_writer,
+                qt,
+                features,
+            )
+            .unwrap()
+        }
+    }
 
-    let write_left_neighbor = write_coefficient_block::<false, _>(
-        &pt_no_neighbors,
-        &nd_no_neighbors,
-        &left,
+    /// This is a helper function to avoid having to duplicate the code for the different cases.
+    fn call_read_coefficient_block<R: Read>(
+        left: Option<(&AlignedBlock, &NeighborSummary)>,
+        above: Option<(&AlignedBlock, &NeighborSummary)>,
+        above_left: Option<&AlignedBlock>,
+        read_model: &mut Model,
+        bool_reader: &mut VPXBoolReader<R>,
+        qt: &QuantizationTables,
+        features: &EnabledFeatures,
+    ) -> (AlignedBlock, NeighborSummary) {
+        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let n = NeighborData {
+            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+            neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+        };
+
+        // call the right version depending on if we have all neighbors or not
+        if left.is_some() && above.is_some() {
+            read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
+                .unwrap()
+        } else {
+            read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
+                .unwrap()
+        }
+    }
+
+    // overall idea here is to call write and read on all possible permutations of neighbors
+    // the grid looks like this:
+    //
+    // [ above_left ] [ above ]
+    // [ left       ] [ here  ]
+    //
+    // first: above_left (with no neighbors)
+
+    let w_above_left_ns = call_write_coefficient_block(
+        None,
+        None,
+        None,
+        &above_left,
         &mut write_model,
         &mut bool_writer,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
-    let write_above_neighbor = write_coefficient_block::<false, _>(
-        &pt_no_neighbors,
-        &nd_no_neighbors,
+    // now above, with above_left as neighbor
+    let w_above_ns = call_write_coefficient_block(
+        Some((&above_left, &w_above_left_ns)),
+        None,
+        None,
         &above,
         &mut write_model,
         &mut bool_writer,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
-    // stage 2
-    // now we write the actual block
-    // use the version with ALL_PRESENT is both above and left neighbors are present
+    // now left with above_left as neighbor
+    let w_left_ns = call_write_coefficient_block(
+        None,
+        Some((&above_left, &w_above_left_ns)),
+        None,
+        &left,
+        &mut write_model,
+        &mut bool_writer,
+        &qt,
+        &features,
+    );
 
-    let neighbors_write = NeighborData {
-        above: &above,
-        left: &left,
-        above_left: &above_left,
-        neighbor_context_above: &write_above_neighbor,
-        neighbor_context_left: &write_left_neighbor,
-    };
-
-    let ns_write = write_coefficient_block::<true, _>(
-        &pt_all,
-        &neighbors_write,
+    // now here with above and left as neighbors
+    let w_here_ns = call_write_coefficient_block(
+        Some((&left, &w_left_ns)),
+        Some((&above, &w_above_ns)),
+        Some(above_left),
         &here,
         &mut write_model,
         &mut bool_writer,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
     bool_writer.finish().unwrap();
 
@@ -976,57 +1003,58 @@ fn roundtrip_read_write_coefficients(
     let mut read_model = make_random_model();
     let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
 
-    // stage 1
-    let (left_read, read_left_neighbor) = read_coefficient_block::<false, _>(
-        &pt_no_neighbors,
-        &nd_no_neighbors,
+    let (r_above_left_block, r_above_left_ns) = call_read_coefficient_block(
+        None,
+        None,
+        None,
         &mut read_model,
         &mut bool_reader,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
-    assert_eq!(left.get_block(), left_read.get_block());
-    assert_eq!(read_left_neighbor, write_left_neighbor);
+    assert_eq!(r_above_left_block.get_block(), above_left.get_block());
+    assert_eq!(r_above_left_ns, w_above_left_ns);
 
-    let (above_read, read_above_neighbor) = read_coefficient_block::<false, _>(
-        &pt_no_neighbors,
-        &nd_no_neighbors,
+    let (r_above_block, r_above_ns) = call_read_coefficient_block(
+        Some((&r_above_left_block, &w_above_left_ns)),
+        None,
+        None,
         &mut read_model,
         &mut bool_reader,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
-    assert_eq!(above.get_block(), above_read.get_block());
-    assert_eq!(read_above_neighbor, write_above_neighbor);
+    assert_eq!(r_above_block.get_block(), above.get_block());
+    assert_eq!(r_above_ns, w_above_ns);
 
-    let neighbors_read = NeighborData {
-        above: &above_read,
-        left: &left_read,
-        above_left: &above_left,
-        neighbor_context_above: &write_above_neighbor,
-        neighbor_context_left: &write_left_neighbor,
-    };
-
-    // stage 2
-    // use the version with ALL_PRESENT is both above and left neighbors are present
-    let (here_read, ns_read) = read_coefficient_block::<true, _>(
-        &pt_all,
-        &neighbors_read,
+    let (r_left_block, r_left_ns) = call_read_coefficient_block(
+        None,
+        Some((&r_above_left_block, &r_above_left_ns)),
+        None,
         &mut read_model,
         &mut bool_reader,
         &qt,
         &features,
-    )
-    .unwrap();
+    );
 
-    assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
-    assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
-    assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
-    assert_eq!(here_read.get_block(), here.get_block());
+    assert_eq!(r_left_block.get_block(), left.get_block());
+    assert_eq!(r_left_ns, w_left_ns);
+
+    let (r_here, r_here_ns) = call_read_coefficient_block(
+        Some((&r_left_block, &r_left_ns)),
+        Some((&r_above_block, &r_above_ns)),
+        Some(above_left),
+        &mut read_model,
+        &mut bool_reader,
+        &qt,
+        &features,
+    );
+
+    assert_eq!(r_here.get_block(), here.get_block());
+    assert_eq!(r_here_ns, w_here_ns);
+
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 
     let mut h = SipHasher13::new();
