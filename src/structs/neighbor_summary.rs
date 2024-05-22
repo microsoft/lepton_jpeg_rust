@@ -12,7 +12,7 @@ use super::block_based_image::AlignedBlock;
 use crate::consts::X_IDCT_SCALE;
 use crate::enabled_features::EnabledFeatures;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct NeighborSummary {
     edge_pixels_h: i16x8,
     edge_pixels_v: i16x8,

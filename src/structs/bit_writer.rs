@@ -200,15 +200,13 @@ fn roundtrip_bits() {
 /// verify the the bits roundtrip correctly with random bits
 #[test]
 fn roundtrip_randombits() {
-    use rand::rngs::StdRng;
     use rand::Rng;
-    use rand::SeedableRng;
 
     let mut buf = Vec::new();
 
     const ITERATIONS: usize = 10000;
 
-    let mut rng = StdRng::from_seed([0u8; 32]);
+    let mut rng = crate::helpers::get_rand_from_seed([0u8; 32]);
     let mut test_data = Vec::with_capacity(ITERATIONS);
 
     for _ in 0..ITERATIONS {

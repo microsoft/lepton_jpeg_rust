@@ -327,6 +327,7 @@ dependencies = [
  "flate2",
  "log",
  "rand",
+ "rand_chacha",
  "rayon",
  "rstest",
  "simple_logger",

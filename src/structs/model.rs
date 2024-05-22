@@ -163,13 +163,13 @@ pub struct ModelPerColor {
 
 #[derive(DefaultBoxed)]
 struct Counts7x7 {
-    exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
+    exponent_counts: [[Branch; MAX_EXPONENT]; NUMERIC_LENGTH_MAX],
     residual_noise_counts: [Branch; COEF_BITS],
 }
 
 #[derive(DefaultBoxed)]
 struct CountsEdge {
-    // predictors for exponents are max 11 bits wide, not 12
+    // predictors for exponents are max 11 bits wide, not 12 since they are clamped
     exponent_counts: [[Branch; MAX_EXPONENT]; MAX_EXPONENT],
     // size by possible range of `min_threshold - 1`
     // that is from 0 up to `bit_width(max(freq_max)) - RESIDUAL_NOISE_FLOOR - 1`
@@ -251,7 +251,7 @@ impl ModelPerColor {
         );
         assert!(zig49 < 49, "zig49 {0} too high", num_non_zeros_bin);
         assert!(
-            best_prior_bit_len < MAX_EXPONENT,
+            best_prior_bit_len < NUMERIC_LENGTH_MAX,
             "best_prior_bit_len {0} too high",
             best_prior_bit_len
         );

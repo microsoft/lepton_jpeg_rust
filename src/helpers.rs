@@ -90,6 +90,14 @@ pub fn calc_sign_index(val: i32) -> usize {
     }
 }
 
+#[cfg(test)]
+pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
+    use rand_chacha::rand_core::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
+
+    ChaCha12Rng::from_seed(seed)
+}
+
 /*
 better way to update aritmetic encoding without using special division
 

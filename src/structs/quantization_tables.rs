@@ -52,7 +52,9 @@ impl QuantizationTables {
 
         for i in 0..14 {
             let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
-            let mut freq_max = FREQ_MAX[coord] + self.quantization_table[coord] - 1;
+            let mut freq_max = FREQ_MAX[coord]
+                .wrapping_add(self.quantization_table[coord])
+                .wrapping_sub(1);
             if self.quantization_table[coord] != 0 {
                 freq_max /= self.quantization_table[coord];
             }
