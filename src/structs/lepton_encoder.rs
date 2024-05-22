@@ -602,50 +602,91 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 /// complicated so if tests start failing, you have some idea of where to start looking.
 #[test]
 fn roundtrip_zeros() {
-    let left = AlignedBlock::new([0; 64]);
-    let above = AlignedBlock::new([0; 64]);
-    let here = AlignedBlock::new([0; 64]);
+    let block = AlignedBlock::new([0; 64]);
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0x133100e068957963,
-        0x133100e068957963,
-        0x133100e068957963,
-        0x133100e068957963,
-    ];
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0xd7c55f4988eaf7d5,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
 
-    roundtrip_read_write_coefficients_all(
-        &left,
-        &above,
-        &here,
-        &verified_output,
+/// tests blocks with only DC coefficient set
+#[test]
+fn roundtrip_dc_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    block.set_dc(-100);
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x2dcc28548ce40dec,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests blocks with only edge coefficients set
+#[test]
+fn roundtrip_edges_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    for i in 1..7 {
+        block.set_coefficient(i, -100);
+        block.set_coefficient(i * 8, 100);
+    }
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x60cb33137d9ba75f,
+        &EnabledFeatures::compat_lepton_vector_read(),
+    );
+}
+
+/// tests blocks with only 7x7 coefficients set
+#[test]
+fn roundtrip_ac_only() {
+    let mut block = AlignedBlock::new([0; 64]);
+    for i in 0..64 {
+        let x = i & 7;
+        let y = i >> 3;
+
+        if x > 0 && y > 0 {
+            block.set_coefficient(i, (x * y) as i16);
+        }
+    }
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0x782acca7e2ee50a3,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
 
 #[test]
 fn roundtrip_ones() {
-    let left = AlignedBlock::new([1; 64]);
-    let above = AlignedBlock::new([1; 64]);
-    let here = AlignedBlock::new([1; 64]);
+    let block = AlignedBlock::new([1; 64]);
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0xe5a1980d71891a2b,
-        0x5a8fd92548e2ea07,
-        0xb392ea90d7b31238,
-        0x1a769d84e98a27e,
-    ];
-
-    roundtrip_read_write_coefficients_all(
-        &left,
-        &above,
-        &here,
-        &verified_output,
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0xd986b8703f95c0fd,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -654,58 +695,70 @@ fn roundtrip_ones() {
 /// way the math operations are performed (for example overflow or bitness)
 #[test]
 fn roundtrip_large_coef() {
-    let left = AlignedBlock::new([1023; 64]);
-    let above = AlignedBlock::new([1023; 64]);
-    let here = AlignedBlock::new([1023; 64]);
+    let block = AlignedBlock::new([1023; 64]);
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0x506f55523369cf48,
-        0x5b2795bc24a04d2e,
-        0xdcb68ed904cfc4f9,
-        0x80efab28c62db071,
-    ];
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [1; 64],
+        0xcf268c76674a5c83,
+        &EnabledFeatures::compat_lepton_scalar_read(),
+    );
 
-    roundtrip_read_write_coefficients_all(
-        &left,
-        &above,
-        &here,
-        &verified_output,
+    // now test with maximum quantization table. In theory this is legal according
+    // the JPEG format and there is no code preventing this from being attempted
+    // by the encoder.
+
+    roundtrip_read_write_coefficients(
+        &block,
+        &block,
+        &block,
+        &block,
+        [65535; 64],
+        0xc4410bb82397c41f,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 }
 
+/// "random" set of blocks to ensure that all ranges of coefficients work properly
 #[test]
-fn roundtrip_random() {
-    use rand::rngs::StdRng;
+fn roundtrip_random_seed() {
     use rand::Rng;
-    use rand::SeedableRng;
 
-    let mut rng = StdRng::from_seed([2u8; 32]);
+    // the 76 seed is a choice that doesn't overflow the DC coefficient
+    // since the encoder is somewhat picky if the DC estimate overflows
+    // it also has different behavior for 32 and 16 bit codepath
+    let mut rng = crate::helpers::get_rand_from_seed([76; 32]);
 
     let arr = [0i16; 64];
 
-    let left = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
-    let above = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
-    let here = AlignedBlock::new(arr.map(|_| rng.gen_range(-1023..=1023)));
+    let left = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
+    let above = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
+    let here = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
+    let above_left = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
+    let qt = arr.map(|_| rng.gen_range(1u16..=65535));
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0x4b08a910feb758e8,
-        0x44c3f76e93f1d204,
-        0x899bc6e64957e400,
-        0x322e78e37fd7ed13,
-    ];
-
-    roundtrip_read_write_coefficients_all(
+    // using 32 bit math (test emulating both scalar and vector C++ code)
+    roundtrip_read_write_coefficients(
         &left,
         &above,
+        &above_left,
         &here,
-        &verified_output,
+        qt,
+        0xd0fef0d9d11bc639,
+        &EnabledFeatures::compat_lepton_scalar_read(),
+    );
+
+    // using 16 bit math
+    roundtrip_read_write_coefficients(
+        &left,
+        &above,
+        &above_left,
+        &here,
+        qt,
+        0x22c0214bde6c7a70,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -720,23 +773,16 @@ fn roundtrip_unique() {
 
     let left = AlignedBlock::new(arr);
     let above = AlignedBlock::new(arr.map(|x| x + 64));
-    let here = AlignedBlock::new(arr.map(|x| x + 128));
+    let above_left = AlignedBlock::new(arr.map(|x| x + 128));
+    let here = AlignedBlock::new(arr.map(|x| x + 256));
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0x31caa65a4af9fe19,
-        0x33622f772a9fc403,
-        0xa2cc76c22f35dfbd,
-        0xdb832d71fc9faf0c,
-    ];
-
-    roundtrip_read_write_coefficients_all(
+    roundtrip_read_write_coefficients(
         &left,
         &above,
+        &above_left,
         &here,
-        &verified_output,
+        [1; 64],
+        0x36f907a4d7f80559,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -747,55 +793,26 @@ fn roundtrip_non_zeros_counts() {
     let mut arr = [0; 64];
 
     // upper left corner is all 50, the rest is 0
+    // this should result in 3 or 4 non-zero coefficients
+    // (depending on vertical/horizontal, make this non-symetrical to catch mixups)
     for i in 0..64 {
-        arr[i] = if (i & 7) < 4 || (i >> 3) < 4 { 50 } else { 0 };
+        let x = i & 7;
+        let y = i >> 3;
+
+        arr[i] = if x < 4 && y < 3 { 50 } else { 0 };
     }
 
     let block = AlignedBlock::new(arr);
 
-    // verified output from a previous run. If this fails, then you've made a change
-    // to the binary format of the compressor and probably shouldn't do that since then
-    // the compressor and decompressor won't be compatible anymore.
-    let verified_output = [
-        0xa781963bb25ecfa3,
-        0x4158c01c97aa07d4,
-        0x7744eda601c31332,
-        0x16740ad27fa899fc,
-    ];
-
-    roundtrip_read_write_coefficients_all(
+    roundtrip_read_write_coefficients(
         &block,
         &block,
         &block,
-        &verified_output,
+        &block,
+        [1; 64],
+        0xb4031bacdb0c911b,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
-}
-
-/// does all combinations of corner blocks being present or not
-#[cfg(test)]
-fn roundtrip_read_write_coefficients_all(
-    left: &AlignedBlock,
-    above: &AlignedBlock,
-    here: &AlignedBlock,
-    verified_output: &[u64; 4],
-    features: &EnabledFeatures,
-) {
-    for (&(left_present, above_present), &verified_output) in
-        [(false, false), (true, false), (false, true), (true, true)]
-            .iter()
-            .zip(verified_output.iter())
-    {
-        roundtrip_read_write_coefficients(
-            left_present,
-            above_present,
-            left,
-            above,
-            here,
-            verified_output,
-            features,
-        );
-    }
 }
 
 /// randomizes the branches of the model so that we don't start with a
@@ -805,11 +822,9 @@ fn roundtrip_read_write_coefficients_all(
 fn make_random_model() -> Box<Model> {
     let mut model = Model::default_boxed();
 
-    use rand::rngs::StdRng;
     use rand::Rng;
-    use rand::SeedableRng;
 
-    let mut rng = StdRng::from_seed([2u8; 32]);
+    let mut rng = crate::helpers::get_rand_from_seed([2u8; 32]);
 
     model.walk(|x| {
         x.set_count(rng.gen_range(0x101..=0xffff));
@@ -826,24 +841,23 @@ fn make_random_model() -> Box<Model> {
 /// hashing the output plus the new state of the model.
 #[cfg(test)]
 fn roundtrip_read_write_coefficients(
-    left_present: bool,
-    above_present: bool,
     left: &AlignedBlock,
     above: &AlignedBlock,
+    above_left: &AlignedBlock,
     here: &AlignedBlock,
+    qt: [u16; 64],
     verified_output: u64,
     features: &EnabledFeatures,
 ) {
-    use crate::structs::idct::run_idct;
-    use crate::structs::lepton_decoder::read_coefficient_block;
-    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
-    use crate::structs::vpx_bool_reader::VPXBoolReader;
+    use crate::structs::{
+        block_based_image::EMPTY_BLOCK, lepton_decoder::read_coefficient_block,
+        neighbor_summary::NEIGHBOR_DATA_EMPTY, vpx_bool_reader::VPXBoolReader,
+    };
 
+    // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
     use std::hash::Hasher;
-    use std::io::Cursor;
-
-    let pt = ProbabilityTables::new(0, left_present, above_present);
+    use std::io::{Cursor, Read};
 
     let mut write_model = make_random_model();
 
@@ -851,101 +865,196 @@ fn roundtrip_read_write_coefficients(
 
     let mut bool_writer = VPXBoolWriter::new(&mut buffer).unwrap();
 
-    let qt = QuantizationTables::new_from_table(&[1; 64]);
+    let qt = QuantizationTables::new_from_table(&qt);
 
-    // calculate the neighbor values. Normally this is done by recycling the previous results
-    // but since we are testing a one-off here, manually calculate the values
-    let above_neighbor = if above_present {
-        let idct_above = run_idct::<true>(above, qt.get_quantization_table_transposed());
+    /// This is a helper function to avoid having to duplicate the code for the different cases.
+    fn call_write_coefficient_block<W: Write>(
+        left: Option<(&AlignedBlock, &NeighborSummary)>,
+        above: Option<(&AlignedBlock, &NeighborSummary)>,
+        above_left: Option<&AlignedBlock>,
+        here: &AlignedBlock,
+        write_model: &mut Model,
+        bool_writer: &mut VPXBoolWriter<W>,
+        qt: &QuantizationTables,
+        features: &EnabledFeatures,
+    ) -> NeighborSummary {
+        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let n = NeighborData {
+            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+            neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+        };
 
-        NeighborSummary::calculate_neighbor_summary(
-            &idct_above,
-            &qt,
-            &above,
-            above.get_count_of_non_zeros_7x7(),
-            &features,
-        )
-    } else {
-        NEIGHBOR_DATA_EMPTY
-    };
-
-    let left_neighbor = if left_present {
-        let idct_left = run_idct::<true>(left, qt.get_quantization_table_transposed());
-
-        NeighborSummary::calculate_neighbor_summary(
-            &idct_left,
-            &qt,
-            &left,
-            left.get_count_of_non_zeros_7x7(),
-            &features,
-        )
-    } else {
-        NEIGHBOR_DATA_EMPTY
-    };
-
-    let neighbors = NeighborData {
-        above: &above,
-        left: &left,
-        above_left: &above,
-        neighbor_context_above: &above_neighbor,
-        neighbor_context_left: &left_neighbor,
-    };
-
-    // use the version with ALL_PRESENT is both above and left neighbors are present
-    let ns_read = if left_present && above_present {
-        write_coefficient_block::<true, _>(
-            &pt,
-            &neighbors,
-            &here,
-            &mut write_model,
-            &mut bool_writer,
-            &qt,
-            &features,
-        )
-    } else {
-        write_coefficient_block::<false, _>(
-            &pt,
-            &neighbors,
-            &here,
-            &mut write_model,
-            &mut bool_writer,
-            &qt,
-            &features,
-        )
+        // call the right version depending on if we have all neighbors or not
+        if left.is_some() && above.is_some() {
+            write_coefficient_block::<true, _>(
+                &pt,
+                &n,
+                &here,
+                write_model,
+                bool_writer,
+                qt,
+                features,
+            )
+            .unwrap()
+        } else {
+            write_coefficient_block::<false, _>(
+                &pt,
+                &n,
+                &here,
+                write_model,
+                bool_writer,
+                qt,
+                features,
+            )
+            .unwrap()
+        }
     }
-    .unwrap();
+
+    /// This is a helper function to avoid having to duplicate the code for the different cases.
+    fn call_read_coefficient_block<R: Read>(
+        left: Option<(&AlignedBlock, &NeighborSummary)>,
+        above: Option<(&AlignedBlock, &NeighborSummary)>,
+        above_left: Option<&AlignedBlock>,
+        read_model: &mut Model,
+        bool_reader: &mut VPXBoolReader<R>,
+        qt: &QuantizationTables,
+        features: &EnabledFeatures,
+    ) -> (AlignedBlock, NeighborSummary) {
+        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let n = NeighborData {
+            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
+            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+            neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
+        };
+
+        // call the right version depending on if we have all neighbors or not
+        if left.is_some() && above.is_some() {
+            read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
+                .unwrap()
+        } else {
+            read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
+                .unwrap()
+        }
+    }
+
+    // overall idea here is to call write and read on all possible permutations of neighbors
+    // the grid looks like this:
+    //
+    // [ above_left ] [ above ]
+    // [ left       ] [ here  ]
+    //
+    // first: above_left (with no neighbors)
+
+    let w_above_left_ns = call_write_coefficient_block(
+        None,
+        None,
+        None,
+        &above_left,
+        &mut write_model,
+        &mut bool_writer,
+        &qt,
+        &features,
+    );
+
+    // now above, with above_left as neighbor
+    let w_above_ns = call_write_coefficient_block(
+        Some((&above_left, &w_above_left_ns)),
+        None,
+        None,
+        &above,
+        &mut write_model,
+        &mut bool_writer,
+        &qt,
+        &features,
+    );
+
+    // now left with above_left as neighbor
+    let w_left_ns = call_write_coefficient_block(
+        None,
+        Some((&above_left, &w_above_left_ns)),
+        None,
+        &left,
+        &mut write_model,
+        &mut bool_writer,
+        &qt,
+        &features,
+    );
+
+    // now here with above and left as neighbors
+    let w_here_ns = call_write_coefficient_block(
+        Some((&left, &w_left_ns)),
+        Some((&above, &w_above_ns)),
+        Some(above_left),
+        &here,
+        &mut write_model,
+        &mut bool_writer,
+        &qt,
+        &features,
+    );
 
     bool_writer.finish().unwrap();
 
+    // now re-read the model and make sure everything matches
     let mut read_model = make_random_model();
     let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
 
-    // use the version with ALL_PRESENT is both above and left neighbors are present
-    let (output, ns_write) = if left_present && above_present {
-        read_coefficient_block::<true, _>(
-            &pt,
-            &neighbors,
-            &mut read_model,
-            &mut bool_reader,
-            &qt,
-            &features,
-        )
-    } else {
-        read_coefficient_block::<false, _>(
-            &pt,
-            &neighbors,
-            &mut read_model,
-            &mut bool_reader,
-            &qt,
-            &features,
-        )
-    }
-    .unwrap();
+    let (r_above_left_block, r_above_left_ns) = call_read_coefficient_block(
+        None,
+        None,
+        None,
+        &mut read_model,
+        &mut bool_reader,
+        &qt,
+        &features,
+    );
 
-    assert_eq!(ns_write.get_num_non_zeros(), ns_read.get_num_non_zeros());
-    assert_eq!(ns_write.get_horizontal(), ns_read.get_horizontal());
-    assert_eq!(ns_write.get_vertical(), ns_read.get_vertical());
-    assert_eq!(output.get_block(), here.get_block());
+    assert_eq!(r_above_left_block.get_block(), above_left.get_block());
+    assert_eq!(r_above_left_ns, w_above_left_ns);
+
+    let (r_above_block, r_above_ns) = call_read_coefficient_block(
+        Some((&r_above_left_block, &w_above_left_ns)),
+        None,
+        None,
+        &mut read_model,
+        &mut bool_reader,
+        &qt,
+        &features,
+    );
+
+    assert_eq!(r_above_block.get_block(), above.get_block());
+    assert_eq!(r_above_ns, w_above_ns);
+
+    let (r_left_block, r_left_ns) = call_read_coefficient_block(
+        None,
+        Some((&r_above_left_block, &r_above_left_ns)),
+        None,
+        &mut read_model,
+        &mut bool_reader,
+        &qt,
+        &features,
+    );
+
+    assert_eq!(r_left_block.get_block(), left.get_block());
+    assert_eq!(r_left_ns, w_left_ns);
+
+    let (r_here, r_here_ns) = call_read_coefficient_block(
+        Some((&r_left_block, &r_left_ns)),
+        Some((&r_above_block, &r_above_ns)),
+        Some(above_left),
+        &mut read_model,
+        &mut bool_reader,
+        &qt,
+        &features,
+    );
+
+    assert_eq!(r_here.get_block(), here.get_block());
+    assert_eq!(r_here_ns, w_here_ns);
+
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 
     let mut h = SipHasher13::new();

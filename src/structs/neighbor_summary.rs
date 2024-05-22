@@ -10,7 +10,7 @@ use crate::enabled_features::EnabledFeatures;
 
 use super::{block_based_image::AlignedBlock, quantization_tables::QuantizationTables};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct NeighborSummary {
     edge_pixels_h: [i16; 8],
 
