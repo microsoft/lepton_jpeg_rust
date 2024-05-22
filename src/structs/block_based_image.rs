@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use bytemuck::cast_ref;
+use bytemuck::{cast, cast_ref};
 use log::info;
 use wide::i16x8;
 
@@ -202,6 +202,12 @@ impl AlignedBlock {
         let v: &[i16x8; 8] = cast_ref(&self.raw_data);
         v[index]
     }
+
+    #[allow(dead_code)]
+    pub fn transpose(&self) -> AlignedBlock {
+        return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
+    }
+    
 
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[0];

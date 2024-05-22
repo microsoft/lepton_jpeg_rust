@@ -136,11 +136,6 @@ pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
 }
 
 #[cfg(test)]
-fn transpose(block: &AlignedBlock) -> AlignedBlock {
-    return AlignedBlock::new(cast(i16x8::transpose(cast(*block.get_block()))));
-}
-
-#[cfg(test)]
 fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     use std::num::Wrapping;
 
@@ -290,8 +285,8 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     }
 
     let q = AlignedBlock::new(cast(*test_q));
-    let data_tr = transpose(test_data);
-    let q_tr = transpose(&q);
+    let data_tr = test_data.transpose();
+    let q_tr = q.transpose();
 
     let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
     for col in 0..8 {

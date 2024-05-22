@@ -298,7 +298,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     #[cfg(feature = "detailed_tracing")]
-    trace!(
+    log::trace!(
         "block {0}:{1:x}",
         context.get_here_index(),
         block.get_hash()
@@ -905,19 +905,21 @@ fn roundtrip_read_write_coefficients(
     ) -> NeighborSummary {
         let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
         let n = NeighborData {
-            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            above_left: &above_left.unwrap_or(&EMPTY_BLOCK).transpose(),
             neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
             neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
         };
+
+        let here_tr = here.transpose();
 
         // call the right version depending on if we have all neighbors or not
         if left.is_some() && above.is_some() {
             write_coefficient_block::<true, _>(
                 &pt,
                 &n,
-                &here,
+                &here_tr,
                 write_model,
                 bool_writer,
                 qt,
@@ -928,7 +930,7 @@ fn roundtrip_read_write_coefficients(
             write_coefficient_block::<false, _>(
                 &pt,
                 &n,
-                &here,
+                &here_tr,
                 write_model,
                 bool_writer,
                 qt,
@@ -950,21 +952,23 @@ fn roundtrip_read_write_coefficients(
     ) -> (AlignedBlock, NeighborSummary) {
         let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
         let n = NeighborData {
-            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            above_left: &above_left.unwrap_or(&EMPTY_BLOCK).transpose(),
             neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
             neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
         };
 
         // call the right version depending on if we have all neighbors or not
-        if left.is_some() && above.is_some() {
+        let r = if left.is_some() && above.is_some() {
             read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
                 .unwrap()
         } else {
             read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
                 .unwrap()
-        }
+        };
+
+        (r.0.transpose(), r.1)
     }
 
     // overall idea here is to call write and read on all possible permutations of neighbors
