@@ -481,19 +481,14 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     eob_x: u8,
     eob_y: u8,
 ) -> Result<([i32x8; 8], i32x8, i32x8)> {
-    let q_tr: AlignedBlock = AlignedBlock::new(cast(*qt.get_quantization_table_transposed()));
+    let q_tr = qt.get_quantization_table_transposed();
 
-    let raster: [i32x8; 8] = [
-        (q_tr.as_i16x8(0) & i16x8::new([0, -1, -1, -1, -1, -1, -1, -1]))
-            .mul_widen(here_tr.as_i16x8(0)),
-        q_tr.as_i16x8(1).mul_widen(here_tr.as_i16x8(1)),
-        q_tr.as_i16x8(2).mul_widen(here_tr.as_i16x8(2)),
-        q_tr.as_i16x8(3).mul_widen(here_tr.as_i16x8(3)),
-        q_tr.as_i16x8(4).mul_widen(here_tr.as_i16x8(4)),
-        q_tr.as_i16x8(5).mul_widen(here_tr.as_i16x8(5)),
-        q_tr.as_i16x8(6).mul_widen(here_tr.as_i16x8(6)),
-        q_tr.as_i16x8(7).mul_widen(here_tr.as_i16x8(7)),
-    ];
+    let mut raster_co = [0i32; 64];
+    for i in 1..64 {
+        raster_co[i] = i32::from(here_tr.get_coefficient(i)) * i32::from(q_tr[i]);
+    }
+
+    let raster: [i32x8; 8] = cast(raster_co);
 
     // get predictors for edge coefficients of the current block
     let (curr_horiz_pred, curr_vert_pred) =
@@ -1042,8 +1037,12 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_above_left_block.get_block(), above_left.get_block());
-    assert_eq!(r_above_left_ns, w_above_left_ns);
+    assert_eq!(
+        r_above_left_block.get_block(),
+        above_left.get_block(),
+        "above_left"
+    );
+    assert_eq!(r_above_left_ns, w_above_left_ns, "above_left_ns");
 
     let (r_above_block, r_above_ns) = call_read_coefficient_block(
         Some((&r_above_left_block, &w_above_left_ns)),
@@ -1055,8 +1054,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_above_block.get_block(), above.get_block());
-    assert_eq!(r_above_ns, w_above_ns);
+    assert_eq!(r_above_block.get_block(), above.get_block(), "above");
+    assert_eq!(r_above_ns, w_above_ns, "above_ns");
 
     let (r_left_block, r_left_ns) = call_read_coefficient_block(
         None,
@@ -1068,8 +1067,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_left_block.get_block(), left.get_block());
-    assert_eq!(r_left_ns, w_left_ns);
+    assert_eq!(r_left_block.get_block(), left.get_block(), "left");
+    assert_eq!(r_left_ns, w_left_ns, "left_ns");
 
     let (r_here, r_here_ns) = call_read_coefficient_block(
         Some((&r_left_block, &r_left_ns)),
@@ -1081,8 +1080,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_here.get_block(), here.get_block());
-    assert_eq!(r_here_ns, w_here_ns);
+    assert_eq!(r_here.get_block(), here.get_block(), "here");
+    assert_eq!(r_here_ns, w_here_ns, "here_ns");
 
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 

@@ -207,7 +207,6 @@ impl AlignedBlock {
     pub fn transpose(&self) -> AlignedBlock {
         return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
     }
-    
 
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[0];
