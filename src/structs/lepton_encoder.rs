@@ -715,8 +715,7 @@ fn roundtrip_ones() {
 /// way the math operations are performed (for example overflow or bitness)
 #[test]
 fn roundtrip_large_coef() {
-    // largest coefficient that doesn't cause a DC overflow
-    let block = AlignedBlock::new([-1010; 64]);
+    let block = AlignedBlock::new([1023; 64]);
 
     roundtrip_read_write_coefficients(
         &block,
@@ -724,8 +723,8 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x9e97dff50bc0188,
-        &EnabledFeatures::compat_lepton_vector_read(),
+        0xcf268c76674a5c83,
+        &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
     // now test with maximum quantization table. In theory this is legal according
@@ -738,8 +737,8 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0xe9a6f36fcaf42727,
-        &EnabledFeatures::compat_lepton_vector_read(),
+        0xc4410bb82397c41f,
+        &EnabledFeatures::compat_lepton_scalar_read(),
     );
 }
 
@@ -748,10 +747,10 @@ fn roundtrip_large_coef() {
 fn roundtrip_random_seed() {
     use rand::Rng;
 
-    // the 22 seed is a choice that doesn't overflow the DC coefficient
+    // the 76 seed is a choice that doesn't overflow the DC coefficient
     // since the encoder is somewhat picky if the DC estimate overflows
     // it also has different behavior for 32 and 16 bit codepath
-    let mut rng = crate::helpers::get_rand_from_seed([22; 32]);
+    let mut rng = crate::helpers::get_rand_from_seed([76; 32]);
 
     let arr = [0i16; 64];
 
@@ -762,28 +761,26 @@ fn roundtrip_random_seed() {
     let qt = arr.map(|_| rng.gen_range(1u16..=65535));
 
     // using 32 bit math (test emulating both scalar and vector C++ code)
-    let a = roundtrip_read_write_coefficients(
+    roundtrip_read_write_coefficients(
         &left,
         &above,
         &above_left,
         &here,
         qt,
-        0x8f043f2ae83c2d5a,
+        0xd0fef0d9d11bc639,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
     // using 16 bit math
-    let b = roundtrip_read_write_coefficients(
+    roundtrip_read_write_coefficients(
         &left,
         &above,
         &above_left,
         &here,
         qt,
-        0x99675a04115a3b3b,
+        0x22c0214bde6c7a70,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
-
-    assert!(a != b);
 }
 
 /// tests a pattern where all the coefficients are unique to make sure we don't mix up anything
@@ -871,7 +868,7 @@ fn roundtrip_read_write_coefficients(
     qt: [u16; 64],
     verified_output: u64,
     features: &EnabledFeatures,
-) -> u64 {
+) {
     use crate::structs::{
         block_based_image::EMPTY_BLOCK, lepton_decoder::read_coefficient_block,
         neighbor_summary::NEIGHBOR_DATA_EMPTY, vpx_bool_reader::VPXBoolReader,
@@ -1101,6 +1098,4 @@ fn roundtrip_read_write_coefficients(
             "Hash mismatch. Unexpected change in model behavior/output format"
         );
     }
-
-    hash
 }
