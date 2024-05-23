@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use bytemuck::{cast, cast_ref};
-use wide::{i16x8, i32x8};
+use wide::{i16x8, i32x8, u16x8};
 
 use super::block_based_image::AlignedBlock;
 
@@ -31,19 +31,8 @@ const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
 pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
-    let q: &[u16; 64] = cast_ref(q_transposed.get_block());
-
-    // unsigned zero extend to 32 bit
-    i32x8::new([
-        i32::from(q[offset * 8]),
-        i32::from(q[offset * 8 + 1]),
-        i32::from(q[offset * 8 + 2]),
-        i32::from(q[offset * 8 + 3]),
-        i32::from(q[offset * 8 + 4]),
-        i32::from(q[offset * 8 + 5]),
-        i32::from(q[offset * 8 + 6]),
-        i32::from(q[offset * 8 + 7]),
-    ])
+    let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_u16x8(rows[offset])
 }
 
 #[inline(never)]
