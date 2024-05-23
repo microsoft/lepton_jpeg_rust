@@ -4,8 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use bytemuck::cast;
-use wide::{i16x8, i32x8};
+use bytemuck::{cast, cast_ref};
+use wide::{i16x8, i32x8, u16x8};
 
 use super::block_based_image::AlignedBlock;
 
@@ -31,9 +31,9 @@ const R2: i32 = 181; // 256/sqrt(2)
 
 #[cfg(test)]
 #[inline(always)]
-pub fn get_i32x8(offset: usize, q: &AlignedBlock) -> i32x8 {
-    let rows: &[i16x8; 8] = bytemuck::cast_ref(q.get_block());
-    i32x8::from_i16x8(rows[offset])
+pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_u16x8(rows[offset])
 }
 
 #[inline(always)]
