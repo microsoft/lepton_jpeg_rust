@@ -33,37 +33,33 @@ impl QuantizationTables {
             min_noise_threshold: [0; 14],
         };
 
-        retval.set_quantization_table(quantization_table);
-
-        return retval;
-    }
-
-    fn set_quantization_table(&mut self, quantization_table: &[u16; 64]) {
         for pixel_row in 0..8 {
             for pixel_column in 0..8 {
                 let coord = (pixel_row * 8) + pixel_column;
                 let coord_tr = (pixel_column * 8) + pixel_row;
                 let q = quantization_table[RASTER_TO_ZIGZAG[coord] as usize];
 
-                self.quantization_table[coord] = q;
-                self.quantization_table_transposed[coord_tr] = q;
+                retval.quantization_table[coord] = q;
+                retval.quantization_table_transposed[coord_tr] = q;
             }
         }
 
         for i in 0..14 {
             let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
-            if self.quantization_table[coord] < 9 {
-                let mut freq_max = FREQ_MAX[i] + self.quantization_table[coord] - 1;
-                if self.quantization_table[coord] != 0 {
-                    freq_max /= self.quantization_table[coord];
+            if retval.quantization_table[coord] < 9 {
+                let mut freq_max = FREQ_MAX[i] + retval.quantization_table[coord] - 1;
+                if retval.quantization_table[coord] != 0 {
+                    freq_max /= retval.quantization_table[coord];
                 }
 
                 let max_len = u16_bit_length(freq_max) as u8;
                 if max_len > RESIDUAL_NOISE_FLOOR as u8 {
-                    self.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                    retval.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
                 }
             }
         }
+
+        retval
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
