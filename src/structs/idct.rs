@@ -29,13 +29,6 @@ const W3MW5: i32 = _W3 - _W5;
 
 const R2: i32 = 181; // 256/sqrt(2)
 
-#[cfg(test)]
-#[inline(always)]
-pub fn get_i32x8(offset: usize, q: &AlignedBlock) -> i32x8 {
-    let rows: &[i16x8; 8] = bytemuck::cast_ref(q.get_block());
-    i32x8::from_i16x8(rows[offset])
-}
-
 #[inline(always)]
 pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
     let t = *block;
@@ -133,6 +126,25 @@ pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
         i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
         i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
     ]))
+}
+
+#[cfg(test)]
+use bytemuck::cast_ref;
+
+#[cfg(test)]
+#[inline(always)]
+pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    use wide::u16x8;
+
+    let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_u16x8(rows[offset])
+}
+
+#[cfg(test)]
+#[inline(always)]
+pub fn get_c(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_i16x8(rows[offset])
 }
 
 #[cfg(test)]
@@ -290,7 +302,7 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
 
     let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
     for col in 0..8 {
-        raster[col] = get_i32x8(col, &data_tr) * get_i32x8(col, &q_tr);
+        raster[col] = get_c(col, &data_tr) * get_q(col, &q_tr);
     }
 
     let outp = run_idct(&raster);
