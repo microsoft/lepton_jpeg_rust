@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use bytemuck::cast;
-use wide::{i16x8, i32x8};
+use wide::i32x8;
 
 use std::cmp;
 use std::io::Write;

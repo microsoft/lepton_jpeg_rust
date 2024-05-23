@@ -198,6 +198,7 @@ impl AlignedBlock {
         AlignedBlock { raw_data: block }
     }
 
+    #[allow(dead_code)]
     pub fn as_i16x8(&self, index: usize) -> i16x8 {
         let v: &[i16x8; 8] = cast_ref(&self.raw_data);
         v[index]
