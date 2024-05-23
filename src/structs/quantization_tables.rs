@@ -52,16 +52,16 @@ impl QuantizationTables {
 
         for i in 0..14 {
             let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
-            let mut freq_max = FREQ_MAX[coord]
-                .wrapping_add(self.quantization_table[coord])
-                .wrapping_sub(1);
-            if self.quantization_table[coord] != 0 {
-                freq_max /= self.quantization_table[coord];
-            }
+            if self.quantization_table[coord] < 9 {
+                let mut freq_max = FREQ_MAX[i] + self.quantization_table[coord] - 1;
+                if self.quantization_table[coord] != 0 {
+                    freq_max /= self.quantization_table[coord];
+                }
 
-            let max_len = u16_bit_length(freq_max) as u8;
-            if max_len > RESIDUAL_NOISE_FLOOR as u8 {
-                self.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                let max_len = u16_bit_length(freq_max) as u8;
+                if max_len > RESIDUAL_NOISE_FLOOR as u8 {
+                    self.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                }
             }
         }
     }
