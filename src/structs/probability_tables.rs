@@ -357,7 +357,7 @@ impl ProbabilityTables {
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
         return PredictDCResult {
-            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0))) + 4) >> 3,
+            predicted_dc: ((avgmed / i32::from(q_transposed.get_coefficient(0) as u16)) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
