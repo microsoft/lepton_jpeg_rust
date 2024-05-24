@@ -718,7 +718,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0xe9a6f36fcaf42727,
+        0xcac19d7e86aece1b,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -728,10 +728,10 @@ fn roundtrip_large_coef() {
 fn roundtrip_random_seed() {
     use rand::Rng;
 
-    // the 22 seed is a choice that doesn't overflow the DC coefficient
+    // the 127 seed is a choice that doesn't overflow the DC coefficient
     // since the encoder is somewhat picky if the DC estimate overflows
     // it also has different behavior for 32 and 16 bit codepath
-    let mut rng = crate::helpers::get_rand_from_seed([22; 32]);
+    let mut rng = crate::helpers::get_rand_from_seed([127; 32]);
 
     let arr = [0i16; 64];
 
@@ -748,7 +748,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0x8f043f2ae83c2d5a,
+        0xe3c687262f0df4f5,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -759,7 +759,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0x99675a04115a3b3b,
+        0xdbacb31b714489fc,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
