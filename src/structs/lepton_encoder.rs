@@ -95,60 +95,33 @@ pub fn lepton_encode_row_range<W: Write>(
 
         let block_width = image_data[bt].get_block_width();
 
-        if is_top_row[bt] {
+        let is_top = is_top_row[bt];
+        if is_top {
             is_top_row[bt] = false;
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.corner[bt],
-                &pts.top[bt],
-                &pts.top[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
-        } else if block_width > 1 {
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.mid_left[bt],
-                &pts.middle[bt],
-                &pts.mid_right[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
-        } else {
-            assert!(block_width == 1, "block_width == 1");
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
         }
+
+        process_row(
+            &mut model,
+            &mut bool_writer,
+            &image_data[bt],
+            &quantization_tables[bt],
+            if is_top {
+                &pts.corner[bt]
+            } else {
+                &pts.mid_left[bt]
+            },
+            if is_top {
+                &pts.top[bt]
+            } else {
+                &pts.middle[bt]
+            },
+            &mut block_context,
+            &mut neighbor_summary_cache[bt][..],
+            block_width,
+            component_size_in_blocks[bt],
+            features,
+        )
+        .context(here!())?;
     }
 
     if is_last_thread && full_file_compression {
@@ -183,40 +156,25 @@ fn process_row<W: Write>(
     qt: &QuantizationTables,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
-    right_model: &ProbabilityTables,
-    _colldata: &TruncateComponents,
     state: &mut BlockContext,
     neighbor_summary_cache: &mut [NeighborSummary],
     block_width: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
-    if block_width > 0 {
-        serialize_tokens::<W, false>(
-            state,
-            qt,
-            left_model,
-            model,
-            image_data,
-            neighbor_summary_cache,
-            bool_writer,
-            features,
-        )
-        .context(here!())?;
-        let offset = state.next(true);
+    for jpeg_x in 0..block_width {
+        let pt = if jpeg_x == 0 {
+            left_model
+        } else {
+            middle_model
+        };
 
-        if offset >= component_size_in_block {
-            return Ok(());
-        }
-    }
-
-    for _jpeg_x in 1..block_width - 1 {
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
-        if middle_model.is_all_present() {
+        if pt.is_all_present() {
             serialize_tokens::<W, true>(
                 state,
                 qt,
-                middle_model,
+                pt,
                 model,
                 image_data,
                 neighbor_summary_cache,
@@ -228,7 +186,7 @@ fn process_row<W: Write>(
             serialize_tokens::<W, false>(
                 state,
                 qt,
-                middle_model,
+                pt,
                 model,
                 image_data,
                 neighbor_summary_cache,
@@ -245,35 +203,6 @@ fn process_row<W: Write>(
         }
     }
 
-    if block_width > 1 {
-        if right_model.is_all_present() {
-            serialize_tokens::<W, true>(
-                state,
-                qt,
-                right_model,
-                model,
-                image_data,
-                neighbor_summary_cache,
-                bool_writer,
-                features,
-            )
-            .context(here!())?;
-        } else {
-            serialize_tokens::<W, false>(
-                state,
-                qt,
-                right_model,
-                model,
-                image_data,
-                neighbor_summary_cache,
-                bool_writer,
-                features,
-            )
-            .context(here!())?;
-        }
-
-        state.next(false);
-    }
     Ok(())
 }
 

@@ -123,56 +123,32 @@ fn decode_row_wrapper<R: Read>(
 ) -> Result<()> {
     let mut context = image_data.off_y(curr_y);
 
-    let block_width = image_data.get_block_width();
-    if is_top_row[component] {
+    let is_top = is_top_row[component];
+    if is_top {
         is_top_row[component] = false;
-        decode_row(
-            model,
-            bool_reader,
-            &qt,
-            &pts.corner[component],
-            &pts.top[component],
-            &pts.top[component],
-            image_data,
-            &mut context,
-            neighbor_summary_cache,
-            component_size_in_blocks[component],
-            features,
-        )
-        .context(here!())?;
-    } else if block_width > 1 {
-        let _bt = component;
-        decode_row(
-            model,
-            bool_reader,
-            &qt,
-            &pts.mid_left[component],
-            &pts.middle[component],
-            &pts.mid_right[component],
-            image_data,
-            &mut context,
-            neighbor_summary_cache,
-            component_size_in_blocks[component],
-            features,
-        )
-        .context(here!())?;
-    } else {
-        assert!(block_width == 1, "block_width == 1");
-        decode_row(
-            model,
-            bool_reader,
-            &qt,
-            &pts.width_one[component],
-            &pts.width_one[component],
-            &pts.width_one[component],
-            image_data,
-            &mut context,
-            neighbor_summary_cache,
-            component_size_in_blocks[component],
-            features,
-        )
-        .context(here!())?;
     }
+
+    decode_row(
+        model,
+        bool_reader,
+        &qt,
+        if is_top {
+            &pts.corner[component]
+        } else {
+            &pts.mid_left[component]
+        },
+        if is_top {
+            &pts.top[component]
+        } else {
+            &pts.middle[component]
+        },
+        image_data,
+        &mut context,
+        neighbor_summary_cache,
+        component_size_in_blocks[component],
+        features,
+    )
+    .context(here!())?;
 
     Ok(())
 }
@@ -183,7 +159,6 @@ fn decode_row<R: Read>(
     qt: &QuantizationTables,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
-    right_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     block_context: &mut BlockContext,
     neighbor_summary_cache: &mut [NeighborSummary],
@@ -191,27 +166,15 @@ fn decode_row<R: Read>(
     features: &EnabledFeatures,
 ) -> Result<()> {
     let block_width = image_data.get_block_width();
-    if block_width > 0 {
-        parse_token::<R, false>(
-            model,
-            bool_reader,
-            image_data,
-            block_context,
-            neighbor_summary_cache,
-            qt,
-            left_model,
-            features,
-        )
-        .context(here!())?;
-        let offset = block_context.next(true);
 
-        if offset >= component_size_in_blocks {
-            return Ok(()); // no sure if this is an error
-        }
-    }
+    for jpeg_x in 0..block_width {
+        let pt = if jpeg_x == 0 {
+            left_model
+        } else {
+            middle_model
+        };
 
-    for _jpeg_x in 1..block_width - 1 {
-        if middle_model.is_all_present() {
+        if pt.is_all_present() {
             parse_token::<R, true>(
                 model,
                 bool_reader,
@@ -219,7 +182,7 @@ fn decode_row<R: Read>(
                 block_context,
                 neighbor_summary_cache,
                 qt,
-                middle_model,
+                pt,
                 features,
             )
             .context(here!())?;
@@ -231,7 +194,7 @@ fn decode_row<R: Read>(
                 block_context,
                 neighbor_summary_cache,
                 qt,
-                middle_model,
+                pt,
                 features,
             )
             .context(here!())?;
@@ -244,35 +207,6 @@ fn decode_row<R: Read>(
         }
     }
 
-    if block_width > 1 {
-        if right_model.is_all_present() {
-            parse_token::<R, true>(
-                model,
-                bool_reader,
-                image_data,
-                block_context,
-                neighbor_summary_cache,
-                qt,
-                right_model,
-                features,
-            )
-            .context(here!())?;
-        } else {
-            parse_token::<R, false>(
-                model,
-                bool_reader,
-                image_data,
-                block_context,
-                neighbor_summary_cache,
-                qt,
-                right_model,
-                features,
-            )
-            .context(here!())?;
-        }
-
-        block_context.next(false);
-    }
     Ok(())
 }
 
