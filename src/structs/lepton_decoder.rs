@@ -111,8 +111,8 @@ pub fn lepton_decode_row_range<R: Read>(
             &mut image_data[component],
             &qt[component],
             &mut neighbor_summary_cache[component],
-            component_size_in_blocks[component],
             cur_row.curr_y,
+            component_size_in_blocks[component],
             features,
         )
         .context(here!())?;
@@ -128,9 +128,9 @@ fn decode_row_wrapper<R: Read>(
     middle_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
-    neighbor_summary_cache: &mut Vec<NeighborSummary>,
-    component_size_in_blocks: i32,
+    neighbor_summary_cache: &mut [NeighborSummary],
     curr_y: i32,
+    component_size_in_blocks: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     let mut block_context = image_data.off_y(curr_y);
