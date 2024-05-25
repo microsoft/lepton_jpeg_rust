@@ -121,50 +121,22 @@ fn decode_row_wrapper<R: Read>(
     curr_y: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
-    let mut context = image_data.off_y(curr_y);
+    let mut block_context = image_data.off_y(curr_y);
 
-    let is_top = is_top_row[component];
-    if is_top {
+    let left_model;
+    let middle_model;
+
+    if is_top_row[component] {
         is_top_row[component] = false;
+
+        left_model = &pts.corner[component];
+        middle_model = &pts.top[component];
+    } else {
+        left_model = &pts.mid_left[component];
+        middle_model = &pts.middle[component];
     }
 
-    decode_row(
-        model,
-        bool_reader,
-        &qt,
-        if is_top {
-            &pts.corner[component]
-        } else {
-            &pts.mid_left[component]
-        },
-        if is_top {
-            &pts.top[component]
-        } else {
-            &pts.middle[component]
-        },
-        image_data,
-        &mut context,
-        neighbor_summary_cache,
-        component_size_in_blocks[component],
-        features,
-    )
-    .context(here!())?;
-
-    Ok(())
-}
-
-fn decode_row<R: Read>(
-    model: &mut Model,
-    bool_reader: &mut VPXBoolReader<R>,
-    qt: &QuantizationTables,
-    left_model: &ProbabilityTables,
-    middle_model: &ProbabilityTables,
-    image_data: &mut BlockBasedImage,
-    block_context: &mut BlockContext,
-    neighbor_summary_cache: &mut [NeighborSummary],
-    component_size_in_blocks: i32,
-    features: &EnabledFeatures,
-) -> Result<()> {
+    let component_size_in_blocks = component_size_in_blocks[component];
     let block_width = image_data.get_block_width();
 
     for jpeg_x in 0..block_width {
@@ -179,7 +151,7 @@ fn decode_row<R: Read>(
                 model,
                 bool_reader,
                 image_data,
-                block_context,
+                &mut block_context,
                 neighbor_summary_cache,
                 qt,
                 pt,
@@ -191,7 +163,7 @@ fn decode_row<R: Read>(
                 model,
                 bool_reader,
                 image_data,
-                block_context,
+                &block_context,
                 neighbor_summary_cache,
                 qt,
                 pt,
@@ -215,7 +187,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
     image_data: &mut BlockBasedImage,
-    context: &mut BlockContext,
+    context: &BlockContext,
     neighbor_summary_cache: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,

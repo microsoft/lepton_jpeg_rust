@@ -91,33 +91,16 @@ pub fn lepton_encode_row_range<W: Write>(
         // Advance to next row to cache expended block data for current row. Should be called before getting block context.
         let bt = cur_row.component;
 
-        let mut block_context = image_data[bt].off_y(cur_row.curr_y);
-
-        let block_width = image_data[bt].get_block_width();
-
-        let is_top = is_top_row[bt];
-        if is_top {
-            is_top_row[bt] = false;
-        }
-
         process_row(
             &mut model,
             &mut bool_writer,
             &image_data[bt],
             &quantization_tables[bt],
-            if is_top {
-                &pts.corner[bt]
-            } else {
-                &pts.mid_left[bt]
-            },
-            if is_top {
-                &pts.top[bt]
-            } else {
-                &pts.middle[bt]
-            },
-            &mut block_context,
+            pts,
             &mut neighbor_summary_cache[bt][..],
-            block_width,
+            &mut is_top_row,
+            bt,
+            cur_row.curr_y,
             component_size_in_blocks[bt],
             features,
         )
@@ -154,14 +137,31 @@ fn process_row<W: Write>(
     bool_writer: &mut VPXBoolWriter<W>,
     image_data: &BlockBasedImage,
     qt: &QuantizationTables,
-    left_model: &ProbabilityTables,
-    middle_model: &ProbabilityTables,
-    state: &mut BlockContext,
+    pts: &ProbabilityTablesSet,
     neighbor_summary_cache: &mut [NeighborSummary],
-    block_width: i32,
+    is_top_row: &mut [bool],
+    component: usize,
+    curr_y: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
+    let mut block_context = image_data.off_y(curr_y);
+
+    let left_model;
+    let middle_model;
+
+    if is_top_row[component] {
+        is_top_row[component] = false;
+
+        left_model = &pts.corner[component];
+        middle_model = &pts.top[component];
+    } else {
+        left_model = &pts.mid_left[component];
+        middle_model = &pts.middle[component];
+    }
+
+    let block_width = image_data.get_block_width();
+
     for jpeg_x in 0..block_width {
         let pt = if jpeg_x == 0 {
             left_model
@@ -172,7 +172,7 @@ fn process_row<W: Write>(
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
         if pt.is_all_present() {
             serialize_tokens::<W, true>(
-                state,
+                &block_context,
                 qt,
                 pt,
                 model,
@@ -184,7 +184,7 @@ fn process_row<W: Write>(
             .context(here!())?;
         } else {
             serialize_tokens::<W, false>(
-                state,
+                &block_context,
                 qt,
                 pt,
                 model,
@@ -196,7 +196,7 @@ fn process_row<W: Write>(
             .context(here!())?;
         }
 
-        let offset = state.next();
+        let offset = block_context.next();
 
         if offset >= component_size_in_block {
             return Ok(());
@@ -208,7 +208,7 @@ fn process_row<W: Write>(
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
-    context: &mut BlockContext,
+    context: &BlockContext,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     model: &mut Model,

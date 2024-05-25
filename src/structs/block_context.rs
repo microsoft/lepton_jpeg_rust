@@ -96,7 +96,7 @@ impl BlockContext {
     }
 
     pub fn set_neighbor_summary_here(
-        &mut self,
+        &self,
         neighbor_summary_cache: &mut [NeighborSummary],
         neighbor_summary: NeighborSummary,
     ) {
