@@ -151,7 +151,7 @@ fn decode_row_wrapper<R: Read>(
                 model,
                 bool_reader,
                 image_data,
-                &mut block_context,
+                &block_context,
                 neighbor_summary_cache,
                 qt,
                 pt,
