@@ -89,16 +89,29 @@ pub fn lepton_decode_row_range<R: Read>(
             continue;
         }
 
+        let left_model;
+        let middle_model;
+
+        let component = cur_row.component;
+        if is_top_row[component] {
+            is_top_row[component] = false;
+
+            left_model = &pts.corner[component];
+            middle_model = &pts.top[component];
+        } else {
+            left_model = &pts.mid_left[component];
+            middle_model = &pts.middle[component];
+        }
+
         decode_row_wrapper(
             &mut model,
             &mut bool_reader,
-            pts,
-            &mut image_data[cur_row.component],
-            &qt[cur_row.component],
-            &mut neighbor_summary_cache[cur_row.component],
-            &mut is_top_row[..],
-            &component_size_in_blocks[..],
-            cur_row.component,
+            left_model,
+            middle_model,
+            &mut image_data[component],
+            &qt[component],
+            &mut neighbor_summary_cache[component],
+            component_size_in_blocks[component],
             cur_row.curr_y,
             features,
         )
@@ -111,32 +124,17 @@ pub fn lepton_decode_row_range<R: Read>(
 fn decode_row_wrapper<R: Read>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
-    pts: &ProbabilityTablesSet,
+    left_model: &ProbabilityTables,
+    middle_model: &ProbabilityTables,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut Vec<NeighborSummary>,
-    is_top_row: &mut [bool],
-    component_size_in_blocks: &[i32],
-    component: usize,
+    component_size_in_blocks: i32,
     curr_y: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     let mut block_context = image_data.off_y(curr_y);
 
-    let left_model;
-    let middle_model;
-
-    if is_top_row[component] {
-        is_top_row[component] = false;
-
-        left_model = &pts.corner[component];
-        middle_model = &pts.top[component];
-    } else {
-        left_model = &pts.mid_left[component];
-        middle_model = &pts.middle[component];
-    }
-
-    let component_size_in_blocks = component_size_in_blocks[component];
     let block_width = image_data.get_block_width();
 
     for jpeg_x in 0..block_width {

@@ -89,19 +89,31 @@ pub fn lepton_encode_row_range<W: Write>(
         }
 
         // Advance to next row to cache expended block data for current row. Should be called before getting block context.
-        let bt = cur_row.component;
+        let component = cur_row.component;
+
+        let left_model;
+        let middle_model;
+
+        if is_top_row[component] {
+            is_top_row[component] = false;
+
+            left_model = &pts.corner[component];
+            middle_model = &pts.top[component];
+        } else {
+            left_model = &pts.mid_left[component];
+            middle_model = &pts.middle[component];
+        }
 
         process_row(
             &mut model,
             &mut bool_writer,
-            &image_data[bt],
-            &quantization_tables[bt],
-            pts,
-            &mut neighbor_summary_cache[bt][..],
-            &mut is_top_row,
-            bt,
+            &image_data[component],
+            &quantization_tables[component],
+            left_model,
+            middle_model,
+            &mut neighbor_summary_cache[component][..],
             cur_row.curr_y,
-            component_size_in_blocks[bt],
+            component_size_in_blocks[component],
             features,
         )
         .context(here!())?;
@@ -137,33 +149,18 @@ fn process_row<W: Write>(
     bool_writer: &mut VPXBoolWriter<W>,
     image_data: &BlockBasedImage,
     qt: &QuantizationTables,
-    pts: &ProbabilityTablesSet,
+    left_model: &ProbabilityTables,
+    middle_model: &ProbabilityTables,
     neighbor_summary_cache: &mut [NeighborSummary],
-    is_top_row: &mut [bool],
-    component: usize,
     curr_y: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     let mut block_context = image_data.off_y(curr_y);
-
-    let left_model;
-    let middle_model;
-
-    if is_top_row[component] {
-        is_top_row[component] = false;
-
-        left_model = &pts.corner[component];
-        middle_model = &pts.top[component];
-    } else {
-        left_model = &pts.mid_left[component];
-        middle_model = &pts.middle[component];
-    }
-
     let block_width = image_data.get_block_width();
 
     for jpeg_x in 0..block_width {
-        let pt = if jpeg_x == 0 {
+        let pt: &ProbabilityTables = if jpeg_x == 0 {
             left_model
         } else {
             middle_model
