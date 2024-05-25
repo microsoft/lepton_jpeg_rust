@@ -344,7 +344,10 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
         // (table contains divisors for coefficients so it never should have a zero)
         for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
             if qtables.get_quantization_table()[i] == 0 {
-                return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table contains zero");
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "Quantization table contains zero",
+                );
             }
         }
         qt.push(qtables);
@@ -445,7 +448,10 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
         // (table contains divisors for coefficients so it never should have a zero)
         for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
             if qtables.get_quantization_table()[i] == 0 {
-                return err_exit_code(ExitCode::UnsupportedJpeg, "Quantization table contains zero");
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "Quantization table contains zero",
+                );
             }
         }
         quantization_tables.push(qtables);
