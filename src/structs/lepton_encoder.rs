@@ -196,7 +196,7 @@ fn process_row<W: Write>(
             .context(here!())?;
         }
 
-        let offset = state.next(true);
+        let offset = state.next();
 
         if offset >= component_size_in_block {
             return Ok(());

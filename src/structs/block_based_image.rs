@@ -110,17 +110,13 @@ impl BlockBasedImage {
         );
     }
 
+    // blocks above the first line are never dereferenced
     pub fn off_y(&self, y: i32) -> BlockContext {
         return BlockContext::new(
             self.block_width * y,
-            if y != 0 {
-                self.block_width * (y - 1)
-            } else {
-                -1
-            },
+            self.block_width * (y - 1),
             if (y & 1) != 0 { self.block_width } else { 0 },
             if (y & 1) != 0 { 0 } else { self.block_width },
-            self,
         );
     }
 

@@ -200,7 +200,7 @@ fn decode_row<R: Read>(
             .context(here!())?;
         }
 
-        let offset = block_context.next(true);
+        let offset = block_context.next();
 
         if offset >= component_size_in_blocks {
             return Ok(()); // no sure if this is an error
