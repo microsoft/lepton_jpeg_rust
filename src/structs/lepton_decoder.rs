@@ -534,7 +534,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        let best_prior =
+        let (best_prior_sign_index, best_prior_abs) =
             pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
 
         let coef = model_per_color.read_edge_coefficient(
@@ -542,7 +542,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             qt,
             zig15offset,
             num_non_zeros_edge,
-            best_prior,
+            best_prior_sign_index,
+            best_prior_abs,
         )?;
 
         if coef != 0 {

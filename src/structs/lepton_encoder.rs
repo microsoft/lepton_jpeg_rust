@@ -591,7 +591,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             break;
         }
 
-        let best_prior =
+        let (best_prior_sign_index, best_prior_abs) =
             pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
 
         let coef = block.get_coefficient(coord_tr);
@@ -603,7 +603,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
                 coef,
                 zig15offset,
                 num_non_zeros_edge,
-                best_prior,
+                best_prior_sign_index,
+                best_prior_abs,
             )
             .context(here!())?;
 

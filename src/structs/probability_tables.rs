@@ -16,6 +16,12 @@ use super::block_context::NeighborData;
 use wide::i16x8;
 use wide::i32x8;
 
+pub enum EdgeSign {
+    Zero = 0,
+    Positive = 1,
+    Negative = 2,
+}
+
 pub struct ProbabilityTables {
     left_present: bool,
     above_present: bool,
@@ -210,21 +216,32 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         coefficient_tr: usize,
         pred: &[i32; 8],
-    ) -> i32 {
+    ) -> (EdgeSign, u32) {
         if !ALL_PRESENT
             && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
         {
-            return 0;
+            return (EdgeSign::Zero, 0);
         }
 
-        let mut best_prior: i32 = pred[if HORIZONTAL {
+        let best_prior: i32 = pred[if HORIZONTAL {
             coefficient_tr >> 3
         } else {
             coefficient_tr
         }];
-        best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
 
-        best_prior
+        let best_prior_abs =
+            qt.div_quantization_table_transposed_recip(best_prior.unsigned_abs(), coefficient_tr);
+
+        let sign = if best_prior_abs == 0 {
+            EdgeSign::Zero
+        } else {
+            if best_prior > 0 {
+                EdgeSign::Positive
+            } else {
+                EdgeSign::Negative
+            }
+        };
+        (sign, best_prior_abs)
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(

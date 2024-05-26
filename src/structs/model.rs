@@ -15,7 +15,7 @@ use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
-use super::probability_tables::ProbabilityTables;
+use super::probability_tables::{EdgeSign, ProbabilityTables};
 use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
@@ -333,7 +333,8 @@ impl ModelPerColor {
         qt: &QuantizationTables,
         zig15offset: usize,
         num_non_zeros_edge: u8,
-        best_prior: i32,
+        best_prior_sign_index: EdgeSign,
+        best_prior_abs: u32,
     ) -> Result<i16> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
@@ -348,7 +349,6 @@ impl ModelPerColor {
         assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
 
         // we cap the bit length since the prior prediction can be wonky
-        let best_prior_abs = best_prior.unsigned_abs();
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
@@ -364,7 +364,7 @@ impl ModelPerColor {
 
         let mut coef = 0;
         if length != 0 {
-            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
+            let sign = &mut self.sign_counts[best_prior_sign_index as usize][best_prior_bit_len];
 
             let neg = !bool_reader
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
@@ -428,7 +428,8 @@ impl ModelPerColor {
         coef: i16,
         zig15offset: usize,
         num_non_zeros_edge: u8,
-        best_prior: i32,
+        best_prior_sign_index: EdgeSign,
+        best_prior_abs: u32,
     ) -> Result<()> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
 
@@ -443,7 +444,6 @@ impl ModelPerColor {
         assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
 
         // we cap the bit length since the prior prediction can be wonky
-        let best_prior_abs = best_prior.unsigned_abs();
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
@@ -464,7 +464,7 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
-            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
+            let sign = &mut self.sign_counts[best_prior_sign_index as usize][best_prior_bit_len];
 
             bool_writer.put(
                 coef >= 0,
