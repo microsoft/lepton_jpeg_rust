@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use wide::u32x8;
+
 use crate::consts::*;
 use crate::helpers::*;
 
@@ -13,7 +15,9 @@ pub struct QuantizationTables {
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
 
-    quantization_table_transposed_recip: [u32; 64],
+    quantization_table_transposed_recip_vert: u32x8,
+    quantization_table_transposed_recip_horiz: u32x8,
+
     // Values for discrimination between "regular" and "noise" part of
     // edge AC coefficients, used in `read/write_edge_coefficient`.
     // Calculated using approximate maximal magnitudes
@@ -33,7 +37,8 @@ impl QuantizationTables {
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
             min_noise_threshold: [0; 14],
-            quantization_table_transposed_recip: [0; 64],
+            quantization_table_transposed_recip_vert: u32x8::default(),
+            quantization_table_transposed_recip_horiz: u32x8::default(),
         };
 
         for pixel_row in 0..8 {
@@ -44,8 +49,16 @@ impl QuantizationTables {
 
                 retval.quantization_table[coord] = q;
                 retval.quantization_table_transposed[coord_tr] = q;
-                retval.quantization_table_transposed_recip[coord_tr] = QuantizationTables::recip(q);
             }
+        }
+
+        for i in 0..8 {
+            retval
+                .quantization_table_transposed_recip_horiz
+                .as_array_mut()[i] = Self::recip(retval.quantization_table[i]);
+            retval
+                .quantization_table_transposed_recip_vert
+                .as_array_mut()[i] = Self::recip(retval.quantization_table_transposed[i]);
         }
 
         for i in 0..14 {
@@ -78,18 +91,12 @@ impl QuantizationTables {
         return retval;
     }
 
-    pub fn div_quantization_table_transposed_recip(&self, v: u32, index: usize) -> u32 {
-        // no need to round negative towards zero since this is unsigened division
-        let result = ((u64::from(v) * u64::from(self.quantization_table_transposed_recip[index]))
-            >> 31 + 13) as u32;
-
-        debug_assert_eq!(
-            result,
-            (v / (u32::from(self.quantization_table_transposed[index])) / (1 << 13)),
-            "right shift"
-        );
-
-        result
+    pub fn quantization_table_transposed_recip<const HORIZONTAL: bool>(&self) -> u32x8 {
+        if HORIZONTAL {
+            self.quantization_table_transposed_recip_horiz
+        } else {
+            self.quantization_table_transposed_recip_vert
+        }
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {

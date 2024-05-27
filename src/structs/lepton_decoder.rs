@@ -475,7 +475,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        &curr_horiz_pred.to_array(),
+        &curr_horiz_pred,
         here_mut,
         qt,
         pt,
@@ -486,7 +486,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        &curr_vert_pred.to_array(),
+        &curr_vert_pred,
         here_mut,
         qt,
         pt,
@@ -504,7 +504,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    pred: &[i32; 8],
+    pred: &i32x8,
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -515,6 +515,10 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     let mut num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context(here!())?;
+
+    if num_non_zeros_edge == 0 {
+        return Ok(());
+    }
 
     let delta;
     let mut zig15offset;
@@ -529,28 +533,28 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    for _lane in 0..7 {
-        if num_non_zeros_edge == 0 {
-            break;
-        }
+    let (best_prior_sign, best_prior_abs) =
+        pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, pred);
 
-        let (best_prior_sign_index, best_prior_abs) =
-            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
-
+    for lane in 0..7 {
         let coef = model_per_color.read_edge_coefficient(
             bool_reader,
             qt,
             zig15offset,
             num_non_zeros_edge,
-            best_prior_sign_index,
-            best_prior_abs,
+            best_prior_sign.as_array_ref()[lane + 1],
+            best_prior_abs.as_array_ref()[lane + 1],
         )?;
 
         if coef != 0 {
-            num_non_zeros_edge -= 1;
             here_mut.set_coefficient(coord_tr, coef);
             raster[coord_tr as usize] =
                 i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
+
+            num_non_zeros_edge -= 1;
+            if num_non_zeros_edge == 0 {
+                break;
+            }
         }
 
         coord_tr += delta;

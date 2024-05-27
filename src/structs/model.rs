@@ -15,7 +15,7 @@ use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
-use super::probability_tables::{EdgeSign, ProbabilityTables};
+use super::probability_tables::ProbabilityTables;
 use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
@@ -333,7 +333,7 @@ impl ModelPerColor {
         qt: &QuantizationTables,
         zig15offset: usize,
         num_non_zeros_edge: u8,
-        best_prior_sign_index: EdgeSign,
+        best_prior_sign_index: i32,
         best_prior_abs: u32,
     ) -> Result<i16> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
@@ -428,7 +428,7 @@ impl ModelPerColor {
         coef: i16,
         zig15offset: usize,
         num_non_zeros_edge: u8,
-        best_prior_sign_index: EdgeSign,
+        best_prior_sign_index: i32,
         best_prior_abs: u32,
     ) -> Result<()> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
