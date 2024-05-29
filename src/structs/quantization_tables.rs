@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use wide::u32x8;
+
 use crate::consts::*;
 use crate::helpers::*;
 
@@ -12,6 +14,10 @@ use super::jpeg_header::JPegHeader;
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
+
+    quantization_table_transposed_recip_vert: u32x8,
+    quantization_table_transposed_recip_horiz: u32x8,
+
     // Values for discrimination between "regular" and "noise" part of
     // edge AC coefficients, used in `read/write_edge_coefficient`.
     // Calculated using approximate maximal magnitudes
@@ -31,6 +37,8 @@ impl QuantizationTables {
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
             min_noise_threshold: [0; 14],
+            quantization_table_transposed_recip_vert: u32x8::default(),
+            quantization_table_transposed_recip_horiz: u32x8::default(),
         };
 
         for pixel_row in 0..8 {
@@ -42,6 +50,15 @@ impl QuantizationTables {
                 retval.quantization_table[coord] = q;
                 retval.quantization_table_transposed[coord_tr] = q;
             }
+        }
+
+        for i in 0..8 {
+            retval
+                .quantization_table_transposed_recip_horiz
+                .as_array_mut()[i] = Self::recip(retval.quantization_table[i]);
+            retval
+                .quantization_table_transposed_recip_vert
+                .as_array_mut()[i] = Self::recip(retval.quantization_table_transposed[i]);
         }
 
         for i in 0..14 {
@@ -60,6 +77,26 @@ impl QuantizationTables {
         }
 
         retval
+    }
+
+    fn recip(v: u16) -> u32 {
+        // for divide by zero, just return zero since this was the behavior
+        // in the original code (rather than rejecting the JPEG outright)
+        if v == 0 {
+            return 0;
+        }
+        let mut retval = (1u32 << 31) + v as u32 - 1;
+        retval /= v as u32;
+
+        return retval;
+    }
+
+    pub fn quantization_table_transposed_recip<const HORIZONTAL: bool>(&self) -> u32x8 {
+        if HORIZONTAL {
+            self.quantization_table_transposed_recip_horiz
+        } else {
+            self.quantization_table_transposed_recip_vert
+        }
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {

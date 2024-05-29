@@ -13,8 +13,11 @@ use crate::structs::quantization_tables::*;
 use super::block_based_image::AlignedBlock;
 use super::block_context::NeighborData;
 
+use bytemuck::cast;
 use wide::i16x8;
 use wide::i32x8;
+use wide::u32x8;
+use wide::CmpLt;
 
 pub struct ProbabilityTables {
     left_present: bool,
@@ -208,23 +211,43 @@ impl ProbabilityTables {
     pub fn calc_coefficient_context8_lak<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         &self,
         qt: &QuantizationTables,
-        coefficient_tr: usize,
-        pred: &[i32; 8],
-    ) -> i32 {
-        if !ALL_PRESENT
-            && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
-        {
-            return 0;
+        pred: &i32x8,
+    ) -> (i32x8, u32x8) {
+        #[inline]
+        fn mul_hi(lhs: u32x8, rhs: u32x8) -> u32x8 {
+            let a: [u32; 8] = cast(lhs);
+            let b: [u32; 8] = cast(rhs);
+            cast([
+                ((u64::from(a[0]) * u64::from(b[0])) >> 32) as u32,
+                ((u64::from(a[1]) * u64::from(b[1])) >> 32) as u32,
+                ((u64::from(a[2]) * u64::from(b[2])) >> 32) as u32,
+                ((u64::from(a[3]) * u64::from(b[3])) >> 32) as u32,
+                ((u64::from(a[4]) * u64::from(b[4])) >> 32) as u32,
+                ((u64::from(a[5]) * u64::from(b[5])) >> 32) as u32,
+                ((u64::from(a[6]) * u64::from(b[6])) >> 32) as u32,
+                ((u64::from(a[7]) * u64::from(b[7])) >> 32) as u32,
+            ])
         }
 
-        let mut best_prior: i32 = pred[if HORIZONTAL {
-            coefficient_tr >> 3
+        if !ALL_PRESENT
+            && ((HORIZONTAL && !self.is_above_present())
+                || (!HORIZONTAL && !self.is_left_present()))
+        {
+            (i32x8::ZERO, u32x8::ZERO)
         } else {
-            coefficient_tr
-        }];
-        best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
+            let recip = qt.quantization_table_transposed_recip::<HORIZONTAL>();
 
-        best_prior
+            let pred_abs = pred.unsigned_abs();
+
+            let best_prior_abs: u32x8 = mul_hi(pred_abs, recip) >> 12;
+
+            let orig_lt_zero = 1 - pred.cmp_lt(i32x8::ZERO);
+            let best_prior_is_zero: i32x8 = cast(!best_prior_abs.cmp_eq(u32x8::ZERO));
+
+            let best_prior_sign = best_prior_is_zero & orig_lt_zero;
+
+            (best_prior_sign, best_prior_abs)
+        }
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
@@ -323,7 +346,7 @@ impl ProbabilityTables {
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
         return PredictDCResult {
-            predicted_dc: (avgmed / q0 + 4) >> 3,
+            predicted_dc: ((avgmed / q0) + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
