@@ -364,6 +364,8 @@ impl ModelPerColor {
 
         let mut coef = 0;
         if length != 0 {
+            // best_prior in the initial Lepton implementation is stored as i32,
+            // but the sign here is taken from its truncated i16 value
             let sign =
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
@@ -465,6 +467,8 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
+            // best_prior in the initial Lepton implementation is stored as i32,
+            // but the sign here is taken from its truncated i16 value
             let sign =
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
