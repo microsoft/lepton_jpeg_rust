@@ -572,8 +572,8 @@ impl Model {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         color_index: usize,
-        uncertainty: i16,
-        uncertainty2: i16,
+        uncertainty: i32,
+        uncertainty2: i32,
     ) -> Result<i16> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
@@ -594,8 +594,8 @@ impl Model {
         bool_writer: &mut VPXBoolWriter<W>,
         color_index: usize,
         coef: i16,
-        uncertainty: i16,
-        uncertainty2: i16,
+        uncertainty: i32,
+        uncertainty2: i32,
     ) -> Result<()> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
@@ -614,22 +614,36 @@ impl Model {
 
     fn get_dc_branches(
         &mut self,
-        uncertainty: i16,
-        uncertainty2: i16,
+        uncertainty: i32,
+        uncertainty2: i32,
         color_index: usize,
     ) -> (
         &mut [Branch; MAX_EXPONENT],
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        let len_abs_mxm = u16_bit_length(uncertainty.unsigned_abs());
-        let len_abs_offset_to_closest_edge = u16_bit_length(uncertainty2.unsigned_abs());
+        // Lepton C++ version truncates the length to 16 bits before calculating bit length
+        let len_abs_mxm = u16_bit_length(uncertainty.unsigned_abs() as u16);
+        let len_abs_offset_to_closest_edge = u16_bit_length(uncertainty2.unsigned_abs() as u16);
+
         let len_abs_mxm_clamp = cmp::min(len_abs_mxm as usize, self.counts_dc.len() - 1);
 
         let exp = &mut self.counts_dc[len_abs_mxm_clamp].exponent_counts
             [len_abs_offset_to_closest_edge as usize];
-        let sign =
-            &mut self.per_color[color_index].sign_counts[0][calc_sign_index(uncertainty2) + 1]; // +1 to separate from sign_counts[0][0]
+
+        // this doesn't match the order of the Lepton C++ but it doesn't matter
+        // since the branches are partitioned in the same way so there's no change in behavior
+        let sign_index = if uncertainty2 == 0 {
+            1
+        } else {
+            if uncertainty2 > 0 {
+                2
+            } else {
+                3
+            }
+        };
+
+        let sign = &mut self.per_color[color_index].sign_counts[0][sign_index];
         let bits = &mut self.counts_dc[len_abs_mxm_clamp].residual_noise_counts;
 
         (exp, sign, bits)

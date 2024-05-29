@@ -25,8 +25,8 @@ pub struct ProbabilityTables {
 
 pub struct PredictDCResult {
     pub predicted_dc: i32,
-    pub uncertainty: i16,
-    pub uncertainty2: i16,
+    pub uncertainty: i32,
+    pub uncertainty2: i32,
     pub advanced_predict_dc_pixels_sans_dc: AlignedBlock,
 }
 
@@ -311,7 +311,7 @@ impl ProbabilityTables {
         }
 
         let avgmed: i32 = (avg_vertical + avg_horizontal) >> 1;
-        let uncertainty_val = ((i32::from(max_dc) - i32::from(min_dc)) >> 3) as i16;
+        let uncertainty_val = (i32::from(max_dc) - i32::from(min_dc)) >> 3;
         avg_horizontal -= avgmed;
         avg_vertical -= avgmed;
 
@@ -320,7 +320,7 @@ impl ProbabilityTables {
             far_afield_value = avg_horizontal;
         }
 
-        let uncertainty2_val = (far_afield_value >> 3) as i16;
+        let uncertainty2_val = far_afield_value >> 3;
 
         return PredictDCResult {
             predicted_dc: (avgmed / q0 + 4) >> 3,
