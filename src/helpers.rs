@@ -78,7 +78,7 @@ pub const fn bitn(c: u16, n: u16) -> u8 {
 }
 
 #[inline(always)]
-pub fn calc_sign_index(val: i32) -> usize {
+pub fn calc_sign_index(val: i16) -> usize {
     if val == 0 {
         0
     } else {
