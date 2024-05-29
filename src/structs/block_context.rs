@@ -9,8 +9,6 @@ use super::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use super::probability_tables::ProbabilityTables;
 
 pub struct BlockContext {
-    block_width: i32,
-
     cur_block_index: i32,
     above_block_index: i32,
 
@@ -32,30 +30,15 @@ impl BlockContext {
         self.cur_block_index
     }
 
-    pub fn next(&mut self, has_more: bool) -> i32 {
+    // as each new line BlockContext is set by `off_y`, no edge cases with dereferencing
+    // out of bounds indices is possilbe, therefore no special treatment is needed
+    pub fn next(&mut self) -> i32 {
         self.cur_block_index += 1;
-
-        let retval = self.cur_block_index;
-
-        if retval < self.block_width {
-            self.above_block_index = self.cur_block_index + self.block_width;
-        } else {
-            self.above_block_index = self.cur_block_index - self.block_width;
-        }
-
+        self.above_block_index += 1;
         self.cur_neighbor_summary_index += 1;
         self.above_neighbor_summary_index += 1;
 
-        if !has_more {
-            let cur_row_first = self.cur_neighbor_summary_index < self.above_neighbor_summary_index;
-            if cur_row_first {
-                self.above_neighbor_summary_index -= self.block_width * 2;
-            } else {
-                self.cur_neighbor_summary_index -= self.block_width * 2;
-            }
-        }
-
-        return retval;
+        self.cur_block_index
     }
 
     pub fn new(
@@ -63,10 +46,8 @@ impl BlockContext {
         above_block_index: i32,
         cur_neighbor_summary_index: i32,
         above_neighbor_summary_index: i32,
-        image_data: &BlockBasedImage,
     ) -> Self {
         return BlockContext {
-            block_width: image_data.get_block_width(),
             cur_block_index,
             above_block_index,
             cur_neighbor_summary_index,
