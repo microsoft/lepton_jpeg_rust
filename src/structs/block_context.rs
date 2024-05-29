@@ -12,8 +12,8 @@ pub struct BlockContext {
     cur_block_index: i32,
     above_block_index: i32,
 
-    cur_num_non_zeros_index: i32,
-    above_num_non_zero_index: i32,
+    cur_neighbor_summary_index: i32,
+    above_neighbor_summary_index: i32,
 }
 pub struct NeighborData<'a> {
     pub above: &'a AlignedBlock,
@@ -35,8 +35,8 @@ impl BlockContext {
     pub fn next(&mut self) -> i32 {
         self.cur_block_index += 1;
         self.above_block_index += 1;
-        self.cur_num_non_zeros_index += 1;
-        self.above_num_non_zero_index += 1;
+        self.cur_neighbor_summary_index += 1;
+        self.above_neighbor_summary_index += 1;
 
         self.cur_block_index
     }
@@ -44,14 +44,14 @@ impl BlockContext {
     pub fn new(
         cur_block_index: i32,
         above_block_index: i32,
-        cur_num_non_zeros_index: i32,
-        above_num_non_zero_index: i32,
+        cur_neighbor_summary_index: i32,
+        above_neighbor_summary_index: i32,
     ) -> Self {
         return BlockContext {
             cur_block_index,
             above_block_index,
-            cur_num_non_zeros_index,
-            above_num_non_zero_index,
+            cur_neighbor_summary_index,
+            above_neighbor_summary_index,
         };
     }
 
@@ -83,12 +83,12 @@ impl BlockContext {
                 &EMPTY_BLOCK
             },
             neighbor_context_above: if ALL_PRESENT || pt.is_above_present() {
-                &neighbor_summary[self.above_num_non_zero_index as usize]
+                &neighbor_summary[self.above_neighbor_summary_index as usize]
             } else {
                 &NEIGHBOR_DATA_EMPTY
             },
             neighbor_context_left: if ALL_PRESENT || pt.is_left_present() {
-                &neighbor_summary[(self.cur_num_non_zeros_index - 1) as usize]
+                &neighbor_summary[(self.cur_neighbor_summary_index - 1) as usize]
             } else {
                 &NEIGHBOR_DATA_EMPTY
             },
@@ -100,6 +100,6 @@ impl BlockContext {
         neighbor_summary_cache: &mut [NeighborSummary],
         neighbor_summary: NeighborSummary,
     ) {
-        neighbor_summary_cache[self.cur_num_non_zeros_index as usize] = neighbor_summary;
+        neighbor_summary_cache[self.cur_neighbor_summary_index as usize] = neighbor_summary;
     }
 }

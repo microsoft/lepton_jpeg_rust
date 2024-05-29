@@ -4,26 +4,19 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use bytemuck::cast;
-use wide::i16x8;
-
 use crate::consts::*;
 use crate::helpers::*;
 
-use super::block_based_image::AlignedBlock;
 use super::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
-    icos_idct_edge8192_dequantized_x: [i32; 64],
-    icos_idct_edge8192_dequantized_y: [i32; 64],
     quantization_table: [u16; 64],
-
-    /// quantization_table transposed (as 8x8 matrix rotated by 90 degrees).
-    /// Important that this is am AlignedBlock so that the compiler can use SIMD instructions
-    quantization_table_transposed: AlignedBlock,
-    freq_max: [u16; 64],
-    bit_len_freq_max: [u8; 64],
-    min_noise_threshold: [u8; 64],
+    quantization_table_transposed: [u16; 64],
+    // Values for discrimination between "regular" and "noise" part of
+    // edge AC coefficients, used in `read/write_edge_coefficient`.
+    // Calculated using approximate maximal magnitudes
+    // of these coefficients `FREQ_MAX`
+    min_noise_threshold: [u8; 14],
 }
 
 impl QuantizationTables {
@@ -35,71 +28,45 @@ impl QuantizationTables {
 
     pub fn new_from_table(quantization_table: &[u16; 64]) -> Self {
         let mut retval = QuantizationTables {
-            icos_idct_edge8192_dequantized_x: [0; 64],
-            icos_idct_edge8192_dequantized_y: [0; 64],
-            quantization_table_transposed: AlignedBlock::default(),
             quantization_table: [0; 64],
-            freq_max: [0; 64],
-            bit_len_freq_max: [0; 64],
-            min_noise_threshold: [0; 64],
+            quantization_table_transposed: [0; 64],
+            min_noise_threshold: [0; 14],
         };
 
-        retval.set_quantization_table(quantization_table);
-
-        return retval;
-    }
-
-    fn set_quantization_table(&mut self, quantization_table: &[u16; 64]) {
-        for i in 0..64 {
-            self.quantization_table[i] = quantization_table[RASTER_TO_ZIGZAG[i] as usize];
-        }
-
-        // transpose the quantization table as an 8x8 block.
-        // i16x8 has a transpose method for doing this with an array of 8 i16x8s, so
-        // cast it as that and then cast the result back to an AlignedBlock
-        self.quantization_table_transposed =
-            AlignedBlock::new(cast(i16x8::transpose(cast(self.quantization_table))));
-
         for pixel_row in 0..8 {
-            for i in 0..8 {
-                self.icos_idct_edge8192_dequantized_x[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i * 8]
-                    * (self.quantization_table[(i * 8) + pixel_row] as i32);
-                self.icos_idct_edge8192_dequantized_y[(pixel_row * 8) + i] = ICOS_BASED_8192_SCALED
-                    [i * 8]
-                    * (self.quantization_table[(pixel_row * 8) + i] as i32);
+            for pixel_column in 0..8 {
+                let coord = (pixel_row * 8) + pixel_column;
+                let coord_tr = (pixel_column * 8) + pixel_row;
+                let q = quantization_table[RASTER_TO_ZIGZAG[coord] as usize];
+
+                retval.quantization_table[coord] = q;
+                retval.quantization_table_transposed[coord_tr] = q;
             }
         }
 
-        for coord in 0..64 {
-            self.freq_max[coord] = FREQ_MAX[coord]
-                .wrapping_add(self.quantization_table[coord])
-                .wrapping_sub(1);
-            if self.quantization_table[coord] != 0 {
-                self.freq_max[coord] /= self.quantization_table[coord];
-            }
+        for i in 0..14 {
+            let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
+            if retval.quantization_table[coord] < 9 {
+                let mut freq_max = FREQ_MAX[i] + retval.quantization_table[coord] - 1;
+                if retval.quantization_table[coord] != 0 {
+                    freq_max /= retval.quantization_table[coord];
+                }
 
-            let max_len = u16_bit_length(self.freq_max[coord]) as u8;
-            self.bit_len_freq_max[coord] = max_len;
-            if max_len > RESIDUAL_NOISE_FLOOR as u8 {
-                self.min_noise_threshold[coord] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                let max_len = u16_bit_length(freq_max) as u8;
+                if max_len > RESIDUAL_NOISE_FLOOR as u8 {
+                    retval.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
+                }
             }
         }
-    }
 
-    pub fn get_icos_idct_edge8192_dequantized_x(&self) -> &[i32] {
-        &self.icos_idct_edge8192_dequantized_x
-    }
-
-    pub fn get_icos_idct_edge8192_dequantized_y(&self) -> &[i32] {
-        &self.icos_idct_edge8192_dequantized_y
+        retval
     }
 
     pub fn get_quantization_table(&self) -> &[u16; 64] {
         &self.quantization_table
     }
 
-    pub fn get_quantization_table_transposed(&self) -> &AlignedBlock {
+    pub fn get_quantization_table_transposed(&self) -> &[u16; 64] {
         &self.quantization_table_transposed
     }
 
