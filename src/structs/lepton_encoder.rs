@@ -5,11 +5,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 use anyhow::{Context, Result};
+use bytemuck::cast;
+use wide::i32x8;
 
 use std::cmp;
 use std::io::Write;
 
-use crate::consts::UNZIGZAG_49;
+use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::ExitCode;
@@ -54,7 +56,7 @@ pub fn lepton_encode_row_range<W: Write>(
         let num_non_zeros_length = (image_data[i].get_block_width() << 1) as usize;
 
         let mut neighbor_summary_component = Vec::new();
-        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::new());
+        neighbor_summary_component.resize(num_non_zeros_length, NeighborSummary::default());
 
         neighbor_summary_cache.push(neighbor_summary_component);
     }
@@ -296,7 +298,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
     #[cfg(feature = "detailed_tracing")]
-    trace!(
+    log::trace!(
         "block {0}:{1:x}",
         context.get_here_index(),
         block.get_hash()
@@ -325,7 +327,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     pt: &ProbabilityTables,
     neighbors_data: &NeighborData,
-    here: &AlignedBlock,
+    here_tr: &AlignedBlock,
     model: &mut Model,
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
@@ -341,7 +343,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // store how many of these coefficients are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
-    let num_non_zeros_7x7 = here.get_count_of_non_zeros_7x7();
+    let num_non_zeros_7x7 = here_tr.get_count_of_non_zeros_7x7();
 
     model_per_color
         .write_non_zero_7x7_count(
@@ -358,22 +360,21 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
 
-    let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
-        neighbors_data.left,
-        neighbors_data.above,
-        neighbors_data.above_left,
-    );
-
     if num_non_zeros_7x7_remaining > 0 {
+        let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
+            neighbors_data.left,
+            neighbors_data.above,
+            neighbors_data.above_left,
+        );
         // calculate the bin we are using for the number of non-zeros
         let mut num_non_zeros_remaining_bin =
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        for (zig49, &coord) in UNZIGZAG_49.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord as usize]);
+        for (zig49, &coord_tr) in UNZIGZAG_49_TR.iter().enumerate() {
+            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr as usize]);
 
-            let coef = here.get_coefficient(coord as usize);
+            let coef = here_tr.get_coefficient(coord_tr as usize);
 
             model_per_color
                 .write_coef(
@@ -388,8 +389,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let bx = u32::from(coord) & 7;
-                let by = u32::from(coord) >> 3;
+                let by = u32::from(coord_tr) & 7;
+                let bx = u32::from(coord_tr) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
@@ -408,11 +409,12 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         }
     }
 
-    // next step is the edge coefficients
-    encode_edge::<W, ALL_PRESENT>(
-        neighbors_data.left,
-        neighbors_data.above,
-        here,
+    // Next step is the edge coefficients.
+    // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
+    // and transposed raster of dequantized DCT coefficients with 0 in DC
+    let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
+        neighbors_data,
+        &here_tr,
         model_per_color,
         bool_writer,
         qt,
@@ -424,15 +426,17 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     .context(here!())?;
 
     // finally the DC coefficient (at 0,0)
-    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&here, qt, neighbors_data, features);
+    let q0 = qt.get_quantization_table()[0] as i32;
+    let predicted_val =
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
-        here.get_dc(),
+        here_tr.get_dc(),
         false,
         predicted_val.predicted_dc,
     );
 
-    if here.get_dc() as i32
+    if here_tr.get_dc() as i32
         != ProbabilityTables::adv_predict_or_unpredict_dc(
             avg_predicted_dc as i16,
             true,
@@ -453,11 +457,12 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // neighbor summary is used as a predictor for the next block
-    let neighbor_summary = NeighborSummary::calculate_neighbor_summary(
+    let neighbor_summary = NeighborSummary::new(
         &predicted_val.advanced_predict_dc_pixels_sans_dc,
-        qt,
-        here,
+        here_tr.get_dc() as i32 * q0,
         num_non_zeros_7x7,
+        horiz_pred,
+        vert_pred,
         features,
     );
 
@@ -466,9 +471,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 fn encode_edge<W: Write, const ALL_PRESENT: bool>(
-    left: &AlignedBlock,
-    above: &AlignedBlock,
-    here: &AlignedBlock,
+    neighbors_data: &NeighborData,
+    here_tr: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
@@ -476,32 +480,50 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     num_non_zeros_7x7: u8,
     eob_x: u8,
     eob_y: u8,
-) -> Result<()> {
+) -> Result<([i32x8; 8], i32x8, i32x8)> {
+    let q_tr = qt.get_quantization_table_transposed();
+
+    let mut raster_co = [0i32; 64];
+    for i in 1..64 {
+        raster_co[i] = i32::from(here_tr.get_coefficient(i)) * i32::from(q_tr[i]);
+    }
+
+    let raster: [i32x8; 8] = cast(raster_co);
+
+    // get predictors for edge coefficients of the current block
+    let (curr_horiz_pred, curr_vert_pred) =
+        ProbabilityTables::predict_current_edges(neighbors_data, &raster);
+
+    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+
     encode_one_edge::<W, ALL_PRESENT, true>(
-        left,
-        above,
-        here,
+        here_tr,
         model_per_color,
         bool_writer,
+        &curr_horiz_pred.to_array(),
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
         eob_x,
     )
     .context(here!())?;
+
     encode_one_edge::<W, ALL_PRESENT, false>(
-        left,
-        above,
-        here,
+        here_tr,
         model_per_color,
         bool_writer,
+        &curr_vert_pred.to_array(),
         qt,
         pt,
-        num_non_zeros_7x7,
+        num_non_zeros_bin,
         eob_y,
     )
     .context(here!())?;
-    Ok(())
+
+    // prepare predictors for edge coefficients of the blocks below and to the right of current one
+    let (next_horiz_pred, next_vert_pred) = ProbabilityTables::predict_next_edges(&raster);
+
+    Ok((raster, next_horiz_pred, next_vert_pred))
 }
 
 fn count_non_zero(v: i16) -> u8 {
@@ -513,19 +535,18 @@ fn count_non_zero(v: i16) -> u8 {
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
-    left: &AlignedBlock,
-    above: &AlignedBlock,
     block: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
+    pred: &[i32; 8],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
+    num_non_zeros_bin: u8,
     est_eob: u8,
 ) -> Result<()> {
     let mut num_non_zeros_edge;
 
-    if HORIZONTAL {
+    if !HORIZONTAL {
         num_non_zeros_edge = count_non_zero(block.get_coefficient(1))
             + count_non_zero(block.get_coefficient(2))
             + count_non_zero(block.get_coefficient(3))
@@ -547,7 +568,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
             est_eob,
-            num_non_zeros_7x7,
+            num_non_zeros_bin,
             num_non_zeros_edge,
         )
         .context(here!())?;
@@ -556,31 +577,30 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     let mut zig15offset;
 
     if HORIZONTAL {
-        delta = 1;
+        delta = 8;
         zig15offset = 0;
     } else {
-        delta = 8;
+        delta = 1;
         zig15offset = 7;
     }
 
-    let mut coord = delta;
+    let mut coord_tr = delta;
+
     for _lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
         }
 
-        let best_prior = pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(
-            qt, coord, &block, &above, &left,
-        );
+        let best_prior =
+            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
 
-        let coef = block.get_coefficient(coord);
+        let coef = block.get_coefficient(coord_tr);
 
         model_per_color
             .write_edge_coefficient(
                 bool_writer,
                 qt,
                 coef,
-                coord,
                 zig15offset,
                 num_non_zeros_edge,
                 best_prior,
@@ -591,7 +611,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_edge -= 1;
         }
 
-        coord += delta;
+        coord_tr += delta;
         zig15offset += 1;
     }
 
@@ -883,19 +903,21 @@ fn roundtrip_read_write_coefficients(
     ) -> NeighborSummary {
         let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
         let n = NeighborData {
-            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            above_left: &above_left.unwrap_or(&EMPTY_BLOCK).transpose(),
             neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
             neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
         };
+
+        let here_tr = here.transpose();
 
         // call the right version depending on if we have all neighbors or not
         if left.is_some() && above.is_some() {
             write_coefficient_block::<true, _>(
                 &pt,
                 &n,
-                &here,
+                &here_tr,
                 write_model,
                 bool_writer,
                 qt,
@@ -906,7 +928,7 @@ fn roundtrip_read_write_coefficients(
             write_coefficient_block::<false, _>(
                 &pt,
                 &n,
-                &here,
+                &here_tr,
                 write_model,
                 bool_writer,
                 qt,
@@ -928,21 +950,23 @@ fn roundtrip_read_write_coefficients(
     ) -> (AlignedBlock, NeighborSummary) {
         let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
         let n = NeighborData {
-            above: above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            left: left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK),
-            above_left: above_left.unwrap_or(&EMPTY_BLOCK),
+            above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
+            above_left: &above_left.unwrap_or(&EMPTY_BLOCK).transpose(),
             neighbor_context_above: above.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
             neighbor_context_left: left.map(|x| x.1).unwrap_or(&NEIGHBOR_DATA_EMPTY),
         };
 
         // call the right version depending on if we have all neighbors or not
-        if left.is_some() && above.is_some() {
+        let r = if left.is_some() && above.is_some() {
             read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
                 .unwrap()
         } else {
             read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
                 .unwrap()
-        }
+        };
+
+        (r.0.transpose(), r.1)
     }
 
     // overall idea here is to call write and read on all possible permutations of neighbors
@@ -1016,8 +1040,12 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_above_left_block.get_block(), above_left.get_block());
-    assert_eq!(r_above_left_ns, w_above_left_ns);
+    assert_eq!(
+        r_above_left_block.get_block(),
+        above_left.get_block(),
+        "above_left"
+    );
+    assert_eq!(r_above_left_ns, w_above_left_ns, "above_left_ns");
 
     let (r_above_block, r_above_ns) = call_read_coefficient_block(
         Some((&r_above_left_block, &w_above_left_ns)),
@@ -1029,8 +1057,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_above_block.get_block(), above.get_block());
-    assert_eq!(r_above_ns, w_above_ns);
+    assert_eq!(r_above_block.get_block(), above.get_block(), "above");
+    assert_eq!(r_above_ns, w_above_ns, "above_ns");
 
     let (r_left_block, r_left_ns) = call_read_coefficient_block(
         None,
@@ -1042,8 +1070,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_left_block.get_block(), left.get_block());
-    assert_eq!(r_left_ns, w_left_ns);
+    assert_eq!(r_left_block.get_block(), left.get_block(), "left");
+    assert_eq!(r_left_ns, w_left_ns, "left_ns");
 
     let (r_here, r_here_ns) = call_read_coefficient_block(
         Some((&r_left_block, &r_left_ns)),
@@ -1055,8 +1083,8 @@ fn roundtrip_read_write_coefficients(
         &features,
     );
 
-    assert_eq!(r_here.get_block(), here.get_block());
-    assert_eq!(r_here_ns, w_here_ns);
+    assert_eq!(r_here.get_block(), here.get_block(), "here");
+    assert_eq!(r_here_ns, w_here_ns, "here_ns");
 
     assert_eq!(write_model.model_checksum(), read_model.model_checksum());
 

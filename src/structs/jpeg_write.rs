@@ -196,7 +196,7 @@ fn recode_one_mcu_row<W: Write>(
 
             if jf.jpeg_type == JPegType::Sequential {
                 // unzigzag
-                let mut block = current_block.zigzag();
+                let mut block = current_block.zigzag_from_transposed();
 
                 // diff coding for dc
                 let dc = block.get_block()[0];
@@ -219,7 +219,7 @@ fn recode_one_mcu_row<W: Write>(
                     // ---> succesive approximation first stage <---
 
                     // diff coding & bitshifting for dc
-                    let tmp = current_block.get_coefficient_zigzag(0) >> jf.cs_sal;
+                    let tmp = current_block.get_transposed_from_zigzag(0) >> jf.cs_sal;
                     let v = tmp - lastdc[state.get_cmp()];
                     lastdc[state.get_cmp()] = tmp;
 
@@ -236,7 +236,7 @@ fn recode_one_mcu_row<W: Write>(
 
                     // fetch bit from current bitplane
                     huffw.write(
-                        ((current_block.get_coefficient_zigzag(0) >> jf.cs_sal) & 1) as u32,
+                        ((current_block.get_transposed_from_zigzag(0) >> jf.cs_sal) & 1) as u32,
                         1,
                     );
                 }
@@ -250,7 +250,7 @@ fn recode_one_mcu_row<W: Write>(
                 let mut block = [0i16; 64];
                 for bpos in jf.cs_from..jf.cs_to + 1 {
                     block[usize::from(bpos)] = div_pow2(
-                        current_block.get_coefficient_zigzag(usize::from(bpos)),
+                        current_block.get_transposed_from_zigzag(usize::from(bpos)),
                         jf.cs_sal,
                     );
                 }

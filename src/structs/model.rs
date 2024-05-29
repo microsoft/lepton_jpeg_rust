@@ -285,11 +285,11 @@ impl ModelPerColor {
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
         est_eob: u8,
-        num_non_zeros_7x7: u8,
+        num_non_zeros_bin: u8,
         num_non_zeros_edge: u8,
     ) -> Result<()> {
         let prob_edge_eob =
-            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
 
         return bool_writer
             .put_grid(
@@ -317,10 +317,10 @@ impl ModelPerColor {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         est_eob: u8,
-        num_non_zeros_7x7: u8,
+        num_non_zeros_bin: u8,
     ) -> Result<u8> {
         let prob_edge_eob =
-            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_7x7);
+            self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
 
         return Ok(bool_reader
             .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
@@ -331,7 +331,6 @@ impl ModelPerColor {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
-        coord: usize,
         zig15offset: usize,
         num_non_zeros_edge: u8,
         best_prior: i32,
@@ -374,7 +373,7 @@ impl ModelPerColor {
             coef = 1;
 
             if length > 1 {
-                let min_threshold: i32 = qt.get_min_noise_threshold(coord).into();
+                let min_threshold: i32 = qt.get_min_noise_threshold(zig15offset).into();
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
@@ -427,7 +426,6 @@ impl ModelPerColor {
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         coef: i16,
-        coord: usize,
         zig15offset: usize,
         num_non_zeros_edge: u8,
         best_prior: i32,
@@ -475,7 +473,7 @@ impl ModelPerColor {
             )?;
 
             if length > 1 {
-                let min_threshold = i32::from(qt.get_min_noise_threshold(coord));
+                let min_threshold = i32::from(qt.get_min_noise_threshold(zig15offset));
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {
@@ -549,14 +547,12 @@ impl ModelPerColor {
     fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
         &mut self,
         est_eob: u8,
-        num_nonzeros: u8,
+        num_nonzeros_bin: u8,
     ) -> &mut [Branch; 8] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
-                [(num_nonzeros as usize + 3) / 7];
+            return &mut self.num_non_zeros_counts8x1[est_eob as usize][num_nonzeros_bin as usize];
         } else {
-            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
-                [(num_nonzeros as usize + 3) / 7];
+            return &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize];
         }
     }
 }

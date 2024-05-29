@@ -193,9 +193,9 @@ fn main_with_result() -> anyhow::Result<()> {
                     print!("dpos={0} ", dpos);
                     let block = image.get_block(dpos);
 
-                    print!("{0}", block.get_coefficient_zigzag(0));
+                    print!("{0}", block.get_transposed_from_zigzag(0));
                     for i in 1..64 {
-                        print!(",{0}", block.get_coefficient_zigzag(i));
+                        print!(",{0}", block.get_transposed_from_zigzag(i));
                     }
                     println!();
                 }

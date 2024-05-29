@@ -4,8 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use bytemuck::{cast, cast_ref};
-use wide::{i16x8, i32x8, u16x8};
+use bytemuck::cast;
+use wide::{i16x8, i32x8};
 
 use super::block_based_image::AlignedBlock;
 
@@ -30,42 +30,17 @@ const W3MW5: i32 = _W3 - _W5;
 const R2: i32 = 181; // 256/sqrt(2)
 
 #[inline(always)]
-pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
-    let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
-    i32x8::from_u16x8(rows[offset])
-}
+pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
+    let t = *block;
 
-#[inline(never)]
-pub fn run_idct<const IGNORE_DC: bool>(
-    block: &AlignedBlock,
-    q_transposed: &AlignedBlock,
-) -> AlignedBlock {
-    // first transpose as 16 bit values, then cast up to 32 bit for multiplications
-    let v: &[i16x8; 8] = cast_ref(block.get_block());
-    let t = i16x8::transpose(*v);
-
-    let r0 = i32x8::from_i16x8(if IGNORE_DC {
-        t[0] & i16x8::new([0, -1, -1, -1, -1, -1, -1, -1])
-    } else {
-        t[0]
-    });
-    let r1 = i32x8::from_i16x8(t[1]);
-    let r2 = i32x8::from_i16x8(t[2]);
-    let r3 = i32x8::from_i16x8(t[3]);
-    let r4 = i32x8::from_i16x8(t[4]);
-    let r5 = i32x8::from_i16x8(t[5]);
-    let r6 = i32x8::from_i16x8(t[6]);
-    let r7 = i32x8::from_i16x8(t[7]);
-
-    // multiply by quant table (get it already transposed so we can load it quickly)
-    let mut xv0 = ((r0 * get_q(0, q_transposed)) << 11) + 128;
-    let mut xv1 = r1 * get_q(1, q_transposed);
-    let mut xv2 = r2 * get_q(2, q_transposed);
-    let mut xv3 = r3 * get_q(3, q_transposed);
-    let mut xv4 = (r4 * get_q(4, q_transposed)) << 11;
-    let mut xv5 = r5 * get_q(5, q_transposed);
-    let mut xv6 = r6 * get_q(6, q_transposed);
-    let mut xv7 = r7 * get_q(7, q_transposed);
+    let mut xv0 = (t[0] << 11) + 128;
+    let mut xv1 = t[1];
+    let mut xv2 = t[2];
+    let mut xv3 = t[3];
+    let mut xv4 = t[4] << 11;
+    let mut xv5 = t[5];
+    let mut xv6 = t[6];
+    let mut xv7 = t[7];
 
     // Stage 1.
     let mut xv8 = _W7 * (xv1 + xv7);
@@ -151,6 +126,25 @@ pub fn run_idct<const IGNORE_DC: bool>(
         i16x8::from_i32x8_truncate((yv2 - yv6) >> 11),
         i16x8::from_i32x8_truncate((yv3 - yv4) >> 11),
     ]))
+}
+
+#[cfg(test)]
+use bytemuck::cast_ref;
+
+#[cfg(test)]
+#[inline(always)]
+pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    use wide::u16x8;
+
+    let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_u16x8(rows[offset])
+}
+
+#[cfg(test)]
+#[inline(always)]
+pub fn get_c(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+    let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
+    i32x8::from_i16x8(rows[offset])
 }
 
 #[cfg(test)]
@@ -302,29 +296,21 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
         }
     }
 
-    {
-        let outp = run_idct::<true>(
-            test_data,
-            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
-        );
+    let q = AlignedBlock::new(cast(*test_q));
+    let data_tr = test_data.transpose();
+    let q_tr = q.transpose();
 
-        let mut outp2 = [0; 64];
-        run_idct_old(test_data, test_q, &mut outp2, true);
-
-        assert_eq!(*outp.get_block(), outp2);
+    let mut raster: [i32x8; 8] = [0.into(); 8]; // transposed
+    for col in 0..8 {
+        raster[col] = get_c(col, &data_tr) * get_q(col, &q_tr);
     }
 
-    {
-        let outp = run_idct::<false>(
-            test_data,
-            &AlignedBlock::new(cast(i16x8::transpose(cast(*test_q)))),
-        );
+    let outp = run_idct(&raster);
 
-        let mut outp2 = [0; 64];
-        run_idct_old(test_data, test_q, &mut outp2, false);
+    let mut outp2 = [0; 64];
+    run_idct_old(test_data, test_q, &mut outp2, false);
 
-        assert_eq!(*outp.get_block(), outp2);
-    }
+    assert_eq!(*outp.get_block(), outp2);
 }
 
 /// test with a simple block to catch obvious mistakes

@@ -4,9 +4,11 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use bytemuck::{cast, cast_ref};
 use log::info;
+use wide::i16x8;
 
-use crate::consts::ZIGZAG_TO_RASTER;
+use crate::consts::ZIGZAG_TO_TRANSPOSED;
 
 use super::{block_context::BlockContext, jpeg_header::JPegHeader};
 
@@ -192,6 +194,17 @@ impl AlignedBlock {
         AlignedBlock { raw_data: block }
     }
 
+    #[allow(dead_code)]
+    pub fn as_i16x8(&self, index: usize) -> i16x8 {
+        let v: &[i16x8; 8] = cast_ref(&self.raw_data);
+        v[index]
+    }
+
+    #[allow(dead_code)]
+    pub fn transpose(&self) -> AlignedBlock {
+        return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
+    }
+
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[0];
     }
@@ -202,10 +215,10 @@ impl AlignedBlock {
 
     /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
     #[unroll_for_loops]
-    pub fn zigzag(&self) -> AlignedBlock {
+    pub fn zigzag_from_transposed(&self) -> AlignedBlock {
         let mut block = AlignedBlock::default();
         for i in 0..64 {
-            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_RASTER[i])];
+            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[i])];
         }
         return block;
     }
@@ -251,11 +264,24 @@ impl AlignedBlock {
         self.raw_data[index] = v;
     }
 
-    pub fn set_coefficient_zigzag(&mut self, index: usize, v: i16) {
-        self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])] = v;
+    pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
+        self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
     }
 
-    pub fn get_coefficient_zigzag(&self, index: usize) -> i16 {
-        return self.raw_data[usize::from(ZIGZAG_TO_RASTER[index])];
+    pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
+        return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];
+    }
+
+    pub fn from_stride(&self, offset: usize, stride: usize) -> i16x8 {
+        return i16x8::new([
+            self.raw_data[offset],
+            self.raw_data[offset + (1 * stride)],
+            self.raw_data[offset + (2 * stride)],
+            self.raw_data[offset + (3 * stride)],
+            self.raw_data[offset + (4 * stride)],
+            self.raw_data[offset + (5 * stride)],
+            self.raw_data[offset + (6 * stride)],
+            self.raw_data[offset + (7 * stride)],
+        ]);
     }
 }
