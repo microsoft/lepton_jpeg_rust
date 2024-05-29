@@ -364,7 +364,10 @@ impl ModelPerColor {
 
         let mut coef = 0;
         if length != 0 {
-            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
+            // best_prior in the initial Lepton implementation is stored as i32,
+            // but the sign here is taken from its truncated i16 value
+            let sign =
+                &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
             let neg = !bool_reader
                 .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
@@ -464,7 +467,10 @@ impl ModelPerColor {
         )?;
 
         if coef != 0 {
-            let sign = &mut self.sign_counts[calc_sign_index(best_prior)][best_prior_bit_len];
+            // best_prior in the initial Lepton implementation is stored as i32,
+            // but the sign here is taken from its truncated i16 value
+            let sign =
+                &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
             bool_writer.put(
                 coef >= 0,
@@ -622,8 +628,8 @@ impl Model {
 
         let exp = &mut self.counts_dc[len_abs_mxm_clamp].exponent_counts
             [len_abs_offset_to_closest_edge as usize];
-        let sign = &mut self.per_color[color_index].sign_counts[0]
-            [calc_sign_index(uncertainty2 as i32) + 1]; // +1 to separate from sign_counts[0][0]
+        let sign =
+            &mut self.per_color[color_index].sign_counts[0][calc_sign_index(uncertainty2) + 1]; // +1 to separate from sign_counts[0][0]
         let bits = &mut self.counts_dc[len_abs_mxm_clamp].residual_noise_counts;
 
         (exp, sign, bits)
