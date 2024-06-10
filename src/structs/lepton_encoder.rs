@@ -586,13 +586,13 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    for _lane in 0..7 {
+    for lane in 0..7 {
         if num_non_zeros_edge == 0 {
             break;
         }
 
         let best_prior =
-            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
+            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, lane, pred);
 
         let coef = block.get_coefficient(coord_tr);
 
