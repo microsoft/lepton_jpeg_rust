@@ -13,9 +13,16 @@ use super::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
+
+    /// transposed version of quantization table
     quantization_table_transposed: [u16; 64],
 
+    /// precalculated divisors * 8192 for the top row of the quantization table for final step of lak calculation
+    /// compiler sees non-zero to avoid having to check for division-by-zero
     quantization_table_divisors_horiz: [NonZeroI32; 8],
+
+    /// precalculated divisors * 8192 for the left column of the quantization table for final step of lak calculation
+    /// compiler sees non-zero to avoid having to check for division-by-zero
     quantization_table_divisors_vert: [NonZeroI32; 8],
 
     // Values for discrimination between "regular" and "noise" part of
