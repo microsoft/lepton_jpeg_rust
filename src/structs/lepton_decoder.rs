@@ -475,7 +475,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
-        &curr_horiz_pred.to_array(),
+        &curr_horiz_pred,
         here_mut,
         qt,
         pt,
@@ -486,7 +486,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     decode_one_edge::<R, ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
-        &curr_vert_pred.to_array(),
+        &curr_vert_pred,
         here_mut,
         qt,
         pt,
@@ -504,7 +504,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
 fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
     bool_reader: &mut VPXBoolReader<R>,
-    pred: &[i32; 8],
+    pred: &i32x8,
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -529,7 +529,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    for lane in 0..7 {
+    for lane in 1..8 {
         if num_non_zeros_edge == 0 {
             break;
         }

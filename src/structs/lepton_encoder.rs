@@ -500,7 +500,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         here_tr,
         model_per_color,
         bool_writer,
-        &curr_horiz_pred.to_array(),
+        &curr_horiz_pred,
         qt,
         pt,
         num_non_zeros_bin,
@@ -512,7 +512,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         here_tr,
         model_per_color,
         bool_writer,
-        &curr_vert_pred.to_array(),
+        &curr_vert_pred,
         qt,
         pt,
         num_non_zeros_bin,
@@ -538,7 +538,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     block: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
     bool_writer: &mut VPXBoolWriter<W>,
-    pred: &[i32; 8],
+    pred: &i32x8,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_bin: u8,
@@ -586,7 +586,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    for lane in 0..7 {
+    for lane in 1..8 {
         if num_non_zeros_edge == 0 {
             break;
         }

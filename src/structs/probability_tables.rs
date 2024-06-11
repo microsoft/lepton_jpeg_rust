@@ -209,7 +209,7 @@ impl ProbabilityTables {
         &self,
         qt: &QuantizationTables,
         lane: usize,
-        pred: &[i32; 8],
+        pred: &i32x8,
     ) -> i32 {
         if !ALL_PRESENT
             && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
@@ -217,7 +217,7 @@ impl ProbabilityTables {
             return 0;
         }
 
-        pred[lane + 1] / qt.get_quantization_table_divisors::<HORIZONTAL>()[lane + 1].get()
+        pred.as_array_ref()[lane] / qt.get_quantization_table_divisors::<HORIZONTAL>()[lane].get()
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
