@@ -24,6 +24,7 @@ debug=true
 [features]
 default = []
 compression_stats = []
+use_rayon = ["dep:rayon-core"]
 
 [dependencies]
 bytemuck = "1"
@@ -34,8 +35,8 @@ anyhow = { version="1.0", features = ["backtrace"]}
 wide = "0.7"
 log = "0.4"
 simple_logger ="4.0"
-rayon = "1.10"
-unroll="*"
+unroll = "*"
+rayon-core = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1.0"
