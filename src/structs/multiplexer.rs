@@ -62,6 +62,41 @@ impl Write for MultiplexWriter {
     }
 }
 
+// if we are using Rayon, these are the primatives to use to spawn thread pool work items
+#[cfg(feature = "use_rayon")]
+fn my_scope<'scope, OP, R>(op: OP) -> R
+where
+    OP: FnOnce(&rayon_core::Scope<'scope>) -> R,
+{
+    rayon_core::in_place_scope(op)
+}
+
+#[cfg(feature = "use_rayon")]
+fn my_spawn<'scope, BODY>(s: &rayon_core::Scope<'scope>, body: BODY)
+where
+    BODY: FnOnce() + Send + 'scope,
+{
+    s.spawn(|_| body())
+}
+
+// if we are not using Rayon, just spawn regular threads
+#[cfg(not(feature = "use_rayon"))]
+fn my_scope<'env, F, T>(f: F) -> T
+where
+    F: for<'scope> FnOnce(&'scope std::thread::Scope<'scope, 'env>) -> T,
+{
+    std::thread::scope::<'env, F, T>(f)
+}
+
+#[cfg(not(feature = "use_rayon"))]
+fn my_spawn<'scope, F, T>(s: &'scope std::thread::Scope<'scope, '_>, f: F)
+where
+    F: FnOnce() -> T + Send + 'scope,
+    T: Send + 'scope,
+{
+    s.spawn::<F, T>(f);
+}
+
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
 /// on each of them, and collect the output written by each thread to the writer in blocks identified by the thread_id.
 ///
@@ -76,13 +111,12 @@ where
     FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Copy,
     RESULT: Send,
 {
-    let mut thread_results = Vec::<Option<Result<RESULT>>>::new();
-
+    let mut thread_results = Vec::new();
     for _i in 0..num_threads {
         thread_results.push(None);
     }
 
-    rayon::in_place_scope(|s| -> Result<()> {
+    my_scope(|s| -> Result<()> {
         let (tx, rx) = channel();
 
         for (thread_id, result) in thread_results.iter_mut().enumerate() {
@@ -103,7 +137,7 @@ where
                 Ok(r)
             };
 
-            s.spawn(move |_| {
+            my_spawn(s, move || {
                 *result = Some(f());
             });
         }
@@ -254,7 +288,7 @@ where
         thread_results.push(None);
     }
 
-    rayon::in_place_scope(|s| -> Result<()> {
+    my_scope(|s| -> Result<()> {
         let mut channel_to_sender = Vec::new();
 
         // create a channel for each stream and spawn a work item to read from it
@@ -264,7 +298,7 @@ where
             let (tx, rx) = channel();
             channel_to_sender.push(tx);
 
-            s.spawn(move |_| {
+            my_spawn(s, move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id as u8,
