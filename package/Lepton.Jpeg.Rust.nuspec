@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
     <id>Lepton.Jpeg.Rust</id>
-    <version>0.3.5.0</version>
+    <version>0.3.5.1</version>
     <title>Lepton JPEG Compression Rust version binaries and libraries</title>
     <authors>kristofr</authors>
     <owners>kristofr</owners>
