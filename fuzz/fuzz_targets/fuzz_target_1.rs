@@ -11,7 +11,8 @@ fuzz_target!(|data: &[u8]| {
 
     let mut output = Vec::new();
 
-    let use_16bit_dc_estimate = match data.len() % 2 { 0 => false, _ => true };
+    let use_16bit = match data.len() % 2 { 0 => false, _ => true };
+    let accept_invalid_dht = match (data.len() / 2) % 2 { 0 => false, _ => true };
 
     // keep the jpeg dimensions small otherwise the fuzzer gets really slow
     let features = EnabledFeatures {
@@ -19,7 +20,9 @@ fuzz_target!(|data: &[u8]| {
         reject_dqts_with_zeros: true,
         max_jpeg_height: 1024,
         max_jpeg_width: 1024,
-        use_16bit_dc_estimate: use_16bit_dc_estimate,
+        use_16bit_dc_estimate: use_16bit,
+        use_16bit_adv_predict: use_16bit,
+        accept_invalid_dht: accept_invalid_dht
     };
 
     {
