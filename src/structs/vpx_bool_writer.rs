@@ -35,6 +35,7 @@ pub struct VPXBoolWriter<W> {
     writer: W,
     buffer: Vec<u8>,
     model_statistics: Metrics,
+    #[allow(dead_code)]
     pub hash: SimpleHash,
 }
 
