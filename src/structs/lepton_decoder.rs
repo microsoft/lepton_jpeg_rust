@@ -20,17 +20,17 @@ use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::AlignedBlock, block_based_image::BlockBasedImage, model::Model,
     model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
-    row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
+    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
+    vpx_bool_reader::VPXBoolReader,
 };
 
 use super::block_context::{BlockContext, NeighborData};
+use super::probability_tables_set::PTS;
 
 // reads stream from reader and populates image_data with the decoded data
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_decode_row_range<R: Read>(
-    pts: &ProbabilityTablesSet,
     qt: &[QuantizationTables],
     trunc: &TruncateComponents,
     image_data: &mut [BlockBasedImage],
@@ -96,11 +96,11 @@ pub fn lepton_decode_row_range<R: Read>(
         if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &pts.corner[component];
-            middle_model = &pts.top[component];
+            left_model = &PTS.corner[component];
+            middle_model = &PTS.top[component];
         } else {
-            left_model = &pts.mid_left[component];
-            middle_model = &pts.middle[component];
+            left_model = &PTS.mid_left[component];
+            middle_model = &PTS.middle[component];
         }
 
         decode_row_wrapper(

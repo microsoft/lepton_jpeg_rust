@@ -15,7 +15,7 @@ pub struct ProbabilityTablesSet {
     pub middle: [ProbabilityTables; COLOR_CHANNEL_NUM_BLOCK_TYPES],
 }
 
-fn make_probability_tables_tuple(
+const fn make_probability_tables_tuple(
     left: bool,
     above: bool,
 ) -> [ProbabilityTables; COLOR_CHANNEL_NUM_BLOCK_TYPES] {
@@ -26,13 +26,9 @@ fn make_probability_tables_tuple(
     ];
 }
 
-impl ProbabilityTablesSet {
-    pub fn new() -> Self {
-        return ProbabilityTablesSet {
-            corner: make_probability_tables_tuple(false, false),
-            top: make_probability_tables_tuple(true, false),
-            mid_left: make_probability_tables_tuple(false, true),
-            middle: make_probability_tables_tuple(true, true),
-        };
-    }
-}
+pub static PTS: ProbabilityTablesSet = ProbabilityTablesSet {
+    corner: make_probability_tables_tuple(false, false),
+    top: make_probability_tables_tuple(true, false),
+    mid_left: make_probability_tables_tuple(false, true),
+    middle: make_probability_tables_tuple(true, true),
+};
