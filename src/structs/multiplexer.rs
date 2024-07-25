@@ -108,7 +108,7 @@ pub fn multiplex_write<WRITE, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     WRITE: Write,
-    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync,
+    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
     let mut thread_results = Vec::new();

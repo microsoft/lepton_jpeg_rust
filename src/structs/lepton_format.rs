@@ -96,7 +96,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         &lp.truncate_components,
         writer,
         &lp.thread_handoff[..],
-        &image_data[..],
+        image_data,
         enabled_features,
     )
     .context(here!())?;
@@ -421,7 +421,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     colldata: &TruncateComponents,
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
-    image_data: &[BlockBasedImage],
+    image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
@@ -451,6 +451,10 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
         quantization_tables.push(qtables);
     }
 
+    let features_clone = features.clone();
+    let thread_handoffs = thread_handoffs.to_vec();
+    let colldata_clone = colldata.clone();
+
     let mut thread_results = multiplex_write(
         writer,
         thread_handoffs.len(),
@@ -459,15 +463,15 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
 
             let mut range_metrics = lepton_encode_row_range(
                 &quantization_tables[..],
-                image_data,
+                &image_data[..],
                 thread_writer,
                 thread_id as i32,
-                colldata,
+                &colldata_clone,
                 thread_handoffs[thread_id].luma_y_start,
                 thread_handoffs[thread_id].luma_y_end,
                 thread_id == thread_handoffs.len() - 1,
                 true,
-                features,
+                &features_clone,
             )
             .context(here!())?;
 
