@@ -38,6 +38,7 @@ pub struct VPXBoolReader<R> {
     count: i32,
     upstream_reader: R,
     model_statistics: Metrics,
+    #[allow(dead_code)]
     pub hash: SimpleHash,
 }
 
