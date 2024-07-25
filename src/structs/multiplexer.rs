@@ -67,37 +67,28 @@ impl Write for MultiplexWriter {
 
 // if we are using Rayon, these are the primatives to use to spawn thread pool work items
 #[cfg(feature = "use_rayon")]
-fn my_scope<'scope, OP, R>(op: OP) -> R
+fn spawn<FN>(f: FN)
 where
-    OP: FnOnce(&rayon_core::Scope<'scope>) -> R,
+    FN: FnOnce() + Send + 'static,
 {
-    rayon_core::in_place_scope(op)
+    rayon_core::spawn(f);
 }
 
-#[cfg(feature = "use_rayon")]
-fn my_spawn<'scope, BODY>(s: &rayon_core::Scope<'scope>, body: BODY)
+// if we are using Rayon, these are the primatives to use to spawn thread pool work items
+#[cfg(feature = "use_rusty_pool")]
+fn spawn<FN>(f: FN)
 where
-    BODY: FnOnce() + Send + 'scope,
+    FN: FnOnce() + Send + 'static,
 {
-    s.spawn(|_| body())
+    rusty_pool::ThreadPool::default().execute(f);
 }
 
-// if we are not using Rayon, just spawn regular threads
-#[cfg(not(feature = "use_rayon"))]
-fn my_scope<'env, F, T>(f: F) -> T
+#[cfg(all(not(feature = "use_rayon"), not(feature = "use_rusty_pool")))]
+fn spawn<FN>(f: FN)
 where
-    F: for<'scope> FnOnce(&'scope std::thread::Scope<'scope, 'env>) -> T,
+    FN: FnOnce() + Send + 'static,
 {
-    std::thread::scope::<'env, F, T>(f)
-}
-
-#[cfg(not(feature = "use_rayon"))]
-fn my_spawn<'scope, F, T>(s: &'scope std::thread::Scope<'scope, '_>, f: F)
-where
-    F: FnOnce() -> T + Send + 'scope,
-    T: Send + 'scope,
-{
-    s.spawn::<F, T>(f);
+    std::thread::spawn(f);
 }
 
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
@@ -114,89 +105,68 @@ where
     FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
-    let mut thread_results = Vec::new();
-    for _i in 0..num_threads {
-        thread_results.push(None);
+    let (result_sender, result_receiver) = channel();
+
+    let arc_processor = Arc::new(Box::new(processor));
+
+    let (tx, rx) = channel();
+
+    for thread_id in 0..num_threads {
+        let cloned_sender = tx.clone();
+
+        let mut thread_writer = MultiplexWriter {
+            thread_id: thread_id as u8,
+            sender: cloned_sender,
+            buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
+        };
+
+        let cloned_processor = arc_processor.clone();
+
+        let mut f = move || -> Result<RESULT> {
+            let r = cloned_processor(&mut thread_writer, thread_id)?;
+
+            thread_writer.flush().context(here!())?;
+
+            thread_writer.sender.send(Message::Eof).context(here!())?;
+            Ok(r)
+        };
+
+        let cloned_result_sender = result_sender.clone();
+
+        spawn(move || {
+            let _ = cloned_result_sender.send((thread_id, f()));
+        });
     }
 
-    my_scope(|s| -> Result<()> {
-        let (tx, rx) = channel();
+    // drop the sender so that the channel breaks when all the threads exit
+    drop(tx);
 
-        for (thread_id, result) in thread_results.iter_mut().enumerate() {
-            let cloned_sender = tx.clone();
+    // wait to collect work and done messages from all the threads
+    let mut threads_left = num_threads;
 
-            let mut thread_writer = MultiplexWriter {
-                thread_id: thread_id as u8,
-                sender: cloned_sender,
-                buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
-            };
+    while threads_left > 0 {
+        let value = rx.recv().context(here!());
+        match value {
+            Ok(Message::Eof) => {
+                threads_left -= 1;
+            }
+            Ok(Message::WriteBlock(thread_id, b)) => {
+                let l = b.len() - 1;
 
-            let ref_processor = &processor;
-
-            let mut f = move || -> Result<RESULT> {
-                let r = ref_processor(&mut thread_writer, thread_id)?;
-
-                thread_writer.flush().context(here!())?;
-
-                thread_writer.sender.send(Message::Eof).context(here!())?;
-                Ok(r)
-            };
-
-            my_spawn(s, move || {
-                *result = Some(f());
-            });
-        }
-
-        // drop the sender so that the channel breaks when all the threads exit
-        drop(tx);
-
-        // wait to collect work and done messages from all the threads
-        let mut threads_left = num_threads;
-
-        while threads_left > 0 {
-            let value = rx.recv().context(here!());
-            match value {
-                Ok(Message::Eof) => {
-                    threads_left -= 1;
-                }
-                Ok(Message::WriteBlock(thread_id, b)) => {
-                    let l = b.len() - 1;
-
-                    writer.write_u8(thread_id).context(here!())?;
-                    writer.write_u8((l & 0xff) as u8).context(here!())?;
-                    writer.write_u8(((l >> 8) & 0xff) as u8).context(here!())?;
-                    writer.write_all(&b[..]).context(here!())?;
-                }
-                Err(_) => {
-                    // if we get a receiving error here, this means that one of the threads broke
-                    // with an error, and this error will be collected when we join the threads
-                    break;
-                }
+                writer.write_u8(thread_id).context(here!())?;
+                writer.write_u8((l & 0xff) as u8).context(here!())?;
+                writer.write_u8(((l >> 8) & 0xff) as u8).context(here!())?;
+                writer.write_all(&b[..]).context(here!())?;
+            }
+            Err(_) => {
+                // if we get a receiving error here, this means that one of the threads broke
+                // with an error, and this error will be collected when we join the threads
+                break;
             }
         }
-
-        // in place scope will join all the threads before it exits
-        return Ok(());
-    })
-    .context(here!())?;
-
-    let mut thread_not_run = false;
-    let mut results = Vec::new();
-
-    for result in thread_results.drain(..) {
-        match result {
-            None => thread_not_run = true,
-            Some(Ok(r)) => results.push(r),
-            // if there was an error processing anything, return it
-            Some(Err(e)) => return Err(e),
-        }
     }
 
-    if thread_not_run {
-        return err_exit_code(ExitCode::GeneralFailure, "thread did not run");
-    }
-
-    Ok(results)
+    collect_results(num_threads, result_receiver)
 }
 
 /// Used by the processor thread to read data in a blocking way.
@@ -301,7 +271,7 @@ where
         let clone_processor = arc_processor.clone();
         let clone_sender = result_sender.clone();
 
-        std::thread::spawn(move || {
+        spawn(move || {
             // get the appropriate receiver so we can read out data from it
             let mut proc_reader = MultiplexReader {
                 thread_id: thread_id as u8,
@@ -368,20 +338,23 @@ where
         let _ = c.send(Message::Eof);
     }
 
+    collect_results(num_threads, result_receiver)
+}
+
+fn collect_results<RESULT>(
+    num_threads: usize,
+    result_receiver: Receiver<(usize, Result<RESULT>)>,
+) -> Result<Vec<RESULT>> {
     let mut result_by_thread = Vec::new();
     for _i in 0..num_threads {
         match result_receiver.recv() {
             Ok((i, Ok(r))) => result_by_thread.push((i, r)),
-            Ok((_i, Err(e))) => return Err(e).context(here!()),
-            Err(e) => return Err(e).context(here!()),
+            Ok((_i, Err(e))) => return Err(e),
+            Err(e) => return Err(e.into()),
         }
     }
-
-    // sort the results by the thread id so we get them in the right order
     result_by_thread.sort_by(|a, b| a.0.cmp(&b.0));
-
     let r: Vec<RESULT> = result_by_thread.into_iter().map(|(_, r)| r).collect();
-
     Ok(r)
 }
 

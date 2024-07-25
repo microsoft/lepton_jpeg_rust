@@ -22,9 +22,10 @@ debug=true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = []
+default = ["use_rusty_pool"]
 compression_stats = []
 use_rayon = ["dep:rayon-core"]
+use_rusty_pool = ["dep:rusty_pool"]
 
 [dependencies]
 bytemuck = "1"
@@ -37,6 +38,7 @@ log = "0.4"
 simple_logger ="4.0"
 unroll = "*"
 rayon-core = { version = "1", optional = true }
+rusty_pool = { version = "0.7.0", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 cpu-time = "1.0"
