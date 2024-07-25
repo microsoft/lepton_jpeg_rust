@@ -22,6 +22,7 @@ mod jpeg_write;
 mod lepton_decoder;
 mod lepton_encoder;
 pub mod lepton_format;
+pub mod lepton_header;
 mod model;
 mod multiplexer;
 mod neighbor_summary;

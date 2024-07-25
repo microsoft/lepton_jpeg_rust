@@ -19,7 +19,7 @@ use lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
-use structs::lepton_format::read_jpeg;
+use structs::lepton_format::{decode_as_single_image, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
@@ -32,9 +32,8 @@ use std::{
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_format::{
-    decode_lepton_wrapper, encode_lepton_wrapper_verify, LeptonHeader,
-};
+use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper_verify};
+use crate::structs::lepton_header::LeptonHeader;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     if arg.starts_with(name) {
@@ -160,13 +159,13 @@ fn main_with_result() -> anyhow::Result<()> {
 
             let _metrics;
 
-            (block_image, _metrics) = lh
-                .decode_as_single_image(
-                    &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
-                    num_threads as usize,
-                    &enabled_features,
-                )
-                .context(here!())?;
+            (block_image, _metrics) = decode_as_single_image(
+                &mut lh,
+                &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
+                num_threads as usize,
+                &enabled_features,
+            )
+            .context(here!())?;
 
             loop {
                 println!("parsed header:");
