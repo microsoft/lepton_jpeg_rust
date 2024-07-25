@@ -31,7 +31,11 @@ pub struct PredictDCResult {
 }
 
 impl ProbabilityTables {
-    pub fn new(kcolor: usize, in_left_present: bool, in_above_present: bool) -> ProbabilityTables {
+    pub const fn new(
+        kcolor: usize,
+        in_left_present: bool,
+        in_above_present: bool,
+    ) -> ProbabilityTables {
         return ProbabilityTables {
             left_present: in_left_present,
             above_present: in_above_present,
