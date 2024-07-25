@@ -25,7 +25,6 @@ use crate::structs::jpeg_write::jpeg_write_row_range;
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::multiplexer::{multiplex_read, multiplex_write};
-use crate::structs::probability_tables_set::ProbabilityTablesSet;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
@@ -319,7 +318,7 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
-fn run_lepton_decoder_threads<R: Read, P: Send>(
+fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
     lh: &LeptonHeader,
     reader: &mut R,
     _max_threads_to_use: usize,
@@ -332,7 +331,6 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
 ) -> Result<(Metrics, Vec<P>)> {
     let wall_time = Instant::now();
 
-    let pts = ProbabilityTablesSet::new();
     let mut qt = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
         let qtables = QuantizationTables::new(&lh.jpeg_header, i);
@@ -349,9 +347,6 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
         }
         qt.push(qtables);
     }
-
-    let pts_ref = &pts;
-    let q_ref = &qt[..];
 
     let mut thread_results = multiplex_read(
         reader,
@@ -378,8 +373,7 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
 
             metrics.merge_from(
                 lepton_decode_row_range(
-                    pts_ref,
-                    q_ref,
+                    &qt[..],
                     &lh.truncate_components,
                     &mut image_data,
                     reader,
@@ -436,7 +430,6 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     // Prepare quantization tables
-    let pts = ProbabilityTablesSet::new();
     let mut quantization_tables = Vec::new();
     for i in 0..image_data.len() {
         let qtables = QuantizationTables::new(jpeg_header, i);
@@ -454,16 +447,14 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
         quantization_tables.push(qtables);
     }
 
-    let pts_ref = &pts;
-    let q_ref = &quantization_tables[..];
-
-    let mut thread_results =
-        multiplex_write(writer, thread_handoffs.len(), |thread_writer, thread_id| {
+    let mut thread_results = multiplex_write(
+        writer,
+        thread_handoffs.len(),
+        move |thread_writer, thread_id| {
             let cpu_time = CpuTimeMeasure::new();
 
             let mut range_metrics = lepton_encode_row_range(
-                pts_ref,
-                q_ref,
+                &quantization_tables[..],
                 image_data,
                 thread_writer,
                 thread_id as i32,
@@ -479,7 +470,8 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
             range_metrics.record_cpu_worker_time(cpu_time.elapsed());
 
             Ok(range_metrics)
-        })?;
+        },
+    )?;
 
     let mut merged_metrics = Metrics::default();
 

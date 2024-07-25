@@ -108,8 +108,8 @@ pub fn multiplex_write<WRITE, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     WRITE: Write,
-    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Copy,
-    RESULT: Send,
+    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync,
+    RESULT: Send + 'static,
 {
     let mut thread_results = Vec::new();
     for _i in 0..num_threads {
@@ -128,8 +128,10 @@ where
                 buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
             };
 
+            let ref_processor = &processor;
+
             let mut f = move || -> Result<RESULT> {
-                let r = processor(&mut thread_writer, thread_id)?;
+                let r = ref_processor(&mut thread_writer, thread_id)?;
 
                 thread_writer.flush().context(here!())?;
 
@@ -277,8 +279,8 @@ pub fn multiplex_read<READ, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     READ: Read,
-    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Copy,
-    RESULT: Send,
+    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync,
+    RESULT: Send + 'static,
 {
     // track if we got an error while trying to send to a thread
     let mut error_sending: Option<SendError<Message>> = None;
@@ -298,6 +300,8 @@ where
             let (tx, rx) = channel();
             channel_to_sender.push(tx);
 
+            let ref_processor = &processor;
+
             my_spawn(s, move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
@@ -306,7 +310,7 @@ where
                     receiver: rx,
                     end_of_file: false,
                 };
-                *result = Some(processor(thread_id, &mut proc_reader));
+                *result = Some(ref_processor(thread_id, &mut proc_reader));
             });
         }
 

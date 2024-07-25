@@ -21,17 +21,17 @@ use crate::structs::{
     block_based_image::AlignedBlock, block_based_image::BlockBasedImage,
     block_context::BlockContext, model::Model, model::ModelPerColor,
     neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
-    row_spec::RowSpec, truncate_components::*, vpx_bool_writer::VPXBoolWriter,
+    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
+    vpx_bool_writer::VPXBoolWriter,
 };
 
 use default_boxed::DefaultBoxed;
 
 use super::block_context::NeighborData;
+use super::probability_tables_set::PTS;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
-    pts: &ProbabilityTablesSet,
     quantization_tables: &[QuantizationTables],
     image_data: &[BlockBasedImage],
     writer: &mut W,
@@ -104,9 +104,9 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut bool_writer,
                 &image_data[bt],
                 &quantization_tables[bt],
-                &pts.corner[bt],
-                &pts.top[bt],
-                &pts.top[bt],
+                &PTS.corner[bt],
+                &PTS.top[bt],
+                &PTS.top[bt],
                 colldata,
                 &mut block_context,
                 &mut neighbor_summary_cache[bt][..],
@@ -121,9 +121,9 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut bool_writer,
                 &image_data[bt],
                 &quantization_tables[bt],
-                &pts.mid_left[bt],
-                &pts.middle[bt],
-                &pts.mid_right[bt],
+                &PTS.mid_left[bt],
+                &PTS.middle[bt],
+                &PTS.mid_right[bt],
                 colldata,
                 &mut block_context,
                 &mut neighbor_summary_cache[bt][..],
@@ -139,9 +139,9 @@ pub fn lepton_encode_row_range<W: Write>(
                 &mut bool_writer,
                 &image_data[bt],
                 &quantization_tables[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
+                &PTS.width_one[bt],
+                &PTS.width_one[bt],
+                &PTS.width_one[bt],
                 colldata,
                 &mut block_context,
                 &mut neighbor_summary_cache[bt][..],
