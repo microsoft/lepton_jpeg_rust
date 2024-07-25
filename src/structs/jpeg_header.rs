@@ -266,7 +266,7 @@ impl HuffTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JPegHeader {
     pub q_tables: [[u16; 64]; 4],     // quantization tables 4 x 64
     h_codes: [[HuffCodes; 4]; 2],     // huffman codes (access via get_huff_xx_codes)

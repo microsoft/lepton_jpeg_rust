@@ -279,7 +279,7 @@ pub fn multiplex_read<READ, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     READ: Read,
-    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync,
+    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
     // track if we got an error while trying to send to a thread

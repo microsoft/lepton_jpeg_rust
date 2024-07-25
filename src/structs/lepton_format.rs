@@ -348,23 +348,26 @@ fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
         qt.push(qtables);
     }
 
+    let features_clone = features.clone();
+    let lh_clone = lh.clone();
+
     let mut thread_results = multiplex_read(
         reader,
-        lh.thread_handoff.len(),
-        |thread_id, reader| -> Result<(Metrics, P)> {
+        lh_clone.thread_handoff.len(),
+        move |thread_id, reader| -> Result<(Metrics, P)> {
             let cpu_time = CpuTimeMeasure::new();
 
             let mut image_data = Vec::new();
-            for i in 0..lh.jpeg_header.cmpc {
+            for i in 0..lh_clone.jpeg_header.cmpc {
                 image_data.push(BlockBasedImage::new(
-                    &lh.jpeg_header,
+                    &lh_clone.jpeg_header,
                     i,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    if thread_id == lh.thread_handoff.len() - 1 {
+                    lh_clone.thread_handoff[thread_id].luma_y_start,
+                    if thread_id == lh_clone.thread_handoff.len() - 1 {
                         // if this is the last thread, then the image should extend all the way to the bottom
-                        lh.jpeg_header.cmp_info[0].bcv
+                        lh_clone.jpeg_header.cmp_info[0].bcv
                     } else {
-                        lh.thread_handoff[thread_id].luma_y_end
+                        lh_clone.thread_handoff[thread_id].luma_y_end
                     },
                 ));
             }
@@ -374,19 +377,20 @@ fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
             metrics.merge_from(
                 lepton_decode_row_range(
                     &qt[..],
-                    &lh.truncate_components,
+                    &lh_clone.truncate_components,
                     &mut image_data,
                     reader,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    lh.thread_handoff[thread_id].luma_y_end,
-                    thread_id == lh.thread_handoff.len() - 1,
+                    lh_clone.thread_handoff[thread_id].luma_y_start,
+                    lh_clone.thread_handoff[thread_id].luma_y_end,
+                    thread_id == lh_clone.thread_handoff.len() - 1,
                     true,
-                    features,
+                    &features_clone,
                 )
                 .context(here!())?,
             );
 
-            let process_result = process(&lh.thread_handoff[thread_id], image_data, lh)?;
+            let process_result =
+                process(&lh_clone.thread_handoff[thread_id], image_data, &lh_clone)?;
 
             metrics.record_cpu_worker_time(cpu_time.elapsed());
 
