@@ -11,7 +11,10 @@ use std::{
     cmp,
     io::{Cursor, Read, Write},
     mem::swap,
-    sync::mpsc::{channel, Receiver, SendError, Sender},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
 
 /// The message that is sent between the threads
@@ -282,119 +285,104 @@ where
     FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
-    // track if we got an error while trying to send to a thread
-    let mut error_sending: Option<SendError<Message>> = None;
+    let (result_sender, result_receiver) = channel();
 
-    let mut thread_results = Vec::<Option<Result<RESULT>>>::new();
-    for _i in 0..num_threads {
-        thread_results.push(None);
-    }
+    let arc_processor = Arc::new(Box::new(processor));
 
-    my_scope(|s| -> Result<()> {
-        let mut channel_to_sender = Vec::new();
+    let mut channel_to_sender = Vec::new();
 
-        // create a channel for each stream and spawn a work item to read from it
-        // the return value from each work item is stored in thread_results, which
-        // is collected at the end
-        for (thread_id, result) in thread_results.iter_mut().enumerate() {
-            let (tx, rx) = channel();
-            channel_to_sender.push(tx);
+    // create a channel for each stream and spawn a work item to read from it
+    // the return value from each work item is stored in thread_results, which
+    // is collected at the end
+    for thread_id in 0..num_threads {
+        let (tx, rx) = channel();
+        channel_to_sender.push(tx);
 
-            let ref_processor = &processor;
+        let clone_processor = arc_processor.clone();
+        let clone_sender = result_sender.clone();
 
-            my_spawn(s, move || {
-                // get the appropriate receiver so we can read out data from it
-                let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id as u8,
-                    current_buffer: Cursor::new(Vec::new()),
-                    receiver: rx,
-                    end_of_file: false,
-                };
-                *result = Some(ref_processor(thread_id, &mut proc_reader));
-            });
-        }
-
-        // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
-        loop {
-            let mut thread_marker_a = [0; 1];
-            if reader.read(&mut thread_marker_a)? == 0 {
-                break;
-            }
-
-            let thread_marker = thread_marker_a[0];
-
-            let thread_id = (thread_marker & 0xf) as u8;
-
-            if thread_id >= channel_to_sender.len() as u8 {
-                return err_exit_code(
-                    ExitCode::BadLeptonFile,
-                    format!("invalid thread_id {0}", thread_id).as_str(),
-                );
-            }
-
-            let data_length = if thread_marker < 16 {
-                let b0 = reader.read_u8().context(here!())?;
-                let b1 = reader.read_u8().context(here!())?;
-
-                ((b1 as usize) << 8) + b0 as usize + 1
-            } else {
-                // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
-                let flags = (thread_marker >> 4) & 3;
-
-                1024 << (2 * flags)
+        std::thread::spawn(move || {
+            // get the appropriate receiver so we can read out data from it
+            let mut proc_reader = MultiplexReader {
+                thread_id: thread_id as u8,
+                current_buffer: Cursor::new(Vec::new()),
+                receiver: rx,
+                end_of_file: false,
             };
 
-            //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
+            // not much to do if we can't send our result back to the parent thread
+            let _ = clone_sender.send((thread_id, clone_processor(thread_id, &mut proc_reader)));
+        });
+    }
 
-            let mut buffer = vec![0; data_length as usize];
-
-            reader
-                .read_exact(&mut buffer)
-                .with_context(|| format!("reading {0} bytes", buffer.len()))?;
-
-            let e =
-                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
-
-            if let Err(e) = e {
-                error_sending = Some(e);
-                break;
-            }
-        }
-        //info!("done sending!");
-
-        for c in channel_to_sender {
-            // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
-            let _ = c.send(Message::Eof);
+    // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
+    loop {
+        let mut thread_marker_a = [0; 1];
+        if reader.read(&mut thread_marker_a)? == 0 {
+            break;
         }
 
-        Ok(())
-    })?;
+        let thread_marker = thread_marker_a[0];
 
-    let mut result = Vec::new();
-    let mut thread_not_run = false;
-    for i in thread_results.drain(..) {
-        match i {
-            None => thread_not_run = true,
-            Some(Err(e)) => {
-                return Err(e).context(here!());
-            }
-            Some(Ok(r)) => {
-                result.push(r);
-            }
+        let thread_id = (thread_marker & 0xf) as u8;
+
+        if thread_id >= channel_to_sender.len() as u8 {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                format!("invalid thread_id {0}", thread_id).as_str(),
+            );
+        }
+
+        let data_length = if thread_marker < 16 {
+            let b0 = reader.read_u8().context(here!())?;
+            let b1 = reader.read_u8().context(here!())?;
+
+            ((b1 as usize) << 8) + b0 as usize + 1
+        } else {
+            // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
+            let flags = (thread_marker >> 4) & 3;
+
+            1024 << (2 * flags)
+        };
+
+        //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
+
+        let mut buffer = vec![0; data_length as usize];
+
+        reader
+            .read_exact(&mut buffer)
+            .with_context(|| format!("reading {0} bytes", buffer.len()))?;
+
+        let e = channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
+
+        if let Err(_e) = e {
+            // we get an error sending if one of the threads has died, and we will get the from the thread result
+            break;
+        }
+    }
+    //info!("done sending!");
+
+    // now tell everyone we reached the end-of-file
+    for c in channel_to_sender {
+        // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
+        let _ = c.send(Message::Eof);
+    }
+
+    let mut result_by_thread = Vec::new();
+    for _i in 0..num_threads {
+        match result_receiver.recv() {
+            Ok((i, Ok(r))) => result_by_thread.push((i, r)),
+            Ok((_i, Err(e))) => return Err(e).context(here!()),
+            Err(e) => return Err(e).context(here!()),
         }
     }
 
-    if thread_not_run {
-        return err_exit_code(ExitCode::GeneralFailure, "thread did not run").context(here!());
-    }
+    // sort the results by the thread id so we get them in the right order
+    result_by_thread.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // if there was an error during send, it should have resulted in an error from one of the threads above and
-    // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
-    if let Some(e) = error_sending {
-        return Err(e).context(here!());
-    }
+    let r: Vec<RESULT> = result_by_thread.into_iter().map(|(_, r)| r).collect();
 
-    Ok(result)
+    Ok(r)
 }
 
 /// simple end to end test that write the thread id and reads it back
