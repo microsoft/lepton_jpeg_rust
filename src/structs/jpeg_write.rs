@@ -49,7 +49,7 @@ use std::io::Write;
 
 use super::{
     bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
-    jpeg_position_state::JpegPositionState, lepton_format::LeptonHeader, row_spec::RowSpec,
+    jpeg_position_state::JpegPositionState, lepton_header::LeptonHeader, row_spec::RowSpec,
     thread_handoff::ThreadHandoff,
 };
 
