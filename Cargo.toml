@@ -1,11 +1,11 @@
 [package]
 name = "lepton_jpeg"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
-# requires scoped threads and IsTerminal
-rust-version = "1.70"
+# requires scoped threads, IsTerminal and LazyLock
+rust-version = "1.80"
 description = "Rust port of the Lepton JPEG compression library"
 readme = "README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
