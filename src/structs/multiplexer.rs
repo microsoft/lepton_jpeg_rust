@@ -67,28 +67,23 @@ impl Write for MultiplexWriter {
 
 // if we are using Rayon, these are the primatives to use to spawn thread pool work items
 #[cfg(feature = "use_rayon")]
-fn spawn<FN>(f: FN)
+fn spawn<FN>(f: FN) -> impl FnOnce() -> T
 where
     FN: FnOnce() + Send + 'static,
+    T: Send + 'static,
 {
     rayon_core::spawn(f);
 }
 
-// if we are using Rayon, these are the primatives to use to spawn thread pool work items
-#[cfg(feature = "use_rusty_pool")]
-fn spawn<FN>(f: FN)
+#[cfg(not(feature = "use_rayon"))]
+fn spawn<FN, T>(f: FN) -> impl FnOnce() -> T
 where
-    FN: FnOnce() + Send + 'static,
+    FN: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
 {
-    rusty_pool::ThreadPool::default().execute(f);
-}
+    use super::simple_threadpool;
 
-#[cfg(all(not(feature = "use_rayon"), not(feature = "use_rusty_pool")))]
-fn spawn<FN>(f: FN)
-where
-    FN: FnOnce() + Send + 'static,
-{
-    std::thread::spawn(f);
+    simple_threadpool::evaluate(f)
 }
 
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
@@ -105,11 +100,11 @@ where
     FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
-    let (result_sender, result_receiver) = channel();
-
     let arc_processor = Arc::new(Box::new(processor));
 
     let (tx, rx) = channel();
+
+    let mut results = Vec::new();
 
     for thread_id in 0..num_threads {
         let cloned_sender = tx.clone();
@@ -131,11 +126,7 @@ where
             Ok(r)
         };
 
-        let cloned_result_sender = result_sender.clone();
-
-        spawn(move || {
-            let _ = cloned_result_sender.send((thread_id, f()));
-        });
+        results.push(spawn(move || f()));
     }
 
     // drop the sender so that the channel breaks when all the threads exit
@@ -166,7 +157,23 @@ where
         }
     }
 
-    collect_results(num_threads, result_receiver)
+    collect_results(results)
+}
+
+/// calls the closure for every closure in the array
+fn collect_results<RESULT>(results: Vec<impl FnOnce() -> Result<RESULT>>) -> Result<Vec<RESULT>> {
+    let mut awaited: Vec<Result<RESULT>> = results.into_iter().map(|r| r()).collect();
+
+    let mut result = Vec::new();
+    for r in awaited.drain(..) {
+        match r {
+            Err(e) => return Err(e),
+            Ok(r) => {
+                result.push(r);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// Used by the processor thread to read data in a blocking way.
@@ -255,11 +262,11 @@ where
     FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
-    let (result_sender, result_receiver) = channel();
-
     let arc_processor = Arc::new(Box::new(processor));
 
     let mut channel_to_sender = Vec::new();
+
+    let mut results = Vec::new();
 
     // create a channel for each stream and spawn a work item to read from it
     // the return value from each work item is stored in thread_results, which
@@ -269,9 +276,8 @@ where
         channel_to_sender.push(tx);
 
         let clone_processor = arc_processor.clone();
-        let clone_sender = result_sender.clone();
 
-        spawn(move || {
+        results.push(spawn(move || {
             // get the appropriate receiver so we can read out data from it
             let mut proc_reader = MultiplexReader {
                 thread_id: thread_id as u8,
@@ -281,8 +287,8 @@ where
             };
 
             // not much to do if we can't send our result back to the parent thread
-            let _ = clone_sender.send((thread_id, clone_processor(thread_id, &mut proc_reader)));
-        });
+            clone_processor(thread_id, &mut proc_reader)
+        }));
     }
 
     // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
@@ -338,24 +344,7 @@ where
         let _ = c.send(Message::Eof);
     }
 
-    collect_results(num_threads, result_receiver)
-}
-
-fn collect_results<RESULT>(
-    num_threads: usize,
-    result_receiver: Receiver<(usize, Result<RESULT>)>,
-) -> Result<Vec<RESULT>> {
-    let mut result_by_thread = Vec::new();
-    for _i in 0..num_threads {
-        match result_receiver.recv() {
-            Ok((i, Ok(r))) => result_by_thread.push((i, r)),
-            Ok((_i, Err(e))) => return Err(e),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    result_by_thread.sort_by(|a, b| a.0.cmp(&b.0));
-    let r: Vec<RESULT> = result_by_thread.into_iter().map(|(_, r)| r).collect();
-    Ok(r)
+    collect_results(results)
 }
 
 /// simple end to end test that write the thread id and reads it back
