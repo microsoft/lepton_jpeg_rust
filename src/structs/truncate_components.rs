@@ -10,14 +10,14 @@ use std::cmp;
 
 use super::jpeg_header::JPegHeader;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrucateComponentsInfo {
     trunc_bcv: i32, // the number of vertical components in this (truncated) image
 
     trunc_bc: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TruncateComponents {
     trunc_info: Vec<TrucateComponentsInfo>,
 
