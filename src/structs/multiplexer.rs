@@ -67,18 +67,18 @@ impl Write for MultiplexWriter {
 
 // if we are using Rayon, these are the primatives to use to spawn thread pool work items
 #[cfg(feature = "use_rayon")]
-fn spawn<FN>(f: FN) -> impl FnOnce() -> T
+fn spawn<FN, T>(f: FN) -> impl FnOnce() -> Result<T>
 where
-    FN: FnOnce() + Send + 'static,
+    FN: FnOnce() -> Result<T> + Send + 'static,
     T: Send + 'static,
 {
     rayon_core::spawn(f);
 }
 
 #[cfg(not(feature = "use_rayon"))]
-fn spawn<FN, T>(f: FN) -> impl FnOnce() -> T
+fn spawn<FN, T>(f: FN) -> impl FnOnce() -> Result<T>
 where
-    FN: FnOnce() -> T + Send + 'static,
+    FN: FnOnce() -> Result<T> + Send + 'static,
     T: Send + 'static,
 {
     use super::simple_threadpool;
@@ -117,16 +117,14 @@ where
 
         let cloned_processor = arc_processor.clone();
 
-        let mut f = move || -> Result<RESULT> {
+        results.push(spawn(move || -> Result<RESULT> {
             let r = cloned_processor(&mut thread_writer, thread_id)?;
 
             thread_writer.flush().context(here!())?;
 
             thread_writer.sender.send(Message::Eof).context(here!())?;
             Ok(r)
-        };
-
-        results.push(spawn(move || f()));
+        }));
     }
 
     // drop the sender so that the channel breaks when all the threads exit
