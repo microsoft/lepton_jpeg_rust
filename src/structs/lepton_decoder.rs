@@ -23,17 +23,17 @@ use crate::metrics::Metrics;
 use crate::structs::{
     block_based_image::AlignedBlock, block_based_image::BlockBasedImage, model::Model,
     model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
-    row_spec::RowSpec, truncate_components::*, vpx_bool_reader::VPXBoolReader,
+    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
+    vpx_bool_reader::VPXBoolReader,
 };
 
 use super::block_context::{BlockContext, NeighborData};
+use super::probability_tables_set::PTS;
 
 // reads stream from reader and populates image_data with the decoded data
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_decode_row_range<R: Read>(
-    pts: &ProbabilityTablesSet,
     qt: &[QuantizationTables],
     trunc: &TruncateComponents,
     image_data: &mut [BlockBasedImage],
@@ -95,7 +95,6 @@ pub fn lepton_decode_row_range<R: Read>(
         decode_row_wrapper(
             &mut model,
             &mut bool_reader,
-            pts,
             &mut image_data[cur_row.component],
             &qt[cur_row.component],
             &mut neighbor_summary_cache[cur_row.component],
@@ -114,7 +113,6 @@ pub fn lepton_decode_row_range<R: Read>(
 fn decode_row_wrapper<R: Read>(
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
-    pts: &ProbabilityTablesSet,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut Vec<NeighborSummary>,
@@ -133,9 +131,9 @@ fn decode_row_wrapper<R: Read>(
             model,
             bool_reader,
             &qt,
-            &pts.corner[component],
-            &pts.top[component],
-            &pts.top[component],
+            &PTS.corner[component],
+            &PTS.top[component],
+            &PTS.top[component],
             image_data,
             &mut context,
             neighbor_summary_cache,
@@ -149,9 +147,9 @@ fn decode_row_wrapper<R: Read>(
             model,
             bool_reader,
             &qt,
-            &pts.mid_left[component],
-            &pts.middle[component],
-            &pts.mid_right[component],
+            &PTS.mid_left[component],
+            &PTS.middle[component],
+            &PTS.mid_right[component],
             image_data,
             &mut context,
             neighbor_summary_cache,
@@ -165,9 +163,9 @@ fn decode_row_wrapper<R: Read>(
             model,
             bool_reader,
             &qt,
-            &pts.width_one[component],
-            &pts.width_one[component],
-            &pts.width_one[component],
+            &PTS.width_one[component],
+            &PTS.width_one[component],
+            &PTS.width_one[component],
             image_data,
             &mut context,
             neighbor_summary_cache,

@@ -11,7 +11,7 @@ pub enum JPegDecodeStatus {
     ScanCompleted,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub enum JPegType {
     Unknown,
     Sequential,

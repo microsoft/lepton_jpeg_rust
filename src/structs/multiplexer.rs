@@ -11,7 +11,10 @@ use std::{
     cmp,
     io::{Cursor, Read, Write},
     mem::swap,
-    sync::mpsc::{channel, Receiver, SendError, Sender},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
 
 /// The message that is sent between the threads
@@ -64,37 +67,23 @@ impl Write for MultiplexWriter {
 
 // if we are using Rayon, these are the primatives to use to spawn thread pool work items
 #[cfg(feature = "use_rayon")]
-fn my_scope<'scope, OP, R>(op: OP) -> R
+fn spawn<FN, T>(f: FN) -> impl FnOnce() -> Result<T>
 where
-    OP: FnOnce(&rayon_core::Scope<'scope>) -> R,
+    FN: FnOnce() -> Result<T> + Send + 'static,
+    T: Send + 'static,
 {
-    rayon_core::in_place_scope(op)
-}
-
-#[cfg(feature = "use_rayon")]
-fn my_spawn<'scope, BODY>(s: &rayon_core::Scope<'scope>, body: BODY)
-where
-    BODY: FnOnce() + Send + 'scope,
-{
-    s.spawn(|_| body())
-}
-
-// if we are not using Rayon, just spawn regular threads
-#[cfg(not(feature = "use_rayon"))]
-fn my_scope<'env, F, T>(f: F) -> T
-where
-    F: for<'scope> FnOnce(&'scope std::thread::Scope<'scope, 'env>) -> T,
-{
-    std::thread::scope::<'env, F, T>(f)
+    rayon_core::spawn(f);
 }
 
 #[cfg(not(feature = "use_rayon"))]
-fn my_spawn<'scope, F, T>(s: &'scope std::thread::Scope<'scope, '_>, f: F)
+fn spawn<FN, T>(f: FN) -> impl FnOnce() -> Result<T>
 where
-    F: FnOnce() -> T + Send + 'scope,
-    T: Send + 'scope,
+    FN: FnOnce() -> Result<T> + Send + 'static,
+    T: Send + 'static,
 {
-    s.spawn::<F, T>(f);
+    use super::simple_threadpool;
+
+    simple_threadpool::evaluate(f)
 }
 
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
@@ -108,90 +97,81 @@ pub fn multiplex_write<WRITE, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     WRITE: Write,
-    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Copy,
-    RESULT: Send,
+    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
+    RESULT: Send + 'static,
 {
-    let mut thread_results = Vec::new();
-    for _i in 0..num_threads {
-        thread_results.push(None);
-    }
+    let arc_processor = Arc::new(Box::new(processor));
 
-    my_scope(|s| -> Result<()> {
-        let (tx, rx) = channel();
+    let (tx, rx) = channel();
 
-        for (thread_id, result) in thread_results.iter_mut().enumerate() {
-            let cloned_sender = tx.clone();
-
-            let mut thread_writer = MultiplexWriter {
-                thread_id: thread_id as u8,
-                sender: cloned_sender,
-                buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
-            };
-
-            let mut f = move || -> Result<RESULT> {
-                let r = processor(&mut thread_writer, thread_id)?;
-
-                thread_writer.flush().context(here!())?;
-
-                thread_writer.sender.send(Message::Eof).context(here!())?;
-                Ok(r)
-            };
-
-            my_spawn(s, move || {
-                *result = Some(f());
-            });
-        }
-
-        // drop the sender so that the channel breaks when all the threads exit
-        drop(tx);
-
-        // wait to collect work and done messages from all the threads
-        let mut threads_left = num_threads;
-
-        while threads_left > 0 {
-            let value = rx.recv().context(here!());
-            match value {
-                Ok(Message::Eof) => {
-                    threads_left -= 1;
-                }
-                Ok(Message::WriteBlock(thread_id, b)) => {
-                    let l = b.len() - 1;
-
-                    writer.write_u8(thread_id).context(here!())?;
-                    writer.write_u8((l & 0xff) as u8).context(here!())?;
-                    writer.write_u8(((l >> 8) & 0xff) as u8).context(here!())?;
-                    writer.write_all(&b[..]).context(here!())?;
-                }
-                Err(_) => {
-                    // if we get a receiving error here, this means that one of the threads broke
-                    // with an error, and this error will be collected when we join the threads
-                    break;
-                }
-            }
-        }
-
-        // in place scope will join all the threads before it exits
-        return Ok(());
-    })
-    .context(here!())?;
-
-    let mut thread_not_run = false;
     let mut results = Vec::new();
 
-    for result in thread_results.drain(..) {
-        match result {
-            None => thread_not_run = true,
-            Some(Ok(r)) => results.push(r),
-            // if there was an error processing anything, return it
-            Some(Err(e)) => return Err(e),
+    for thread_id in 0..num_threads {
+        let cloned_sender = tx.clone();
+
+        let mut thread_writer = MultiplexWriter {
+            thread_id: thread_id as u8,
+            sender: cloned_sender,
+            buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
+        };
+
+        let cloned_processor = arc_processor.clone();
+
+        results.push(spawn(move || -> Result<RESULT> {
+            let r = cloned_processor(&mut thread_writer, thread_id)?;
+
+            thread_writer.flush().context(here!())?;
+
+            thread_writer.sender.send(Message::Eof).context(here!())?;
+            Ok(r)
+        }));
+    }
+
+    // drop the sender so that the channel breaks when all the threads exit
+    drop(tx);
+
+    // wait to collect work and done messages from all the threads
+    let mut threads_left = num_threads;
+
+    while threads_left > 0 {
+        let value = rx.recv().context(here!());
+        match value {
+            Ok(Message::Eof) => {
+                threads_left -= 1;
+            }
+            Ok(Message::WriteBlock(thread_id, b)) => {
+                let l = b.len() - 1;
+
+                writer.write_u8(thread_id).context(here!())?;
+                writer.write_u8((l & 0xff) as u8).context(here!())?;
+                writer.write_u8(((l >> 8) & 0xff) as u8).context(here!())?;
+                writer.write_all(&b[..]).context(here!())?;
+            }
+            Err(_) => {
+                // if we get a receiving error here, this means that one of the threads broke
+                // with an error, and this error will be collected when we join the threads
+                break;
+            }
         }
     }
 
-    if thread_not_run {
-        return err_exit_code(ExitCode::GeneralFailure, "thread did not run");
-    }
+    collect_results(results)
+}
 
-    Ok(results)
+/// calls the closure for every closure in the array
+fn collect_results<RESULT>(results: Vec<impl FnOnce() -> Result<RESULT>>) -> Result<Vec<RESULT>> {
+    let mut awaited: Vec<Result<RESULT>> = results.into_iter().map(|r| r()).collect();
+
+    let mut result = Vec::new();
+    for r in awaited.drain(..) {
+        match r {
+            Err(e) => return Err(e),
+            Ok(r) => {
+                result.push(r);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// Used by the processor thread to read data in a blocking way.
@@ -277,120 +257,92 @@ pub fn multiplex_read<READ, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     READ: Read,
-    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Copy,
-    RESULT: Send,
+    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
+    RESULT: Send + 'static,
 {
-    // track if we got an error while trying to send to a thread
-    let mut error_sending: Option<SendError<Message>> = None;
+    let arc_processor = Arc::new(Box::new(processor));
 
-    let mut thread_results = Vec::<Option<Result<RESULT>>>::new();
-    for _i in 0..num_threads {
-        thread_results.push(None);
-    }
+    let mut channel_to_sender = Vec::new();
 
-    my_scope(|s| -> Result<()> {
-        let mut channel_to_sender = Vec::new();
+    let mut results = Vec::new();
 
-        // create a channel for each stream and spawn a work item to read from it
-        // the return value from each work item is stored in thread_results, which
-        // is collected at the end
-        for (thread_id, result) in thread_results.iter_mut().enumerate() {
-            let (tx, rx) = channel();
-            channel_to_sender.push(tx);
+    // create a channel for each stream and spawn a work item to read from it
+    // the return value from each work item is stored in thread_results, which
+    // is collected at the end
+    for thread_id in 0..num_threads {
+        let (tx, rx) = channel();
+        channel_to_sender.push(tx);
 
-            my_spawn(s, move || {
-                // get the appropriate receiver so we can read out data from it
-                let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id as u8,
-                    current_buffer: Cursor::new(Vec::new()),
-                    receiver: rx,
-                    end_of_file: false,
-                };
-                *result = Some(processor(thread_id, &mut proc_reader));
-            });
-        }
+        let clone_processor = arc_processor.clone();
 
-        // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
-        loop {
-            let mut thread_marker_a = [0; 1];
-            if reader.read(&mut thread_marker_a)? == 0 {
-                break;
-            }
-
-            let thread_marker = thread_marker_a[0];
-
-            let thread_id = (thread_marker & 0xf) as u8;
-
-            if thread_id >= channel_to_sender.len() as u8 {
-                return err_exit_code(
-                    ExitCode::BadLeptonFile,
-                    format!("invalid thread_id {0}", thread_id).as_str(),
-                );
-            }
-
-            let data_length = if thread_marker < 16 {
-                let b0 = reader.read_u8().context(here!())?;
-                let b1 = reader.read_u8().context(here!())?;
-
-                ((b1 as usize) << 8) + b0 as usize + 1
-            } else {
-                // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
-                let flags = (thread_marker >> 4) & 3;
-
-                1024 << (2 * flags)
+        results.push(spawn(move || {
+            // get the appropriate receiver so we can read out data from it
+            let mut proc_reader = MultiplexReader {
+                thread_id: thread_id as u8,
+                current_buffer: Cursor::new(Vec::new()),
+                receiver: rx,
+                end_of_file: false,
             };
 
-            //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
-
-            let mut buffer = vec![0; data_length as usize];
-
-            reader
-                .read_exact(&mut buffer)
-                .with_context(|| format!("reading {0} bytes", buffer.len()))?;
-
-            let e =
-                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
-
-            if let Err(e) = e {
-                error_sending = Some(e);
-                break;
-            }
-        }
-        //info!("done sending!");
-
-        for c in channel_to_sender {
-            // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
-            let _ = c.send(Message::Eof);
-        }
-
-        Ok(())
-    })?;
-
-    let mut result = Vec::new();
-    let mut thread_not_run = false;
-    for i in thread_results.drain(..) {
-        match i {
-            None => thread_not_run = true,
-            Some(Err(e)) => {
-                return Err(e).context(here!());
-            }
-            Some(Ok(r)) => {
-                result.push(r);
-            }
-        }
+            // not much to do if we can't send our result back to the parent thread
+            clone_processor(thread_id, &mut proc_reader)
+        }));
     }
 
-    if thread_not_run {
-        return err_exit_code(ExitCode::GeneralFailure, "thread did not run").context(here!());
+    // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
+    loop {
+        let mut thread_marker_a = [0; 1];
+        if reader.read(&mut thread_marker_a)? == 0 {
+            break;
+        }
+
+        let thread_marker = thread_marker_a[0];
+
+        let thread_id = (thread_marker & 0xf) as u8;
+
+        if thread_id >= channel_to_sender.len() as u8 {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                format!("invalid thread_id {0}", thread_id).as_str(),
+            );
+        }
+
+        let data_length = if thread_marker < 16 {
+            let b0 = reader.read_u8().context(here!())?;
+            let b1 = reader.read_u8().context(here!())?;
+
+            ((b1 as usize) << 8) + b0 as usize + 1
+        } else {
+            // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
+            let flags = (thread_marker >> 4) & 3;
+
+            1024 << (2 * flags)
+        };
+
+        //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
+
+        let mut buffer = vec![0; data_length as usize];
+
+        reader
+            .read_exact(&mut buffer)
+            .with_context(|| format!("reading {0} bytes", buffer.len()))?;
+
+        let e = channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
+
+        if let Err(_e) = e {
+            // we get an error sending if one of the threads has died, and we will get the from the thread result
+            break;
+        }
+    }
+    //info!("done sending!");
+
+    // now tell everyone we reached the end-of-file
+    for c in channel_to_sender {
+        // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
+        let _ = c.send(Message::Eof);
     }
 
-    // if there was an error during send, it should have resulted in an error from one of the threads above and
-    // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
-    if let Some(e) = error_sending {
-        return Err(e).context(here!());
-    }
-
-    Ok(result)
+    collect_results(results)
 }
 
 /// simple end to end test that write the thread id and reads it back

@@ -75,6 +75,32 @@ pub struct LeptonHeader {
     pub uncompressed_lepton_header_size: u32,
 }
 
+impl Clone for LeptonHeader {
+    fn clone(&self) -> Self {
+        Self {
+            raw_jpeg_header: self.raw_jpeg_header.clone(),
+            raw_jpeg_header_read_index: self.raw_jpeg_header_read_index.clone(),
+            thread_handoff: self.thread_handoff.clone(),
+            jpeg_header: self.jpeg_header.clone(),
+            truncate_components: self.truncate_components.clone(),
+            rst_err: self.rst_err.clone(),
+            rst_cnt: self.rst_cnt.clone(),
+            pad_bit: self.pad_bit.clone(),
+            rst_cnt_set: self.rst_cnt_set.clone(),
+            garbage_data: self.garbage_data.clone(),
+            scnc: self.scnc.clone(),
+            early_eof_encountered: self.early_eof_encountered.clone(),
+            max_dpos: self.max_dpos.clone(),
+            max_cmp: self.max_cmp.clone(),
+            max_bpos: self.max_bpos.clone(),
+            max_sah: self.max_sah.clone(),
+            jpeg_file_size: self.jpeg_file_size.clone(),
+            plain_text_size: self.plain_text_size.clone(),
+            uncompressed_lepton_header_size: self.uncompressed_lepton_header_size.clone(),
+        }
+    }
+}
+
 impl LeptonHeader {
     pub fn new() -> Self {
         return LeptonHeader {

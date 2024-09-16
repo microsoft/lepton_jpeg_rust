@@ -25,7 +25,6 @@ use crate::structs::jpeg_write::jpeg_write_row_range;
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::multiplexer::{multiplex_read, multiplex_write};
-use crate::structs::probability_tables_set::ProbabilityTablesSet;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
@@ -97,7 +96,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
         &lp.truncate_components,
         writer,
         &lp.thread_handoff[..],
-        &image_data[..],
+        image_data,
         enabled_features,
     )
     .context(here!())?;
@@ -319,7 +318,7 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
-fn run_lepton_decoder_threads<R: Read, P: Send>(
+fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
     lh: &LeptonHeader,
     reader: &mut R,
     _max_threads_to_use: usize,
@@ -332,7 +331,6 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
 ) -> Result<(Metrics, Vec<P>)> {
     let wall_time = Instant::now();
 
-    let pts = ProbabilityTablesSet::new();
     let mut qt = Vec::new();
     for i in 0..lh.jpeg_header.cmpc {
         let qtables = QuantizationTables::new(&lh.jpeg_header, i);
@@ -350,26 +348,26 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
         qt.push(qtables);
     }
 
-    let pts_ref = &pts;
-    let q_ref = &qt[..];
+    let features_clone = features.clone();
+    let lh_clone = lh.clone();
 
     let mut thread_results = multiplex_read(
         reader,
-        lh.thread_handoff.len(),
-        |thread_id, reader| -> Result<(Metrics, P)> {
+        lh_clone.thread_handoff.len(),
+        move |thread_id, reader| -> Result<(Metrics, P)> {
             let cpu_time = CpuTimeMeasure::new();
 
             let mut image_data = Vec::new();
-            for i in 0..lh.jpeg_header.cmpc {
+            for i in 0..lh_clone.jpeg_header.cmpc {
                 image_data.push(BlockBasedImage::new(
-                    &lh.jpeg_header,
+                    &lh_clone.jpeg_header,
                     i,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    if thread_id == lh.thread_handoff.len() - 1 {
+                    lh_clone.thread_handoff[thread_id].luma_y_start,
+                    if thread_id == lh_clone.thread_handoff.len() - 1 {
                         // if this is the last thread, then the image should extend all the way to the bottom
-                        lh.jpeg_header.cmp_info[0].bcv
+                        lh_clone.jpeg_header.cmp_info[0].bcv
                     } else {
-                        lh.thread_handoff[thread_id].luma_y_end
+                        lh_clone.thread_handoff[thread_id].luma_y_end
                     },
                 ));
             }
@@ -378,21 +376,21 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
 
             metrics.merge_from(
                 lepton_decode_row_range(
-                    pts_ref,
-                    q_ref,
-                    &lh.truncate_components,
+                    &qt[..],
+                    &lh_clone.truncate_components,
                     &mut image_data,
                     reader,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    lh.thread_handoff[thread_id].luma_y_end,
-                    thread_id == lh.thread_handoff.len() - 1,
+                    lh_clone.thread_handoff[thread_id].luma_y_start,
+                    lh_clone.thread_handoff[thread_id].luma_y_end,
+                    thread_id == lh_clone.thread_handoff.len() - 1,
                     true,
-                    features,
+                    &features_clone,
                 )
                 .context(here!())?,
             );
 
-            let process_result = process(&lh.thread_handoff[thread_id], image_data, lh)?;
+            let process_result =
+                process(&lh_clone.thread_handoff[thread_id], image_data, &lh_clone)?;
 
             metrics.record_cpu_worker_time(cpu_time.elapsed());
 
@@ -423,7 +421,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     colldata: &TruncateComponents,
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
-    image_data: &[BlockBasedImage],
+    image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
@@ -436,7 +434,6 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     // Prepare quantization tables
-    let pts = ProbabilityTablesSet::new();
     let mut quantization_tables = Vec::new();
     for i in 0..image_data.len() {
         let qtables = QuantizationTables::new(jpeg_header, i);
@@ -454,32 +451,35 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
         quantization_tables.push(qtables);
     }
 
-    let pts_ref = &pts;
-    let q_ref = &quantization_tables[..];
+    let features_clone = features.clone();
+    let thread_handoffs = thread_handoffs.to_vec();
+    let colldata_clone = colldata.clone();
 
-    let mut thread_results =
-        multiplex_write(writer, thread_handoffs.len(), |thread_writer, thread_id| {
+    let mut thread_results = multiplex_write(
+        writer,
+        thread_handoffs.len(),
+        move |thread_writer, thread_id| {
             let cpu_time = CpuTimeMeasure::new();
 
             let mut range_metrics = lepton_encode_row_range(
-                pts_ref,
-                q_ref,
-                image_data,
+                &quantization_tables[..],
+                &image_data[..],
                 thread_writer,
                 thread_id as i32,
-                colldata,
+                &colldata_clone,
                 thread_handoffs[thread_id].luma_y_start,
                 thread_handoffs[thread_id].luma_y_end,
                 thread_id == thread_handoffs.len() - 1,
                 true,
-                features,
+                &features_clone,
             )
             .context(here!())?;
 
             range_metrics.record_cpu_worker_time(cpu_time.elapsed());
 
             Ok(range_metrics)
-        })?;
+        },
+    )?;
 
     let mut merged_metrics = Metrics::default();
 
@@ -643,7 +643,7 @@ fn recode_baseline_jpeg<R: Read, W: Write>(
             )
             .context(here!())?;
 
-            #[cfg(detailed_tracing)]
+            #[cfg(feature = "detailed_tracing")]
             info!(
                 "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
                 combined_thread_handoff.luma_y_start,
