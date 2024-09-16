@@ -1,6 +1,6 @@
 [package]
 name = "lepton_jpeg"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
@@ -34,7 +34,7 @@ default-boxed = "0.2"
 anyhow = { version="1.0", features = ["backtrace"]}
 wide = "0.7"
 log = "0.4"
-simple_logger ="4.0"
+simple_logger ="5.0"
 unroll = "*"
 rayon-core = { version = "1", optional = true }
 
@@ -43,7 +43,7 @@ cpu-time = "1.0"
 thread-priority = "1.0.0"
 
 [dev-dependencies]
-rstest = "0.19"
+rstest = "0.22"
 rand = "0.8"
 rand_chacha = "0.3"
 siphasher = "1"

@@ -14,7 +14,7 @@ steps:
 - task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
   displayName: 'Install Rust '
   inputs:
-    rustVersion: 'ms-1.77'
+    rustVersion: 'ms-1.81'
     additionalTargets: 'i686-pc-windows-msvc'
     toolchainFeed: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustTools/nuget/v3/index.json
     cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
@@ -52,9 +52,14 @@ steps:
     packageType: 'sdk'
     version: '6.x'
 
-- task: EsrpCodeSigning@4
+- task: EsrpCodeSigning@5
   inputs:
-    ConnectedServiceName: 'ESRP CodeSigning'
+    ConnectedServiceName: 'ESRP CodeSigningV2-OneDrive Service'
+    AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309' 
+    AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2' 
+    AuthAKVName: 'ODSP-ESRP' 
+    AuthCertName: 'ODSP-ESRP-Auth-V2' 
+    AuthSignCertName: 'CodeSigningCertificate'
     FolderPath: '$(Build.SourcesDirectory)'
     Pattern: '
       target\debug\lepton_jpeg.dll,
@@ -127,4 +132,4 @@ steps:
     packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
     publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
     allowPackageConflicts: true
-  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
