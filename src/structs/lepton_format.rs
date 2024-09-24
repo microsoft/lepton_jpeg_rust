@@ -20,7 +20,7 @@ use crate::lepton_error::ExitCode;
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::bit_writer::BitWriter;
 use crate::structs::block_based_image::BlockBasedImage;
-use crate::structs::jpeg_header::JPegHeader;
+use crate::structs::jpeg_header::{JPegEncodingInfo, JPegHeader};
 use crate::structs::jpeg_write::jpeg_write_row_range;
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_encoder::lepton_encode_row_range;
@@ -318,7 +318,7 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
-fn run_lepton_decoder_threads<R: Read, P: Send>(
+fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
     lh: &LeptonHeader,
     reader: &mut R,
     _max_threads_to_use: usize,
@@ -326,7 +326,7 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
-        lh: &LeptonHeader,
+        jenc: &JPegEncodingInfo,
     ) -> Result<P>,
 ) -> Result<(Metrics, Vec<P>)> {
     let wall_time = Instant::now();
@@ -348,25 +348,29 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
         qt.push(qtables);
     }
 
-    let q_ref = &qt[..];
+    let features = features.clone();
+
+    let jenc = JPegEncodingInfo::new(lh);
+
+    let thread_handoff = lh.thread_handoff.clone();
 
     let mut thread_results = multiplex_read(
         reader,
         lh.thread_handoff.len(),
-        |thread_id, reader| -> Result<(Metrics, P)> {
+        move |thread_id, reader| -> Result<(Metrics, P)> {
             let cpu_time = CpuTimeMeasure::new();
 
             let mut image_data = Vec::new();
-            for i in 0..lh.jpeg_header.cmpc {
+            for i in 0..jenc.jpeg_header.cmpc {
                 image_data.push(BlockBasedImage::new(
-                    &lh.jpeg_header,
+                    &jenc.jpeg_header,
                     i,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    if thread_id == lh.thread_handoff.len() - 1 {
+                    thread_handoff[thread_id].luma_y_start,
+                    if thread_id == thread_handoff.len() - 1 {
                         // if this is the last thread, then the image should extend all the way to the bottom
-                        lh.jpeg_header.cmp_info[0].bcv
+                        jenc.jpeg_header.cmp_info[0].bcv
                     } else {
-                        lh.thread_handoff[thread_id].luma_y_end
+                        thread_handoff[thread_id].luma_y_end
                     },
                 ));
             }
@@ -375,20 +379,20 @@ fn run_lepton_decoder_threads<R: Read, P: Send>(
 
             metrics.merge_from(
                 lepton_decode_row_range(
-                    q_ref,
-                    &lh.truncate_components,
+                    &qt,
+                    &jenc.truncate_components,
                     &mut image_data,
                     reader,
-                    lh.thread_handoff[thread_id].luma_y_start,
-                    lh.thread_handoff[thread_id].luma_y_end,
-                    thread_id == lh.thread_handoff.len() - 1,
+                    thread_handoff[thread_id].luma_y_start,
+                    thread_handoff[thread_id].luma_y_end,
+                    thread_id == thread_handoff.len() - 1,
                     true,
-                    features,
+                    &features,
                 )
                 .context(here!())?,
             );
 
-            let process_result = process(&lh.thread_handoff[thread_id], image_data, lh)?;
+            let process_result = process(&thread_handoff[thread_id], image_data, &jenc)?;
 
             metrics.record_cpu_worker_time(cpu_time.elapsed());
 
@@ -576,7 +580,7 @@ fn recode_progressive_jpeg<R: Read, W: Write>(
 
     loop {
         // code another scan
-        jpeg_write_entire_scan(writer, &merged[..], lh).context(here!())?;
+        jpeg_write_entire_scan(writer, &merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
 
         // read the next headers (DHT, etc) while mirroring it back to the writer
         let old_pos = lh.raw_jpeg_header_read_index;

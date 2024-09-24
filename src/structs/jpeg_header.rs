@@ -44,6 +44,8 @@ use crate::lepton_error::ExitCode;
 use crate::consts::JPegType;
 
 use super::component_info::ComponentInfo;
+use super::lepton_header::LeptonHeader;
+use super::truncate_components::TruncateComponents;
 
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
@@ -266,7 +268,7 @@ impl HuffTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JPegHeader {
     pub q_tables: [[u16; 64]; 4],     // quantization tables 4 x 64
     h_codes: [[HuffCodes; 4]; 2],     // huffman codes (access via get_huff_xx_codes)
@@ -293,6 +295,36 @@ pub struct JPegHeader {
     pub cs_to: u8,   // end - band of current scan ( inclusive )
     pub cs_sah: u8,  // successive approximation bit pos high
     pub cs_sal: u8,  // successive approximation bit pos low
+}
+
+pub struct JPegEncodingInfo {
+    pub jpeg_header: JPegHeader,
+    pub truncate_components: TruncateComponents,
+
+    /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
+    /// within the corresponding scan segment.
+    pub rst_cnt: Vec<i32>,
+
+    /// the mask for padding out the bitstream when we get to the end of a reset block
+    pub pad_bit: Option<u8>,
+
+    pub rst_cnt_set: bool,
+
+    /// count of scans encountered so far
+    pub scnc: usize,
+}
+
+impl JPegEncodingInfo {
+    pub fn new(lh: &LeptonHeader) -> Self {
+        JPegEncodingInfo {
+            jpeg_header: lh.jpeg_header.clone(),
+            truncate_components: lh.truncate_components.clone(),
+            rst_cnt: lh.rst_cnt.clone(),
+            pad_bit: lh.pad_bit,
+            rst_cnt_set: lh.rst_cnt_set,
+            scnc: lh.scnc,
+        }
+    }
 }
 
 enum ParseSegmentResult {

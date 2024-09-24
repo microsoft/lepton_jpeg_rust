@@ -48,8 +48,11 @@ use crate::{
 use std::io::Write;
 
 use super::{
-    bit_writer::BitWriter, block_based_image::BlockBasedImage, jpeg_header::HuffCodes,
-    jpeg_position_state::JpegPositionState, lepton_header::LeptonHeader, row_spec::RowSpec,
+    bit_writer::BitWriter,
+    block_based_image::BlockBasedImage,
+    jpeg_header::{HuffCodes, JPegEncodingInfo},
+    jpeg_position_state::JpegPositionState,
+    row_spec::RowSpec,
     thread_handoff::ThreadHandoff,
 };
 
@@ -61,7 +64,7 @@ pub fn jpeg_write_row_range<W: Write>(
     thread_handoff: &ThreadHandoff,
     max_coded_heights: &[u32],
     huffw: &mut BitWriter,
-    lh: &LeptonHeader,
+    jenc: &JPegEncodingInfo,
 ) -> Result<()> {
     huffw.reset_from_overhang_byte_and_num_bits(
         thread_handoff.overhang_byte,
@@ -95,11 +98,11 @@ pub fn jpeg_write_row_range<W: Write>(
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
                 huffw,
-                cur_row.mcu_row_index * lh.jpeg_header.mcuh,
+                cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
                 writer,
                 &mut last_dc,
                 framebuffer,
-                lh,
+                jenc,
             )
             .context(here!())?;
 
@@ -115,19 +118,19 @@ pub fn jpeg_write_row_range<W: Write>(
 pub fn jpeg_write_entire_scan<W: Write>(
     writer: &mut W,
     framebuffer: &[BlockBasedImage],
-    lh: &LeptonHeader,
+    jenc: &JPegEncodingInfo,
 ) -> Result<()> {
     let mut last_dc = [0i16; 4];
 
     let mut huffw = BitWriter::new();
-    let max_coded_heights = lh.truncate_components.get_max_coded_heights();
+    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
 
     let mut decode_index = 0;
     loop {
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
             framebuffer,
-            lh.truncate_components.mcu_count_vertical,
+            jenc.truncate_components.mcu_count_vertical,
             &max_coded_heights[..],
         );
 
@@ -144,11 +147,11 @@ pub fn jpeg_write_entire_scan<W: Write>(
         if cur_row.last_row_to_complete_mcu {
             let r = recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * lh.jpeg_header.mcuh,
+                cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
                 writer,
                 &mut last_dc,
                 framebuffer,
-                lh,
+                jenc,
             )
             .context(here!())?;
 
@@ -172,9 +175,9 @@ fn recode_one_mcu_row<W: Write>(
     writer: &mut W,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
-    ch: &LeptonHeader,
+    jenc: &JPegEncodingInfo,
 ) -> Result<bool> {
-    let jf = &ch.jpeg_header;
+    let jf = &jenc.jpeg_header;
 
     let mut state = JpegPositionState::new(jf, mcu);
 
@@ -317,7 +320,7 @@ fn recode_one_mcu_row<W: Write>(
         }
 
         // pad huffman writer
-        huffw.pad(ch.pad_bit.unwrap_or(0));
+        huffw.pad(jenc.pad_bit.unwrap_or(0));
 
         assert!(
             huffw.has_no_remainder(),
@@ -334,9 +337,9 @@ fn recode_one_mcu_row<W: Write>(
 
             // status 1 means restart
             if jf.rsti > 0 {
-                if ch.rst_cnt.len() == 0
-                    || (!ch.rst_cnt_set)
-                    || cumulative_reset_markers < ch.rst_cnt[ch.scnc]
+                if jenc.rst_cnt.len() == 0
+                    || (!jenc.rst_cnt_set)
+                    || cumulative_reset_markers < jenc.rst_cnt[jenc.scnc]
                 {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
                     writer.write_u8(0xFF)?;

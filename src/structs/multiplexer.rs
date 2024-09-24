@@ -11,7 +11,10 @@ use std::{
     cmp,
     io::{Cursor, Read, Write},
     mem::swap,
-    sync::mpsc::{channel, Receiver, SendError, Sender},
+    sync::{
+        mpsc::{channel, Receiver, SendError, Sender},
+        Arc,
+    },
 };
 
 /// The message that is sent between the threads
@@ -277,7 +280,7 @@ pub fn multiplex_read<READ, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     READ: Read,
-    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Copy,
+    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send,
 {
     // track if we got an error while trying to send to a thread
@@ -287,6 +290,8 @@ where
     for _i in 0..num_threads {
         thread_results.push(None);
     }
+
+    let arc_processor = Arc::new(Box::new(processor));
 
     my_scope(|s| -> Result<()> {
         let mut channel_to_sender = Vec::new();
@@ -298,6 +303,8 @@ where
             let (tx, rx) = channel();
             channel_to_sender.push(tx);
 
+            let cloned_processor = arc_processor.clone();
+
             my_spawn(s, move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
@@ -306,7 +313,7 @@ where
                     receiver: rx,
                     end_of_file: false,
                 };
-                *result = Some(processor(thread_id, &mut proc_reader));
+                *result = Some(cloned_processor(thread_id, &mut proc_reader));
             });
         }
 
