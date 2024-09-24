@@ -562,7 +562,7 @@ fn roundtrip_zeros() {
         &block,
         &block,
         [1; 64],
-        0xd7c55f4988eaf7d5,
+        0xc2bc71721120de75,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -579,7 +579,7 @@ fn roundtrip_dc_only() {
         &block,
         &block,
         [1; 64],
-        0x2dcc28548ce40dec,
+        0xe777404068ec50e0,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -599,7 +599,7 @@ fn roundtrip_edges_only() {
         &block,
         &block,
         [1; 64],
-        0x60cb33137d9ba75f,
+        0xe3f7a94ebde1a7a,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -623,7 +623,7 @@ fn roundtrip_ac_only() {
         &block,
         &block,
         [1; 64],
-        0x782acca7e2ee50a3,
+        0x2a9b90a785c01dc1,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -638,7 +638,7 @@ fn roundtrip_ones() {
         &block,
         &block,
         [1; 64],
-        0xd986b8703f95c0fd,
+        0xf665236641c3940b,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -656,7 +656,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x9e97dff50bc0188,
+        0x7b5080d88472e2bb,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -670,7 +670,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0xcac19d7e86aece1b,
+        0x2292c1567bcd03aa,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -700,7 +700,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0xe3c687262f0df4f5,
+        0xb29a6ba0fe9f14e6,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -711,7 +711,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0xdbacb31b714489fc,
+        0x12aa8dc3af82fc8,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -737,7 +737,7 @@ fn roundtrip_unique() {
         &above_left,
         &here,
         [1; 64],
-        0x36f907a4d7f80559,
+        0xaa01fa1a67ba3a1,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -765,7 +765,7 @@ fn roundtrip_non_zeros_counts() {
         &block,
         &block,
         [1; 64],
-        0xb4031bacdb0c911b,
+        0x57482d106b5c83b6,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
