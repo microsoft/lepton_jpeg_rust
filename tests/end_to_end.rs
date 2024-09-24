@@ -82,7 +82,6 @@ fn verify_decode(
     decode_lepton(
         &mut Cursor::new(input),
         &mut output,
-        8,
         &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
@@ -105,7 +104,7 @@ fn verify_decode_scalar_overflow() {
 
     let features = EnabledFeatures::compat_lepton_scalar_read();
 
-    decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+    decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
     assert!(output[..] == expected[..]);
 }
@@ -235,7 +234,6 @@ fn verify_encode(
     decode_lepton(
         &mut Cursor::new(lepton),
         &mut output,
-        8,
         &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
@@ -254,7 +252,7 @@ fn verify_16bitmath() {
 
         let features = EnabledFeatures::compat_lepton_vector_read();
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -269,7 +267,7 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::compat_lepton_vector_read();
         features.use_16bit_dc_estimate = false;
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }

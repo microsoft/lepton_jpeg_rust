@@ -56,26 +56,30 @@ use super::{
     thread_handoff::ThreadHandoff,
 };
 
-// write a range of rows corresponding to the thread_handoff structure into the writer. Only works with baseline non-progressive images.
-pub fn jpeg_write_row_range<W: Write>(
+/// write a range of rows corresponding to the thread_handoff structure into the writer.
+/// Only works with baseline non-progressive images.
+pub fn jpeg_write_baseline_row_range<W: Write>(
     writer: &mut W,
     framebuffer: &[BlockBasedImage],
-    mcuv: i32,
     thread_handoff: &ThreadHandoff,
-    max_coded_heights: &[u32],
-    huffw: &mut BitWriter,
     jenc: &JPegEncodingInfo,
 ) -> Result<()> {
+    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+
+    let mcuv = jenc.truncate_components.mcu_count_vertical;
+
+    let mut huffw = BitWriter::new();
     huffw.reset_from_overhang_byte_and_num_bits(
         thread_handoff.overhang_byte,
         thread_handoff.num_overhang_bits.into(),
     );
+
     let mut last_dc = thread_handoff.last_dc.clone();
 
     let mut decode_index = 0;
     loop {
         let cur_row =
-            RowSpec::get_row_spec_from_index(decode_index, framebuffer, mcuv, max_coded_heights);
+            RowSpec::get_row_spec_from_index(decode_index, framebuffer, mcuv, &max_coded_heights);
 
         decode_index += 1;
 
@@ -97,7 +101,7 @@ pub fn jpeg_write_row_range<W: Write>(
 
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
-                huffw,
+                &mut huffw,
                 cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
                 writer,
                 &mut last_dc,

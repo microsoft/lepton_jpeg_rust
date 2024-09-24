@@ -49,10 +49,9 @@ fn translate_error(e: anyhow::Error) -> LeptonError {
 pub fn decode_lepton<R: Read + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
-    num_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    decode_lepton_wrapper(reader, writer, num_threads, enabled_features).map_err(translate_error)
+    decode_lepton_wrapper(reader, writer, enabled_features).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -156,7 +155,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     input_buffer_size: u64,
     output_buffer: *mut u8,
     output_buffer_size: u64,
-    number_of_threads: i32,
+    _number_of_threads: i32,
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
@@ -183,12 +182,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton_wrapper(
-                &mut reader,
-                &mut writer,
-                number_of_threads as usize,
-                &mut enabled_features,
-            ) {
+            match decode_lepton_wrapper(&mut reader, &mut writer, &mut enabled_features) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return 0;

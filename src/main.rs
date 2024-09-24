@@ -162,7 +162,6 @@ fn main_with_result() -> anyhow::Result<()> {
             (block_image, _metrics) = decode_as_single_image(
                 &mut lh,
                 &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
-                num_threads as usize,
                 &enabled_features,
             )
             .context(here!())?;
@@ -261,13 +260,8 @@ fn main_with_result() -> anyhow::Result<()> {
 
             output_data = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton_wrapper(
-                &mut reader,
-                &mut output_data,
-                num_threads as usize,
-                &enabled_features,
-            )
-            .context(here!())?;
+            metrics = decode_lepton_wrapper(&mut reader, &mut output_data, &enabled_features)
+                .context(here!())?;
         } else {
             return err_exit_code(
                 ExitCode::BadLeptonFile,
