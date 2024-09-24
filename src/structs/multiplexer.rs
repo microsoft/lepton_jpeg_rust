@@ -111,7 +111,7 @@ pub fn multiplex_write<WRITE, FN, RESULT>(
 ) -> Result<Vec<RESULT>>
 where
     WRITE: Write,
-    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Copy,
+    FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send,
 {
     let mut thread_results = Vec::new();
@@ -121,6 +121,7 @@ where
 
     my_scope(|s| -> Result<()> {
         let (tx, rx) = channel();
+        let arc_processor = Arc::new(Box::new(processor));
 
         for (thread_id, result) in thread_results.iter_mut().enumerate() {
             let cloned_sender = tx.clone();
@@ -131,8 +132,10 @@ where
                 buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
             };
 
+            let processor_clone = arc_processor.clone();
+
             let mut f = move || -> Result<RESULT> {
-                let r = processor(&mut thread_writer, thread_id)?;
+                let r = processor_clone(&mut thread_writer, thread_id)?;
 
                 thread_writer.flush().context(here!())?;
 
