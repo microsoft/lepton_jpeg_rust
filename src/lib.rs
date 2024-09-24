@@ -76,6 +76,7 @@ pub fn encode_lepton_verify(
 
 /// C ABI interface for compressing image, exposed from DLL
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn WrapperCompressImage(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -125,6 +126,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
 
 /// C ABI interface for decompressing image, exposed from DLL
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn WrapperDecompressImage(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -148,6 +150,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
 /// use_16bit_dc_estimate argument should be set to true only for images
 /// that were compressed by C++ version of Leptron (see comments below).
 #[no_mangle]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn WrapperDecompressImageEx(
     input_buffer: *const u8,
     input_buffer_size: u64,

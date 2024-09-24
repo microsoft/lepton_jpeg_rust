@@ -21,8 +21,8 @@ use crate::structs::{
     block_based_image::AlignedBlock, block_based_image::BlockBasedImage,
     block_context::BlockContext, model::Model, model::ModelPerColor,
     neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    probability_tables_set::ProbabilityTablesSet, quantization_tables::QuantizationTables,
-    row_spec::RowSpec, truncate_components::*, vpx_bool_writer::VPXBoolWriter,
+    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
+    vpx_bool_writer::VPXBoolWriter,
 };
 
 use default_boxed::DefaultBoxed;
@@ -31,7 +31,6 @@ use super::block_context::NeighborData;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
-    pts: &ProbabilityTablesSet,
     quantization_tables: &[QuantizationTables],
     image_data: &[BlockBasedImage],
     writer: &mut W,
@@ -91,66 +90,35 @@ pub fn lepton_encode_row_range<W: Write>(
         }
 
         // Advance to next row to cache expended block data for current row. Should be called before getting block context.
-        let bt = cur_row.component;
+        let component = cur_row.component;
 
-        let mut block_context = image_data[bt].off_y(cur_row.curr_y);
+        let left_model;
+        let middle_model;
 
-        let block_width = image_data[bt].get_block_width();
+        if is_top_row[component] {
+            is_top_row[component] = false;
 
-        if is_top_row[bt] {
-            is_top_row[bt] = false;
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.corner[bt],
-                &pts.top[bt],
-                &pts.top[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
-        } else if block_width > 1 {
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.mid_left[bt],
-                &pts.middle[bt],
-                &pts.mid_right[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
+            left_model = &super::probability_tables::NO_NEIGHBORS;
+            middle_model = &super::probability_tables::LEFT_ONLY;
         } else {
-            assert!(block_width == 1, "block_width == 1");
-            process_row(
-                &mut model,
-                &mut bool_writer,
-                &image_data[bt],
-                &quantization_tables[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
-                &pts.width_one[bt],
-                colldata,
-                &mut block_context,
-                &mut neighbor_summary_cache[bt][..],
-                block_width,
-                component_size_in_blocks[bt],
-                features,
-            )
-            .context(here!())?;
+            left_model = &super::probability_tables::TOP_ONLY;
+            middle_model = &super::probability_tables::ALL;
         }
+
+        process_row(
+            &mut model,
+            &mut bool_writer,
+            left_model,
+            middle_model,
+            ProbabilityTables::get_color_index(component),
+            &image_data[component],
+            &quantization_tables[component],
+            &mut neighbor_summary_cache[component][..],
+            cur_row.curr_y,
+            component_size_in_blocks[component],
+            features,
+        )
+        .context(here!())?;
     }
 
     if is_last_thread && full_file_compression {
@@ -181,45 +149,34 @@ pub fn lepton_encode_row_range<W: Write>(
 fn process_row<W: Write>(
     model: &mut Model,
     bool_writer: &mut VPXBoolWriter<W>,
-    image_data: &BlockBasedImage,
-    qt: &QuantizationTables,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
-    right_model: &ProbabilityTables,
-    _colldata: &TruncateComponents,
-    state: &mut BlockContext,
+    color_index: usize,
+    image_data: &BlockBasedImage,
+    qt: &QuantizationTables,
     neighbor_summary_cache: &mut [NeighborSummary],
-    block_width: i32,
+    curr_y: i32,
     component_size_in_block: i32,
     features: &EnabledFeatures,
 ) -> Result<()> {
-    if block_width > 0 {
-        serialize_tokens::<W, false>(
-            state,
-            qt,
-            left_model,
-            model,
-            image_data,
-            neighbor_summary_cache,
-            bool_writer,
-            features,
-        )
-        .context(here!())?;
-        let offset = state.next();
+    let mut block_context = image_data.off_y(curr_y);
+    let block_width = image_data.get_block_width();
 
-        if offset >= component_size_in_block {
-            return Ok(());
-        }
-    }
+    for jpeg_x in 0..block_width {
+        let pt: &ProbabilityTables = if jpeg_x == 0 {
+            left_model
+        } else {
+            middle_model
+        };
 
-    for _jpeg_x in 1..block_width - 1 {
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
-        if middle_model.is_all_present() {
+        if pt.is_all_present() {
             serialize_tokens::<W, true>(
-                state,
+                &block_context,
                 qt,
-                middle_model,
+                pt,
                 model,
+                color_index,
                 image_data,
                 neighbor_summary_cache,
                 bool_writer,
@@ -228,10 +185,11 @@ fn process_row<W: Write>(
             .context(here!())?;
         } else {
             serialize_tokens::<W, false>(
-                state,
+                &block_context,
                 qt,
-                middle_model,
+                pt,
                 model,
+                color_index,
                 image_data,
                 neighbor_summary_cache,
                 bool_writer,
@@ -240,51 +198,23 @@ fn process_row<W: Write>(
             .context(here!())?;
         }
 
-        let offset = state.next();
+        let offset = block_context.next();
 
         if offset >= component_size_in_block {
             return Ok(());
         }
     }
 
-    if block_width > 1 {
-        if right_model.is_all_present() {
-            serialize_tokens::<W, true>(
-                state,
-                qt,
-                right_model,
-                model,
-                image_data,
-                neighbor_summary_cache,
-                bool_writer,
-                features,
-            )
-            .context(here!())?;
-        } else {
-            serialize_tokens::<W, false>(
-                state,
-                qt,
-                right_model,
-                model,
-                image_data,
-                neighbor_summary_cache,
-                bool_writer,
-                features,
-            )
-            .context(here!())?;
-        }
-
-        state.next();
-    }
     Ok(())
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
-    context: &mut BlockContext,
+    context: &BlockContext,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     model: &mut Model,
+    color_index: usize,
     image_data: &BlockBasedImage,
     neighbor_summary_cache: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
@@ -306,6 +236,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
     let ns = write_coefficient_block::<ALL_PRESENT, W>(
         pt,
+        color_index,
         &neighbors,
         block,
         model,
@@ -326,6 +257,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 /// image data, etc so it can be extensively unit tested.
 pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     pt: &ProbabilityTables,
+    color_index: usize,
     neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
     model: &mut Model,
@@ -333,7 +265,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     qt: &QuantizationTables,
     features: &EnabledFeatures,
 ) -> Result<NeighborSummary> {
-    let model_per_color = model.get_per_color(pt);
+    let model_per_color = model.get_per_color(color_index);
 
     // First we encode the 49 inner coefficients
 
@@ -449,7 +381,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     model
         .write_dc(
             bool_writer,
-            pt.get_color_index(),
+            color_index,
             avg_predicted_dc as i16,
             predicted_val.uncertainty,
             predicted_val.uncertainty2,
@@ -895,13 +827,14 @@ fn roundtrip_read_write_coefficients(
         left: Option<(&AlignedBlock, &NeighborSummary)>,
         above: Option<(&AlignedBlock, &NeighborSummary)>,
         above_left: Option<&AlignedBlock>,
+        color_index: usize,
         here: &AlignedBlock,
         write_model: &mut Model,
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         features: &EnabledFeatures,
     ) -> NeighborSummary {
-        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let pt = ProbabilityTables::new(left.is_some(), above.is_some());
         let n = NeighborData {
             above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
             left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
@@ -916,6 +849,7 @@ fn roundtrip_read_write_coefficients(
         if left.is_some() && above.is_some() {
             write_coefficient_block::<true, _>(
                 &pt,
+                color_index,
                 &n,
                 &here_tr,
                 write_model,
@@ -927,6 +861,7 @@ fn roundtrip_read_write_coefficients(
         } else {
             write_coefficient_block::<false, _>(
                 &pt,
+                color_index,
                 &n,
                 &here_tr,
                 write_model,
@@ -943,12 +878,13 @@ fn roundtrip_read_write_coefficients(
         left: Option<(&AlignedBlock, &NeighborSummary)>,
         above: Option<(&AlignedBlock, &NeighborSummary)>,
         above_left: Option<&AlignedBlock>,
+        color_index: usize,
         read_model: &mut Model,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
         features: &EnabledFeatures,
     ) -> (AlignedBlock, NeighborSummary) {
-        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let pt = ProbabilityTables::new(left.is_some(), above.is_some());
         let n = NeighborData {
             above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
             left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
@@ -959,11 +895,27 @@ fn roundtrip_read_write_coefficients(
 
         // call the right version depending on if we have all neighbors or not
         let r = if left.is_some() && above.is_some() {
-            read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
-                .unwrap()
+            read_coefficient_block::<true, _>(
+                &pt,
+                color_index,
+                &n,
+                read_model,
+                bool_reader,
+                qt,
+                features,
+            )
+            .unwrap()
         } else {
-            read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
-                .unwrap()
+            read_coefficient_block::<false, _>(
+                &pt,
+                color_index,
+                &n,
+                read_model,
+                bool_reader,
+                qt,
+                features,
+            )
+            .unwrap()
         };
 
         (r.0.transpose(), r.1)
@@ -977,10 +929,13 @@ fn roundtrip_read_write_coefficients(
     //
     // first: above_left (with no neighbors)
 
+    let color_index = 0;
+
     let w_above_left_ns = call_write_coefficient_block(
         None,
         None,
         None,
+        color_index,
         &above_left,
         &mut write_model,
         &mut bool_writer,
@@ -993,6 +948,7 @@ fn roundtrip_read_write_coefficients(
         Some((&above_left, &w_above_left_ns)),
         None,
         None,
+        color_index,
         &above,
         &mut write_model,
         &mut bool_writer,
@@ -1005,6 +961,7 @@ fn roundtrip_read_write_coefficients(
         None,
         Some((&above_left, &w_above_left_ns)),
         None,
+        color_index,
         &left,
         &mut write_model,
         &mut bool_writer,
@@ -1017,6 +974,7 @@ fn roundtrip_read_write_coefficients(
         Some((&left, &w_left_ns)),
         Some((&above, &w_above_ns)),
         Some(above_left),
+        color_index,
         &here,
         &mut write_model,
         &mut bool_writer,
@@ -1034,6 +992,7 @@ fn roundtrip_read_write_coefficients(
         None,
         None,
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -1051,6 +1010,7 @@ fn roundtrip_read_write_coefficients(
         Some((&r_above_left_block, &w_above_left_ns)),
         None,
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -1064,6 +1024,7 @@ fn roundtrip_read_write_coefficients(
         None,
         Some((&r_above_left_block, &r_above_left_ns)),
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -1077,6 +1038,7 @@ fn roundtrip_read_write_coefficients(
         Some((&r_left_block, &r_left_ns)),
         Some((&r_above_block, &r_above_ns)),
         Some(above_left),
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,

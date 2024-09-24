@@ -20,8 +20,12 @@ pub struct ProbabilityTables {
     left_present: bool,
     above_present: bool,
     all_present: bool,
-    color: usize,
 }
+
+pub static NO_NEIGHBORS: ProbabilityTables = ProbabilityTables::new(false, false);
+pub static TOP_ONLY: ProbabilityTables = ProbabilityTables::new(false, true);
+pub static LEFT_ONLY: ProbabilityTables = ProbabilityTables::new(true, false);
+pub static ALL: ProbabilityTables = ProbabilityTables::new(true, true);
 
 pub struct PredictDCResult {
     pub predicted_dc: i32,
@@ -31,12 +35,11 @@ pub struct PredictDCResult {
 }
 
 impl ProbabilityTables {
-    pub fn new(kcolor: usize, in_left_present: bool, in_above_present: bool) -> ProbabilityTables {
+    pub const fn new(in_left_present: bool, in_above_present: bool) -> ProbabilityTables {
         return ProbabilityTables {
             left_present: in_left_present,
             above_present: in_above_present,
             all_present: in_left_present && in_above_present,
-            color: kcolor,
         };
     }
 
@@ -73,8 +76,8 @@ impl ProbabilityTables {
         return retval;
     }
 
-    pub fn get_color_index(&self) -> usize {
-        return if self.color == 0 { 0 } else { 1 };
+    pub fn get_color_index(component: usize) -> usize {
+        return if component == 0 { 0 } else { 1 };
     }
 
     pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
