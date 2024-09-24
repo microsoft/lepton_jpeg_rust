@@ -636,7 +636,7 @@ fn recode_baseline_jpeg<R: Read, W: Write>(
             )
             .context(here!())?;
 
-            #[cfg(detailed_tracing)]
+            #[cfg(feature = "detailed_tracing")]
             info!(
                 "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
                 combined_thread_handoff.luma_y_start,

@@ -28,7 +28,6 @@ use crate::structs::{
 use default_boxed::DefaultBoxed;
 
 use super::block_context::NeighborData;
-use super::probability_tables_set::PTS;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -99,11 +98,11 @@ pub fn lepton_encode_row_range<W: Write>(
         if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &PTS.corner[component];
-            middle_model = &PTS.top[component];
+            left_model = &super::probability_tables::CORNER;
+            middle_model = &super::probability_tables::TOP;
         } else {
-            left_model = &PTS.mid_left[component];
-            middle_model = &PTS.middle[component];
+            left_model = &super::probability_tables::LEFT;
+            middle_model = &super::probability_tables::ALL;
         }
 
         process_row(
@@ -111,6 +110,7 @@ pub fn lepton_encode_row_range<W: Write>(
             &mut bool_writer,
             left_model,
             middle_model,
+            if component == 0 { 0 } else { 1 },
             &image_data[component],
             &quantization_tables[component],
             &mut neighbor_summary_cache[component][..],
@@ -151,6 +151,7 @@ fn process_row<W: Write>(
     bool_writer: &mut VPXBoolWriter<W>,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
+    color_index: usize,
     image_data: &BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut [NeighborSummary],
@@ -175,6 +176,7 @@ fn process_row<W: Write>(
                 qt,
                 pt,
                 model,
+                color_index,
                 image_data,
                 neighbor_summary_cache,
                 bool_writer,
@@ -187,6 +189,7 @@ fn process_row<W: Write>(
                 qt,
                 pt,
                 model,
+                color_index,
                 image_data,
                 neighbor_summary_cache,
                 bool_writer,
@@ -211,6 +214,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     model: &mut Model,
+    color_index: usize,
     image_data: &BlockBasedImage,
     neighbor_summary_cache: &mut [NeighborSummary],
     bool_writer: &mut VPXBoolWriter<W>,
@@ -232,6 +236,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 
     let ns = write_coefficient_block::<ALL_PRESENT, W>(
         pt,
+        color_index,
         &neighbors,
         block,
         model,
@@ -252,6 +257,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 /// image data, etc so it can be extensively unit tested.
 pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     pt: &ProbabilityTables,
+    color_index: usize,
     neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
     model: &mut Model,
@@ -259,7 +265,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     qt: &QuantizationTables,
     features: &EnabledFeatures,
 ) -> Result<NeighborSummary> {
-    let model_per_color = model.get_per_color(pt);
+    let model_per_color = model.get_per_color(color_index);
 
     // First we encode the 49 inner coefficients
 
@@ -375,7 +381,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     model
         .write_dc(
             bool_writer,
-            pt.get_color_index(),
+            color_index,
             avg_predicted_dc as i16,
             predicted_val.uncertainty,
             predicted_val.uncertainty2,
@@ -821,13 +827,14 @@ fn roundtrip_read_write_coefficients(
         left: Option<(&AlignedBlock, &NeighborSummary)>,
         above: Option<(&AlignedBlock, &NeighborSummary)>,
         above_left: Option<&AlignedBlock>,
+        color_index: usize,
         here: &AlignedBlock,
         write_model: &mut Model,
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         features: &EnabledFeatures,
     ) -> NeighborSummary {
-        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let pt = ProbabilityTables::new(left.is_some(), above.is_some());
         let n = NeighborData {
             above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
             left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
@@ -842,6 +849,7 @@ fn roundtrip_read_write_coefficients(
         if left.is_some() && above.is_some() {
             write_coefficient_block::<true, _>(
                 &pt,
+                color_index,
                 &n,
                 &here_tr,
                 write_model,
@@ -853,6 +861,7 @@ fn roundtrip_read_write_coefficients(
         } else {
             write_coefficient_block::<false, _>(
                 &pt,
+                color_index,
                 &n,
                 &here_tr,
                 write_model,
@@ -869,12 +878,13 @@ fn roundtrip_read_write_coefficients(
         left: Option<(&AlignedBlock, &NeighborSummary)>,
         above: Option<(&AlignedBlock, &NeighborSummary)>,
         above_left: Option<&AlignedBlock>,
+        color_index: usize,
         read_model: &mut Model,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
         features: &EnabledFeatures,
     ) -> (AlignedBlock, NeighborSummary) {
-        let pt = ProbabilityTables::new(0, left.is_some(), above.is_some());
+        let pt = ProbabilityTables::new(left.is_some(), above.is_some());
         let n = NeighborData {
             above: &above.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
             left: &left.map(|x| x.0).unwrap_or(&EMPTY_BLOCK).transpose(),
@@ -885,11 +895,27 @@ fn roundtrip_read_write_coefficients(
 
         // call the right version depending on if we have all neighbors or not
         let r = if left.is_some() && above.is_some() {
-            read_coefficient_block::<true, _>(&pt, &n, read_model, bool_reader, qt, features)
-                .unwrap()
+            read_coefficient_block::<true, _>(
+                &pt,
+                color_index,
+                &n,
+                read_model,
+                bool_reader,
+                qt,
+                features,
+            )
+            .unwrap()
         } else {
-            read_coefficient_block::<false, _>(&pt, &n, read_model, bool_reader, qt, features)
-                .unwrap()
+            read_coefficient_block::<false, _>(
+                &pt,
+                color_index,
+                &n,
+                read_model,
+                bool_reader,
+                qt,
+                features,
+            )
+            .unwrap()
         };
 
         (r.0.transpose(), r.1)
@@ -903,10 +929,13 @@ fn roundtrip_read_write_coefficients(
     //
     // first: above_left (with no neighbors)
 
+    let color_index = 0;
+
     let w_above_left_ns = call_write_coefficient_block(
         None,
         None,
         None,
+        color_index,
         &above_left,
         &mut write_model,
         &mut bool_writer,
@@ -919,6 +948,7 @@ fn roundtrip_read_write_coefficients(
         Some((&above_left, &w_above_left_ns)),
         None,
         None,
+        color_index,
         &above,
         &mut write_model,
         &mut bool_writer,
@@ -931,6 +961,7 @@ fn roundtrip_read_write_coefficients(
         None,
         Some((&above_left, &w_above_left_ns)),
         None,
+        color_index,
         &left,
         &mut write_model,
         &mut bool_writer,
@@ -943,6 +974,7 @@ fn roundtrip_read_write_coefficients(
         Some((&left, &w_left_ns)),
         Some((&above, &w_above_ns)),
         Some(above_left),
+        color_index,
         &here,
         &mut write_model,
         &mut bool_writer,
@@ -960,6 +992,7 @@ fn roundtrip_read_write_coefficients(
         None,
         None,
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -977,6 +1010,7 @@ fn roundtrip_read_write_coefficients(
         Some((&r_above_left_block, &w_above_left_ns)),
         None,
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -990,6 +1024,7 @@ fn roundtrip_read_write_coefficients(
         None,
         Some((&r_above_left_block, &r_above_left_ns)),
         None,
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,
@@ -1003,6 +1038,7 @@ fn roundtrip_read_write_coefficients(
         Some((&r_left_block, &r_left_ns)),
         Some((&r_above_block, &r_above_ns)),
         Some(above_left),
+        color_index,
         &mut read_model,
         &mut bool_reader,
         &qt,

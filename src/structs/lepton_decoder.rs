@@ -28,7 +28,6 @@ use crate::structs::{
 };
 
 use super::block_context::{BlockContext, NeighborData};
-use super::probability_tables_set::PTS;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -99,11 +98,11 @@ pub fn lepton_decode_row_range<R: Read>(
         if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &PTS.corner[component];
-            middle_model = &PTS.top[component];
+            left_model = &super::probability_tables::CORNER;
+            middle_model = &super::probability_tables::TOP;
         } else {
-            left_model = &PTS.mid_left[component];
-            middle_model = &PTS.middle[component];
+            left_model = &super::probability_tables::LEFT;
+            middle_model = &super::probability_tables::ALL;
         }
 
         decode_row_wrapper(
@@ -111,6 +110,7 @@ pub fn lepton_decode_row_range<R: Read>(
             &mut bool_reader,
             left_model,
             middle_model,
+            if component == 0 { 0 } else { 1 },
             &mut image_data[component],
             &qt[component],
             &mut neighbor_summary_cache[component],
@@ -129,6 +129,7 @@ fn decode_row_wrapper<R: Read>(
     bool_reader: &mut VPXBoolReader<R>,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
+    color_index: usize,
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut [NeighborSummary],
@@ -156,6 +157,7 @@ fn decode_row_wrapper<R: Read>(
                 neighbor_summary_cache,
                 qt,
                 pt,
+                color_index,
                 features,
             )
             .context(here!())?;
@@ -168,6 +170,7 @@ fn decode_row_wrapper<R: Read>(
                 neighbor_summary_cache,
                 qt,
                 pt,
+                color_index,
                 features,
             )
             .context(here!())?;
@@ -192,6 +195,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     neighbor_summary_cache: &mut [NeighborSummary],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
+    color_index: usize,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(pt.is_all_present() == ALL_PRESENT);
@@ -199,8 +203,15 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let neighbors =
         context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
-    let (output, ns) =
-        read_coefficient_block::<ALL_PRESENT, R>(pt, &neighbors, model, bool_reader, qt, features)?;
+    let (output, ns) = read_coefficient_block::<ALL_PRESENT, R>(
+        pt,
+        color_index,
+        &neighbors,
+        model,
+        bool_reader,
+        qt,
+        features,
+    )?;
 
     context.set_neighbor_summary_here(neighbor_summary_cache, ns);
 
@@ -216,13 +227,14 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 /// image data, etc so it can be extensively unit tested.
 pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     pt: &ProbabilityTables,
+    color_index: usize,
     neighbor_data: &NeighborData,
     model: &mut Model,
     bool_reader: &mut VPXBoolReader<R>,
     qt: &QuantizationTables,
     features: &EnabledFeatures,
 ) -> Result<(AlignedBlock, NeighborSummary)> {
-    let model_per_color = model.get_per_color(pt);
+    let model_per_color = model.get_per_color(color_index);
 
     // First we read the 49 inner coefficients
 
@@ -333,7 +345,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let coef = model
         .read_dc(
             bool_reader,
-            pt.get_color_index(),
+            color_index,
             predicted_dc.uncertainty,
             predicted_dc.uncertainty2,
         )

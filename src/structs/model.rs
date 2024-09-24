@@ -15,7 +15,6 @@ use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
-use super::probability_tables::ProbabilityTables;
 use super::quantization_tables::QuantizationTables;
 use super::vpx_bool_reader::VPXBoolReader;
 use super::vpx_bool_writer::VPXBoolWriter;
@@ -564,8 +563,8 @@ impl ModelPerColor {
 }
 
 impl Model {
-    pub fn get_per_color(&mut self, pt: &ProbabilityTables) -> &mut ModelPerColor {
-        &mut self.per_color[pt.get_color_index()]
+    pub fn get_per_color(&mut self, color_index: usize) -> &mut ModelPerColor {
+        &mut self.per_color[color_index]
     }
 
     pub fn read_dc<R: Read>(

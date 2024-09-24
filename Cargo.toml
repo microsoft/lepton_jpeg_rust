@@ -25,6 +25,7 @@ debug=true
 default = []
 compression_stats = []
 use_rayon = ["dep:rayon-core"]
+detailed_tracing = []
 
 [dependencies]
 bytemuck = "1"
