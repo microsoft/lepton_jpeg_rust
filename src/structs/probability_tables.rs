@@ -22,9 +22,9 @@ pub struct ProbabilityTables {
     all_present: bool,
 }
 
-pub static CORNER: ProbabilityTables = ProbabilityTables::new(false, false);
-pub static LEFT: ProbabilityTables = ProbabilityTables::new(false, true);
-pub static TOP: ProbabilityTables = ProbabilityTables::new(true, false);
+pub static NO_NEIGHBORS: ProbabilityTables = ProbabilityTables::new(false, false);
+pub static TOP_ONLY: ProbabilityTables = ProbabilityTables::new(false, true);
+pub static LEFT_ONLY: ProbabilityTables = ProbabilityTables::new(true, false);
 pub static ALL: ProbabilityTables = ProbabilityTables::new(true, true);
 
 pub struct PredictDCResult {
@@ -74,6 +74,10 @@ impl ProbabilityTables {
         }
 
         return retval;
+    }
+
+    pub fn get_color_index(component: usize) -> usize {
+        return if component == 0 { 0 } else { 1 };
     }
 
     pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {

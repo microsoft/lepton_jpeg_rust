@@ -98,10 +98,10 @@ pub fn lepton_encode_row_range<W: Write>(
         if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &super::probability_tables::CORNER;
-            middle_model = &super::probability_tables::TOP;
+            left_model = &super::probability_tables::NO_NEIGHBORS;
+            middle_model = &super::probability_tables::LEFT_ONLY;
         } else {
-            left_model = &super::probability_tables::LEFT;
+            left_model = &super::probability_tables::TOP_ONLY;
             middle_model = &super::probability_tables::ALL;
         }
 
@@ -110,7 +110,7 @@ pub fn lepton_encode_row_range<W: Write>(
             &mut bool_writer,
             left_model,
             middle_model,
-            if component == 0 { 0 } else { 1 },
+            ProbabilityTables::get_color_index(component),
             &image_data[component],
             &quantization_tables[component],
             &mut neighbor_summary_cache[component][..],

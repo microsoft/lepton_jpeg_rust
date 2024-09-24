@@ -98,10 +98,10 @@ pub fn lepton_decode_row_range<R: Read>(
         if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &super::probability_tables::CORNER;
-            middle_model = &super::probability_tables::TOP;
+            left_model = &super::probability_tables::NO_NEIGHBORS;
+            middle_model = &super::probability_tables::LEFT_ONLY;
         } else {
-            left_model = &super::probability_tables::LEFT;
+            left_model = &super::probability_tables::TOP_ONLY;
             middle_model = &super::probability_tables::ALL;
         }
 
@@ -110,7 +110,7 @@ pub fn lepton_decode_row_range<R: Read>(
             &mut bool_reader,
             left_model,
             middle_model,
-            if component == 0 { 0 } else { 1 },
+            ProbabilityTables::get_color_index(component),
             &mut image_data[component],
             &qt[component],
             &mut neighbor_summary_cache[component],
