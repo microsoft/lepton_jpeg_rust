@@ -259,9 +259,9 @@ impl HuffTree {
             if node == 0xffff || node < 256 {
                 // invalid code or code was too long to fit, so just say it requireds 256 bits
                 // so we will take the long path to decode it
-                ht.peek_code[peekbyte as usize] = (0, 0xff);
+                ht.peek_code[peekbyte] = (0, 0xff);
             } else {
-                ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
+                ht.peek_code[peekbyte] = ((node - 256) as u8, len);
             }
         }
         Ok(ht)

@@ -20,7 +20,7 @@ pub use metrics::Metrics;
 use core::result::Result;
 use std::panic::catch_unwind;
 
-use std::io::{Cursor, Read, Seek, Write};
+use std::io::{BufRead, Cursor, Seek, Write};
 
 use crate::structs::lepton_format::{
     decode_lepton_wrapper, encode_lepton_wrapper, encode_lepton_wrapper_verify,
@@ -46,7 +46,7 @@ fn translate_error(e: anyhow::Error) -> LeptonError {
 }
 
 /// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: Read + Seek, W: Write>(
+pub fn decode_lepton<R: BufRead + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -55,7 +55,7 @@ pub fn decode_lepton<R: Read + Seek, W: Write>(
 }
 
 /// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton<R: Read + Seek, W: Write + Seek>(
+pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     max_threads: usize,

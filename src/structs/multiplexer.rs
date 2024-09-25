@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::{
     cmp,
-    io::{Cursor, Read, Write},
+    io::{BufRead, Cursor, Read, Write},
     mem::swap,
     sync::{
         mpsc::{channel, Receiver, SendError, Sender},
@@ -276,39 +276,61 @@ impl MultiplexReader {
 /// causing processor that is trying to read from the channel to error out and exit. After all
 /// the readers have exited, we collect the results/errors from all the processors and return a vector
 /// of the results back to the caller.
-pub fn multiplex_read<READ, FN, RESULT>(
-    reader: &mut READ,
-    num_threads: usize,
-    processor: FN,
-) -> Result<Vec<RESULT>>
-where
-    READ: Read,
-    FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
-    RESULT: Send,
-{
-    // track if we got an error while trying to send to a thread
-    let mut error_sending: Option<SendError<Message>> = None;
+pub struct MultiplexReaderState<RESULT> {
+    buffer: Vec<u8>,
+    sender_channels: Vec<Sender<Message>>,
+    result_receiver: Receiver<(usize, Result<RESULT>)>,
+}
 
-    let mut thread_results = Vec::<Option<Result<RESULT>>>::new();
-    for _i in 0..num_threads {
-        thread_results.push(None);
+pub trait MultiplexProcess<DATA> {
+    fn process(&mut self, source: DATA) -> Result<()>;
+}
+
+impl<RESULT> MultiplexProcess<&[u8]> for MultiplexReaderState<RESULT> {
+    fn process(&mut self, source: &[u8]) -> Result<()> {
+        self.process_slice(source)
     }
+}
 
-    let arc_processor = Arc::new(Box::new(processor));
+impl<RESULT, R: BufRead> MultiplexProcess<&mut R> for MultiplexReaderState<RESULT> {
+    fn process(&mut self, source: &mut R) -> Result<()> {
+        loop {
+            let read_buffer = source.fill_buf()?;
+            let read_buffer_len = read_buffer.len();
+            if read_buffer_len == 0 {
+                break;
+            }
+            self.process_slice(read_buffer)?;
+            source.consume(read_buffer_len);
+        }
 
-    my_scope(|s| -> Result<()> {
+        Ok(())
+    }
+}
+
+impl<RESULT> MultiplexReaderState<RESULT> {
+    pub fn new<FN>(num_threads: usize, processor: FN) -> MultiplexReaderState<RESULT>
+    where
+        FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
+        RESULT: Send + 'static,
+    {
+        let (result_sender, result_receiver) = channel::<(usize, Result<RESULT>)>();
+
+        let arc_processor = Arc::new(Box::new(processor));
+
         let mut channel_to_sender = Vec::new();
 
         // create a channel for each stream and spawn a work item to read from it
         // the return value from each work item is stored in thread_results, which
         // is collected at the end
-        for (thread_id, result) in thread_results.iter_mut().enumerate() {
-            let (tx, rx) = channel();
+        for thread_id in 0..num_threads {
+            let (tx, rx) = channel::<Message>();
             channel_to_sender.push(tx);
 
             let cloned_processor = arc_processor.clone();
+            let cloned_result_sender = result_sender.clone();
 
-            my_spawn(s, move || {
+            std::thread::spawn(move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id as u8,
@@ -316,91 +338,99 @@ where
                     receiver: rx,
                     end_of_file: false,
                 };
-                *result = Some(cloned_processor(thread_id, &mut proc_reader));
+
+                // nothing to do if we fail to return the results (since the caller
+                // died and we can't return the results)
+                _ = cloned_result_sender
+                    .send((thread_id, cloned_processor(thread_id, &mut proc_reader)));
             });
         }
 
-        // now that the channels are waiting for input, read the stream and send all the buffers to their respective readers
-        loop {
-            let mut thread_marker_a = [0; 1];
-            if reader.read(&mut thread_marker_a)? == 0 {
-                break;
-            }
+        MultiplexReaderState {
+            sender_channels: channel_to_sender,
+            result_receiver: result_receiver,
+            buffer: Vec::new(),
+        }
+    }
 
-            let thread_marker = thread_marker_a[0];
+    /// process as much incoming data as we can and send it to the appropriate thread
+    pub fn process_slice(&mut self, source: &[u8]) -> Result<()> {
+        let mut src = if self.buffer.len() == 0 {
+            source
+        } else {
+            self.buffer.extend_from_slice(source);
+            &self.buffer
+        };
 
-            let thread_id = (thread_marker & 0xf) as u8;
+        while src.len() > 1 {
+            let thread_marker = src[0];
 
-            if thread_id >= channel_to_sender.len() as u8 {
+            let thread_id = usize::from(thread_marker & 0xf);
+
+            if thread_id >= self.sender_channels.len() {
                 return err_exit_code(
                     ExitCode::BadLeptonFile,
                     format!("invalid thread_id {0}", thread_id).as_str(),
                 );
             }
 
-            let data_length = if thread_marker < 16 {
-                let b0 = reader.read_u8().context(here!())?;
-                let b1 = reader.read_u8().context(here!())?;
+            let (skip, data_length) = if thread_marker < 16 {
+                if src.len() < 2 {
+                    break;
+                }
+                let b0 = usize::from(src[1]);
+                let b1 = usize::from(src[2]);
 
-                ((b1 as usize) << 8) + b0 as usize + 1
+                (3, (b1 << 8) + b0 + 1)
             } else {
                 // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
                 let flags = (thread_marker >> 4) & 3;
 
-                1024 << (2 * flags)
+                (1, 1024 << (2 * flags))
             };
 
-            //info!("offset {0} len {1}", reader.stream_position()?-2, data_length);
-
-            let mut buffer = vec![0; data_length as usize];
-
-            reader
-                .read_exact(&mut buffer)
-                .with_context(|| format!("reading {0} bytes", buffer.len()))?;
-
-            let e =
-                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
-
-            if let Err(e) = e {
-                error_sending = Some(e);
+            if src.len() < skip + data_length {
                 break;
             }
-        }
-        //info!("done sending!");
 
-        for c in channel_to_sender {
-            // ignore the result of send, since a thread may have already blown up with an error and we will get it when we join (rather than exiting with a useless channel broken message)
-            let _ = c.send(Message::Eof);
+            let buffer = src[skip..skip + data_length].to_vec();
+            self.sender_channels[thread_id].send(Message::WriteBlock(thread_id as u8, buffer))?;
+
+            src = &src[skip + data_length..];
         }
+
+        self.buffer = src.to_vec();
 
         Ok(())
-    })?;
+    }
 
-    let mut result = Vec::new();
-    let mut thread_not_run = false;
-    for i in thread_results.drain(..) {
-        match i {
-            None => thread_not_run = true,
-            Some(Err(e)) => {
-                return Err(e).context(here!());
-            }
-            Some(Ok(r)) => {
-                result.push(r);
+    pub fn complete(&mut self) -> Result<Vec<RESULT>> {
+        let mut results = Vec::new();
+        for thread_id in 0..self.sender_channels.len() {
+            // send eof to all threads (ignore results since they might be dead already)
+            _ = self.sender_channels[thread_id].send(Message::Eof);
+            results.push(None);
+        }
+
+        let mut error = None;
+        for _i in 0..self.sender_channels.len() {
+            match self.result_receiver.recv().context(here!())? {
+                (thread_id, Ok(r)) => {
+                    results[thread_id] = Some(r);
+                }
+                (_thread_id, Err(e)) => {
+                    error = Some(e);
+                }
             }
         }
-    }
 
-    if thread_not_run {
-        return err_exit_code(ExitCode::GeneralFailure, "thread did not run").context(here!());
+        if let Some(e) = error {
+            Err(e).context(here!())
+        } else {
+            let results: Vec<RESULT> = results.into_iter().map(|x| x.unwrap()).collect();
+            Ok(results)
+        }
     }
-
-    // if there was an error during send, it should have resulted in an error from one of the threads above and
-    // we wouldn't get here, but as an extra precaution, we check here to make sure we didn't miss anything
-    if let Some(e) = error_sending {
-        return Err(e).context(here!());
-    }
-
-    Ok(result)
 }
 
 /// simple end to end test that write the thread id and reads it back
@@ -419,12 +449,15 @@ fn test_multiplex_end_to_end() {
 
     let mut reader = Cursor::new(output);
 
-    let r = multiplex_read(&mut reader, 10, |thread_id, reader| -> Result<usize> {
+    let mut multiplex_state = MultiplexReaderState::new(10, |thread_id, reader| -> Result<usize> {
         let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
         assert_eq!(read_thread_id, thread_id as u32);
         Ok(thread_id)
-    })
-    .unwrap();
+    });
+
+    multiplex_state.process(&mut reader).unwrap();
+
+    let r = multiplex_state.complete().unwrap();
 
     assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }

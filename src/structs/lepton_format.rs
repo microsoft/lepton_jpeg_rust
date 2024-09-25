@@ -5,10 +5,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use log::{info, warn};
-use std::cmp;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use log::{info, warn, STATIC_MAX_LEVEL};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
+use std::{cmp, mem};
 
 use anyhow::{Context, Result};
 
@@ -23,7 +23,7 @@ use crate::structs::jpeg_header::{JPegEncodingInfo, JPegHeader};
 use crate::structs::jpeg_write::jpeg_write_baseline_row_range;
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_encoder::lepton_encode_row_range;
-use crate::structs::multiplexer::{multiplex_read, multiplex_write};
+use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
@@ -31,10 +31,72 @@ use crate::structs::truncate_components::TruncateComponents;
 use super::jpeg_read::{read_progressive_scan, read_scan};
 use super::jpeg_write::jpeg_write_entire_scan;
 use super::lepton_header::LeptonHeader;
-use super::multiplexer::MultiplexReader;
+use super::multiplexer::{MultiplexProcess, MultiplexReader, MultiplexReaderState};
+
+enum DecoderState {
+    Start,
+    Header,
+    Scan(MultiplexReaderState<Vec<u8>>),
+    ReturnResults(Cursor<Vec<u8>>, Vec<Vec<u8>>),
+    EOI,
+}
+
+pub struct LeptonPushDecoder {
+    state: DecoderState,
+    buffer: Vec<u8>,
+    lh: LeptonHeader,
+    features: EnabledFeatures,
+}
+
+impl LeptonPushDecoder {
+    fn new(features: EnabledFeatures) -> Self {
+        LeptonPushDecoder {
+            state: DecoderState::Start,
+            lh: LeptonHeader::new(),
+            features: features,
+            buffer: Vec::new(),
+        }
+    }
+
+    fn push(
+        &mut self,
+        in_buffer: &[u8],
+        input_complete: bool,
+        out_buffer: &mut [u8],
+    ) -> Result<Option<usize>> {
+        self.buffer.extend(in_buffer);
+
+        match &mut self.state {
+            DecoderState::Start => {}
+            DecoderState::Scan(r) => {
+                r.process(in_buffer)?;
+
+                if input_complete {
+                    self.state =
+                        DecoderState::ReturnResults(Cursor::new(Vec::new()), r.complete()?);
+                }
+            }
+            DecoderState::ReturnResults(r, leftover) => {
+                if r.read(out_buffer)? == 0 {
+                    if leftover.len() > 0 {
+                        let v = leftover.remove(0);
+                        let r = Cursor::new(v);
+                        self.state = DecoderState::ReturnResults(r, mem::take(leftover));
+                    } else {
+                        self.state = DecoderState::EOI;
+                    }
+                }
+            }
+
+            _ => {}
+        }
+
+        Ok(None)
+    }
+}
 
 /// reads a lepton file and writes it out as a jpeg
-pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
+pub fn decode_lepton_wrapper<R: BufRead + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -310,34 +372,18 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
-fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
+fn run_lepton_decoder_threads<P: Send + 'static>(
     lh: &LeptonHeader,
-    reader: &mut R,
     features: &EnabledFeatures,
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
         jenc: &JPegEncodingInfo,
     ) -> Result<P>,
-) -> Result<(Metrics, Vec<P>)> {
+) -> Result<MultiplexReaderState<(Metrics, P)>> {
     let wall_time = Instant::now();
 
-    let mut qt = Vec::new();
-    for i in 0..lh.jpeg_header.cmpc {
-        let qtables = QuantizationTables::new(&lh.jpeg_header, i);
-
-        // check to see if quantitization table was properly initialized
-        // (table contains divisors for coefficients so it never should have a zero)
-        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
-            if qtables.get_quantization_table()[i] == 0 {
-                return err_exit_code(
-                    ExitCode::UnsupportedJpeg,
-                    "Quantization table contains zero",
-                );
-            }
-        }
-        qt.push(qtables);
-    }
+    let qt = construct_quantization_table(&lh.jpeg_header)?;
 
     let features = features.clone();
 
@@ -345,9 +391,8 @@ fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
 
     let thread_handoff = lh.thread_handoff.clone();
 
-    let mut thread_results = multiplex_read(
-        reader,
-        lh.thread_handoff.len(),
+    let multiplex_reader_state = MultiplexReaderState::new(
+        thread_handoff.len(),
         move |thread_id, reader| -> Result<(Metrics, P)> {
             run_lepton_decoder_processor(
                 &jenc,
@@ -359,23 +404,9 @@ fn run_lepton_decoder_threads<R: Read, P: Send + 'static>(
                 process,
             )
         },
-    )?;
-
-    let mut metrics = Metrics::default();
-
-    let mut result = Vec::new();
-    for (m, r) in thread_results.drain(..) {
-        metrics.merge_from(m);
-        result.push(r);
-    }
-
-    info!(
-        "worker threads {0}ms of CPU time in {1}ms of wall time",
-        metrics.get_cpu_time_worker_time().as_millis(),
-        wall_time.elapsed().as_millis()
     );
 
-    Ok((metrics, result))
+    Ok(multiplex_reader_state)
 }
 
 /// the logic of a decoder thread. Takes a range of rows
@@ -448,22 +479,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     // Prepare quantization tables
-    let mut quantization_tables = Vec::new();
-    for i in 0..image_data.len() {
-        let qtables = QuantizationTables::new(jpeg_header, i);
-
-        // check to see if quantitization table was properly initialized
-        // (table contains divisors for coefficients so it never should have a zero)
-        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
-            if qtables.get_quantization_table()[i] == 0 {
-                return err_exit_code(
-                    ExitCode::UnsupportedJpeg,
-                    "Quantization table contains zero",
-                );
-            }
-        }
-        quantization_tables.push(qtables);
-    }
+    let quantization_tables = construct_quantization_table(jpeg_header)?;
 
     let colldata = colldata.clone();
     let thread_handoffs = thread_handoffs.to_vec();
@@ -510,7 +526,28 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     Ok(merged_metrics)
 }
 
-fn recode_jpeg<R: Read, W: Write>(
+/// constructs the quantization table based on the jpeg header
+fn construct_quantization_table(jpeg_header: &JPegHeader) -> Result<Vec<QuantizationTables>> {
+    let mut quantization_tables = Vec::new();
+    for i in 0..jpeg_header.cmpc {
+        let qtables = QuantizationTables::new(jpeg_header, i);
+
+        // check to see if quantitization table was properly initialized
+        // (table contains divisors for edge coefficients so it never should have a zero)
+        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
+            if qtables.get_quantization_table()[i] == 0 {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "Quantization table contains zero for edge which would cause a divide by zero",
+                );
+            }
+        }
+        quantization_tables.push(qtables);
+    }
+    Ok(quantization_tables)
+}
+
+fn recode_jpeg<R: BufRead, W: Write>(
     lh: &mut LeptonHeader,
     writer: &mut W,
     reader: &mut R,
@@ -550,32 +587,41 @@ fn recode_jpeg<R: Read, W: Write>(
 }
 
 /// decodes the entire image and merges the results into a single set of BlockBaseImage per component
-pub fn decode_as_single_image<R: Read>(
+pub fn decode_as_single_image<R: BufRead>(
     lh: &mut LeptonHeader,
     reader: &mut R,
     features: &EnabledFeatures,
 ) -> Result<(Vec<BlockBasedImage>, Metrics)> {
+    let mut state = run_lepton_decoder_threads(lh, features, |_thread_handoff, image_data, _lh| {
+        // just return the image data directly to be merged together
+        return Ok(image_data);
+    })
+    .context(here!())?;
+
+    state.process(reader)?;
+
     // run the threads first, since we need everything before we can start decoding
-    let (metrics, mut results) =
-        run_lepton_decoder_threads(lh, reader, features, |_thread_handoff, image_data, _lh| {
-            // just return the image data directly to be merged together
-            return Ok(image_data);
-        })
-        .context(here!())?;
+    let mut merged_metrics = Metrics::default();
+    let mut results = Vec::new();
+
+    for (metric, vec) in state.complete().context(here!())? {
+        merged_metrics.merge_from(metric);
+        results.push(vec);
+    }
 
     // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
-    let mut merged = Vec::new();
 
     let num_components = results[0].len();
+    let mut merged = Vec::new();
     for i in 0..num_components {
         merged.push(BlockBasedImage::merge(&mut results, i));
     }
 
-    Ok((merged, metrics))
+    Ok((merged, merged_metrics))
 }
 
 /// progressive decoder, requires that the entire lepton file is processed first
-fn recode_progressive_jpeg<R: Read, W: Write>(
+fn recode_progressive_jpeg<R: BufRead, W: Write>(
     lh: &mut LeptonHeader,
     reader: &mut R,
     writer: &mut W,
@@ -612,7 +658,7 @@ fn recode_progressive_jpeg<R: Read, W: Write>(
 
 // baseline decoder can run the jpeg encoder inside the worker thread vs progressive encoding which needs to get the entire set of coefficients first
 // since it runs throught it multiple times.
-fn recode_baseline_jpeg<R: Read, W: Write>(
+fn recode_baseline_jpeg<R: BufRead, W: Write>(
     lh: &mut LeptonHeader,
     reader: &mut R,
     writer: &mut W,
@@ -620,11 +666,8 @@ fn recode_baseline_jpeg<R: Read, W: Write>(
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     // recode image data
-    let (metrics, results) = run_lepton_decoder_threads(
-        lh,
-        reader,
-        enabled_features,
-        |thread_handoff, image_data, jenc| {
+    let mut state =
+        run_lepton_decoder_threads(lh, enabled_features, |thread_handoff, image_data, jenc| {
             let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
 
             jpeg_write_baseline_row_range(&mut result_buffer, &image_data, &thread_handoff, jenc)
@@ -647,15 +690,18 @@ fn recode_baseline_jpeg<R: Read, W: Write>(
             }
 
             return Ok(result_buffer);
-        },
-    )?;
+        })?;
+
+    state.process(reader)?;
+
+    // run the threads first, since we need everything before we can start decoding
+    let mut metrics = Metrics::default();
 
     let mut amount_written: u64 = 0;
-
-    // write all the buffers that we collected
-    for r in results {
-        amount_written += r.len() as u64;
-        writer.write_all(&r[..]).context(here!())?;
+    for (metric, vec) in state.complete().context(here!())? {
+        metrics.merge_from(metric);
+        writer.write_all(&vec).context(here!())?;
+        amount_written += vec.len() as u64;
     }
 
     // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
