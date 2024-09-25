@@ -154,8 +154,22 @@ fn main_with_result() -> anyhow::Result<()> {
                 .context(here!())?;
         } else {
             lh = LeptonHeader::new();
-            lh.read_lepton_header(&mut reader, &mut enabled_features)
+
+            let mut fixed_header_buffer = [0; 28];
+            reader
+                .read_exact(&mut fixed_header_buffer)
                 .context(here!())?;
+
+            let compressed_header_size = lh
+                .read_lepton_fixed_header(&fixed_header_buffer, &mut enabled_features)
+                .context(here!())?;
+
+            lh.read_compressed_lepton_header(
+                &mut reader,
+                &mut enabled_features,
+                compressed_header_size,
+            )
+            .context(here!())?;
 
             let _metrics;
 

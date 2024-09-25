@@ -4,9 +4,9 @@
 /// ends up with an interleaved stream of blocks from each thread.
 ///
 /// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
-use crate::{helpers::*, ExitCode};
+use crate::{helpers::*, structs::partial_buffer::PartialBuffer, ExitCode};
 use anyhow::{Context, Result};
-use byteorder::{ReadBytesExt, WriteBytesExt};
+use byteorder::WriteBytesExt;
 use std::{
     cmp,
     io::{BufRead, Cursor, Read, Write},
@@ -277,39 +277,24 @@ impl MultiplexReader {
 /// the readers have exited, we collect the results/errors from all the processors and return a vector
 /// of the results back to the caller.
 pub struct MultiplexReaderState<RESULT> {
-    buffer: Vec<u8>,
     sender_channels: Vec<Sender<Message>>,
     result_receiver: Receiver<(usize, Result<RESULT>)>,
+    reserve: usize,
+    current_state: State,
 }
 
-pub trait MultiplexProcess<DATA> {
-    fn process(&mut self, source: DATA) -> Result<()>;
-}
-
-impl<RESULT> MultiplexProcess<&[u8]> for MultiplexReaderState<RESULT> {
-    fn process(&mut self, source: &[u8]) -> Result<()> {
-        self.process_slice(source)
-    }
-}
-
-impl<RESULT, R: BufRead> MultiplexProcess<&mut R> for MultiplexReaderState<RESULT> {
-    fn process(&mut self, source: &mut R) -> Result<()> {
-        loop {
-            let read_buffer = source.fill_buf()?;
-            let read_buffer_len = read_buffer.len();
-            if read_buffer_len == 0 {
-                break;
-            }
-            self.process_slice(read_buffer)?;
-            source.consume(read_buffer_len);
-        }
-
-        Ok(())
-    }
+enum State {
+    StartBlock,
+    U16Length(u8),
+    Block(u8, usize),
 }
 
 impl<RESULT> MultiplexReaderState<RESULT> {
-    pub fn new<FN>(num_threads: usize, processor: FN) -> MultiplexReaderState<RESULT>
+    pub fn new<FN>(
+        num_threads: usize,
+        reserve: usize,
+        processor: FN,
+    ) -> MultiplexReaderState<RESULT>
     where
         FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
         RESULT: Send + 'static,
@@ -349,57 +334,72 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         MultiplexReaderState {
             sender_channels: channel_to_sender,
             result_receiver: result_receiver,
-            buffer: Vec::new(),
+            current_state: State::StartBlock,
+            reserve,
         }
     }
 
-    /// process as much incoming data as we can and send it to the appropriate thread
-    pub fn process_slice(&mut self, source: &[u8]) -> Result<()> {
-        let mut src = if self.buffer.len() == 0 {
-            source
-        } else {
-            self.buffer.extend_from_slice(source);
-            &self.buffer
-        };
-
-        while src.len() > 1 {
-            let thread_marker = src[0];
-
-            let thread_id = usize::from(thread_marker & 0xf);
-
-            if thread_id >= self.sender_channels.len() {
-                return err_exit_code(
-                    ExitCode::BadLeptonFile,
-                    format!("invalid thread_id {0}", thread_id).as_str(),
-                );
-            }
-
-            let (skip, data_length) = if thread_marker < 16 {
-                if src.len() < 2 {
-                    break;
-                }
-                let b0 = usize::from(src[1]);
-                let b1 = usize::from(src[2]);
-
-                (3, (b1 << 8) + b0 + 1)
-            } else {
-                // This format is used by Lepton C++ to write encoded chunks with length of 4096, 16384 or 65536 bytes
-                let flags = (thread_marker >> 4) & 3;
-
-                (1, 1024 << (2 * flags))
-            };
-
-            if src.len() < skip + data_length {
+    pub fn process_to_end(&mut self, source: &mut impl BufRead) -> Result<()> {
+        loop {
+            let b = source.fill_buf().context(here!())?;
+            let b_len = b.len();
+            if b_len == 0 {
                 break;
             }
-
-            let buffer = src[skip..skip + data_length].to_vec();
-            self.sender_channels[thread_id].send(Message::WriteBlock(thread_id as u8, buffer))?;
-
-            src = &src[skip + data_length..];
+            self.process_buffer(&mut PartialBuffer::new(b, &mut Vec::new()))?;
+            source.consume(b_len);
         }
+        Ok(())
+    }
 
-        self.buffer = src.to_vec();
+    /// process as much incoming data as we can and send it to the appropriate thread
+    pub fn process_buffer(&mut self, source: &mut PartialBuffer<'_>) -> Result<()> {
+        loop {
+            match self.current_state {
+                State::StartBlock => {
+                    if let Some(a) = source.take_n::<1>(self.reserve) {
+                        let thread_marker = a[0];
+
+                        let thread_id = thread_marker & 0xf;
+
+                        if usize::from(thread_id) >= self.sender_channels.len() {
+                            return err_exit_code(
+                                ExitCode::BadLeptonFile,
+                                format!("invalid thread_id {0}", thread_id).as_str(),
+                            );
+                        }
+
+                        if thread_marker < 16 {
+                            self.current_state = State::U16Length(thread_id);
+                        } else {
+                            let flags = (thread_marker >> 4) & 3;
+                            self.current_state = State::Block(thread_id, 1024 << (2 * flags));
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                State::U16Length(thread_marker) => {
+                    if let Some(a) = source.take_n::<2>(self.reserve) {
+                        let b0 = usize::from(a[0]);
+                        let b1 = usize::from(a[1]);
+
+                        self.current_state = State::Block(thread_marker, (b1 << 8) + b0 + 1);
+                    } else {
+                        break;
+                    }
+                }
+                State::Block(thread_id, data_length) => {
+                    if let Some(a) = source.take(data_length, self.reserve) {
+                        self.sender_channels[usize::from(thread_id)]
+                            .send(Message::WriteBlock(thread_id, a))?;
+                        self.current_state = State::StartBlock;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -436,6 +436,8 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 /// simple end to end test that write the thread id and reads it back
 #[test]
 fn test_multiplex_end_to_end() {
+    use byteorder::ReadBytesExt;
+
     let mut output = Vec::new();
 
     let w = multiplex_write(&mut output, 10, |writer, thread_id| -> Result<usize> {
@@ -447,15 +449,17 @@ fn test_multiplex_end_to_end() {
 
     assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-    let mut reader = Cursor::new(output);
+    let mut extra = Vec::new();
+    let mut i = PartialBuffer::new(&output, &mut extra);
 
-    let mut multiplex_state = MultiplexReaderState::new(10, |thread_id, reader| -> Result<usize> {
-        let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
-        assert_eq!(read_thread_id, thread_id as u32);
-        Ok(thread_id)
-    });
+    let mut multiplex_state =
+        MultiplexReaderState::new(10, 0, |thread_id, reader| -> Result<usize> {
+            let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
+            assert_eq!(read_thread_id, thread_id as u32);
+            Ok(thread_id)
+        });
 
-    multiplex_state.process(&mut reader).unwrap();
+    multiplex_state.process_buffer(&mut i).unwrap();
 
     let r = multiplex_state.complete().unwrap();
 

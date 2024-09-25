@@ -16,6 +16,8 @@ use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
+pub const FIXED_HEADER_SIZE: usize = 28;
+
 #[derive(Debug)]
 pub struct LeptonHeader {
     /// raw jpeg header to be written back to the file when it is recreated
@@ -100,18 +102,54 @@ impl LeptonHeader {
         };
     }
 
+    pub fn read_lepton_fixed_header(
+        &mut self,
+        header: &[u8; FIXED_HEADER_SIZE],
+        enabled_features: &mut EnabledFeatures,
+    ) -> Result<usize> {
+        if header[0..2] != LEPTON_FILE_HEADER[0..2] {
+            return err_exit_code(ExitCode::BadLeptonFile, "header doesn't match");
+        }
+        if header[2] != LEPTON_VERSION {
+            return err_exit_code(
+                ExitCode::VersionUnsupported,
+                format!("incompatible file with version {0}", header[3]).as_str(),
+            );
+        }
+        if header[3] != LEPTON_HEADER_BASELINE_JPEG_TYPE[0]
+            && header[3] != LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE[0]
+        {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                format!("Unknown filetype in header {0}", header[4]).as_str(),
+            );
+        }
+
+        let mut uncompressed_lepton_header_size = 0;
+        if header[8] == 'M' as u8 && header[9] == 'S' as u8 {
+            uncompressed_lepton_header_size =
+                u32::from_le_bytes(header[10..14].try_into().unwrap());
+
+            // read the flag bits to know how we should decode this file
+            let flags = header[14];
+            if (flags & 0x80) != 0 {
+                enabled_features.use_16bit_dc_estimate = (flags & 0x01) != 0;
+                enabled_features.use_16bit_adv_predict = (flags & 0x02) != 0;
+            }
+        }
+        self.plain_text_size = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        self.uncompressed_lepton_header_size = uncompressed_lepton_header_size;
+
+        Ok(u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize)
+    }
+
     /// reads the start of the lepton file and parses the compressed header. Returns the raw JPEG header contents.
-    pub fn read_lepton_header<R: Read>(
+    pub fn read_compressed_lepton_header<R: Read>(
         &mut self,
         reader: &mut R,
         enabled_features: &mut EnabledFeatures,
+        compressed_header_size: usize,
     ) -> Result<()> {
-        let (plain_text_size, compressed_header_size, uncompressed_lepton_header_size) =
-            LeptonHeader::read_lepton_fixed_header(reader, enabled_features)?;
-
-        self.plain_text_size = plain_text_size;
-        self.uncompressed_lepton_header_size = uncompressed_lepton_header_size;
-
         if compressed_header_size > MAX_FILE_SIZE_BYTES as usize {
             return err_exit_code(ExitCode::BadLeptonFile, "Too big compressed header");
         }
@@ -178,55 +216,6 @@ impl LeptonHeader {
         }
 
         Ok(())
-    }
-
-    fn read_lepton_fixed_header(
-        reader: &mut impl Read,
-        enabled_features: &mut EnabledFeatures,
-    ) -> Result<(u32, usize, u32)> {
-        let mut header = [0 as u8; LEPTON_FILE_HEADER.len()];
-        reader.read_exact(&mut header).context(here!())?;
-        if !buffer_prefix_matches_marker(header, LEPTON_FILE_HEADER) {
-            return err_exit_code(ExitCode::BadLeptonFile, "header doesn't match");
-        }
-        let version = reader.read_u8().context(here!())?;
-        if version != LEPTON_VERSION {
-            return err_exit_code(
-                ExitCode::VersionUnsupported,
-                format!("incompatible file with version {0}", version).as_str(),
-            );
-        }
-        let mut header = [0 as u8; 21];
-        reader.read_exact(&mut header).context(here!())?;
-        if header[0] != LEPTON_HEADER_BASELINE_JPEG_TYPE[0]
-            && header[0] != LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE[0]
-        {
-            return err_exit_code(
-                ExitCode::BadLeptonFile,
-                format!("Unknown filetype in header {0}", header[0]).as_str(),
-            );
-        }
-        let mut c = Cursor::new(header);
-        let mut uncompressed_lepton_header_size = 0;
-        if header[5] == 'M' as u8 && header[6] == 'S' as u8 {
-            c.set_position(7);
-            uncompressed_lepton_header_size = c.read_u32::<LittleEndian>()?;
-
-            // read the flag bits to know how we should decode this file
-            let flags = c.read_u8()?;
-            if (flags & 0x80) != 0 {
-                enabled_features.use_16bit_dc_estimate = (flags & 0x01) != 0;
-                enabled_features.use_16bit_adv_predict = (flags & 0x02) != 0;
-            }
-        }
-        c.set_position(17);
-        let plain_text_size = c.read_u32::<LittleEndian>()?;
-        let compressed_header_size = reader.read_u32::<LittleEndian>()? as usize;
-        Ok((
-            plain_text_size,
-            compressed_header_size,
-            uncompressed_lepton_header_size,
-        ))
     }
 
     /// parses and advances to the next header segment out of raw_jpeg_header into the jpeg header

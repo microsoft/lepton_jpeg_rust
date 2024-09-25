@@ -6,6 +6,7 @@
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn, STATIC_MAX_LEVEL};
+use std::cmp::min;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 use std::{cmp, mem};
@@ -30,68 +31,203 @@ use crate::structs::truncate_components::TruncateComponents;
 
 use super::jpeg_read::{read_progressive_scan, read_scan};
 use super::jpeg_write::jpeg_write_entire_scan;
-use super::lepton_header::LeptonHeader;
-use super::multiplexer::{MultiplexProcess, MultiplexReader, MultiplexReaderState};
+use super::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
+use super::multiplexer::{MultiplexReader, MultiplexReaderState};
+use super::partial_buffer::PartialBuffer;
 
 enum DecoderState {
-    Start,
-    Header,
-    Scan(MultiplexReaderState<Vec<u8>>),
+    FixedHeader(),
+    CompressedHeader(usize),
+    CMP(),
+    ScanProgressive(MultiplexReaderState<(Metrics, Vec<BlockBasedImage>)>),
+    ScanBaseline(MultiplexReaderState<(Metrics, Vec<u8>)>),
     ReturnResults(Cursor<Vec<u8>>, Vec<Vec<u8>>),
     EOI,
 }
 
 pub struct LeptonPushDecoder {
     state: DecoderState,
-    buffer: Vec<u8>,
     lh: LeptonHeader,
-    features: EnabledFeatures,
+    enabled_features: EnabledFeatures,
+    previous: Vec<u8>,
 }
 
 impl LeptonPushDecoder {
     fn new(features: EnabledFeatures) -> Self {
         LeptonPushDecoder {
-            state: DecoderState::Start,
+            state: DecoderState::FixedHeader(),
             lh: LeptonHeader::new(),
-            features: features,
-            buffer: Vec::new(),
+            enabled_features: features,
+            previous: Vec::new(),
+        }
+    }
+
+    fn fill_buffer(&mut self, amount: usize, in_buffer: &mut &[u8]) -> Option<Vec<u8>> {
+        let amount_to_copy = min(amount - self.previous.len(), in_buffer.len());
+        self.previous
+            .extend_from_slice(&in_buffer[0..amount_to_copy]);
+        *in_buffer = &in_buffer[amount_to_copy..];
+        if self.previous.len() == amount {
+            Some(mem::take(&mut self.previous))
+        } else {
+            None
         }
     }
 
     fn push(
         &mut self,
-        in_buffer: &[u8],
+        in_buffer: &mut PartialBuffer<'_>,
         input_complete: bool,
         out_buffer: &mut [u8],
-    ) -> Result<Option<usize>> {
-        self.buffer.extend(in_buffer);
-
-        match &mut self.state {
-            DecoderState::Start => {}
-            DecoderState::Scan(r) => {
-                r.process(in_buffer)?;
-
-                if input_complete {
-                    self.state =
-                        DecoderState::ReturnResults(Cursor::new(Vec::new()), r.complete()?);
-                }
-            }
-            DecoderState::ReturnResults(r, leftover) => {
-                if r.read(out_buffer)? == 0 {
-                    if leftover.len() > 0 {
-                        let v = leftover.remove(0);
-                        let r = Cursor::new(v);
-                        self.state = DecoderState::ReturnResults(r, mem::take(leftover));
+    ) -> Result<()> {
+        loop {
+            match &mut self.state {
+                DecoderState::FixedHeader() => {
+                    if let Some(v) = in_buffer.take(FIXED_HEADER_SIZE, 0) {
+                        let compressed_header_size = self.lh.read_lepton_fixed_header(
+                            &v.try_into().unwrap(),
+                            &mut self.enabled_features,
+                        )?;
+                        self.state = DecoderState::CompressedHeader(compressed_header_size);
                     } else {
-                        self.state = DecoderState::EOI;
+                        break;
                     }
                 }
-            }
+                DecoderState::CompressedHeader(compressed_length) => {
+                    if let Some(v) = in_buffer.take(*compressed_length, 0) {
+                        self.lh.read_compressed_lepton_header(
+                            &mut Cursor::new(v),
+                            &mut self.enabled_features,
+                            *compressed_length,
+                        )?;
 
-            _ => {}
+                        self.state = DecoderState::CMP();
+                    }
+                }
+                DecoderState::CMP() => {
+                    if let Some(v) = in_buffer.take(3, 0) {
+                        if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
+                            return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
+                        }
+
+                        if self.lh.jpeg_header.jpeg_type == JPegType::Progressive {
+                            let mux = run_lepton_decoder_threads(
+                                &self.lh,
+                                &self.enabled_features,
+                                4, /* reserve 4 bytes for the very end */
+                                |_thread_handoff, image_data, _lh| {
+                                    // just return the image data directly to be merged together
+                                    return Ok(image_data);
+                                },
+                            )
+                            .context(here!())?;
+
+                            self.state = DecoderState::ScanProgressive(mux);
+                        } else {
+                            let mux = run_lepton_decoder_threads(
+                                &self.lh,
+                                &self.enabled_features,
+                                4, /*reserve 4 bytes for the end */
+                                |thread_handoff, image_data, jenc| {
+                                    let mut result_buffer =
+                                        Vec::with_capacity(thread_handoff.segment_size as usize);
+
+                                    jpeg_write_baseline_row_range(
+                                        &mut result_buffer,
+                                        &image_data,
+                                        &thread_handoff,
+                                        jenc,
+                                    )
+                                    .context(here!())?;
+
+                                    #[cfg(feature = "detailed_tracing")]
+                                    info!(
+                                        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
+                                        combined_thread_handoff.luma_y_start,
+                                        combined_thread_handoff.segment_size,
+                                        cursor.position() - _start_size,
+                                        combined_thread_handoff.segment_offset_in_file,
+                                        combined_thread_handoff.overhang_byte,
+                                        combined_thread_handoff.num_overhang_bits
+                                    );
+
+                                    if result_buffer.len() > thread_handoff.segment_size as usize {
+                                        warn!("warning: truncating segment");
+                                        result_buffer
+                                            .resize(thread_handoff.segment_size as usize, 0);
+                                    }
+
+                                    return Ok(result_buffer);
+                                },
+                            )?;
+                            self.state = DecoderState::ScanBaseline(mux);
+                        }
+                    }
+                }
+
+                DecoderState::ScanProgressive(state) => {
+                    state.process_buffer(in_buffer)?;
+
+                    if input_complete {
+                        // run the threads first, since we need everything before we can start decoding
+                        let mut merged_metrics = Metrics::default();
+                        let mut results = Vec::new();
+
+                        for (metric, vec) in state.complete().context(here!())? {
+                            merged_metrics.merge_from(metric);
+                            results.push(vec);
+                        }
+
+                        // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
+                        let num_components = results[0].len();
+                        let mut merged = Vec::new();
+                        for i in 0..num_components {
+                            merged.push(BlockBasedImage::merge(&mut results, i));
+                        }
+
+                        let mut result = Vec::new();
+                        recode_progressive_jpeg(
+                            &mut self.lh,
+                            merged,
+                            &mut result,
+                            &self.enabled_features,
+                        )
+                        .context(here!())?;
+
+                        self.state = DecoderState::ReturnResults(Cursor::new(result), Vec::new());
+                    }
+                }
+                DecoderState::ScanBaseline(state) => {
+                    if input_complete {
+                        // run the threads first, since we need everything before we can start decoding
+                        let mut merged_metrics = Metrics::default();
+                        let mut results = Vec::new();
+
+                        for (metric, vec) in state.complete().context(here!())? {
+                            merged_metrics.merge_from(metric);
+                            results.push(vec);
+                        }
+
+                        self.state = DecoderState::ReturnResults(Cursor::new(Vec::new()), results);
+                    }
+                }
+                DecoderState::ReturnResults(r, leftover) => {
+                    if r.read(out_buffer)? == 0 {
+                        if leftover.len() > 0 {
+                            let v = leftover.remove(0);
+                            let r = Cursor::new(v);
+                            self.state = DecoderState::ReturnResults(r, mem::take(leftover));
+                        } else {
+                            self.state = DecoderState::EOI;
+                        }
+                    }
+                }
+
+                _ => {}
+            }
         }
 
-        Ok(None)
+        Ok(())
     }
 }
 
@@ -113,8 +249,19 @@ pub fn decode_lepton_wrapper<R: BufRead + Seek, W: Write>(
 
     let mut features_mut = enabled_features.clone();
 
-    lh.read_lepton_header(&mut reader_minus_trailer, &mut features_mut)
+    let mut header_buffer = [0; FIXED_HEADER_SIZE];
+    reader_minus_trailer.read_exact(&mut header_buffer)?;
+
+    let compressed_header_size = lh
+        .read_lepton_fixed_header(&header_buffer, &mut features_mut)
         .context(here!())?;
+
+    lh.read_compressed_lepton_header(
+        &mut reader_minus_trailer,
+        &mut features_mut,
+        compressed_header_size,
+    )
+    .context(here!())?;
 
     let metrics =
         recode_jpeg(&mut lh, writer, &mut reader_minus_trailer, &features_mut).context(here!())?;
@@ -375,6 +522,7 @@ pub fn read_jpeg<R: Read + Seek>(
 fn run_lepton_decoder_threads<P: Send + 'static>(
     lh: &LeptonHeader,
     features: &EnabledFeatures,
+    reserve: usize,
     process: fn(
         thread_handoff: &ThreadHandoff,
         image_data: Vec<BlockBasedImage>,
@@ -393,6 +541,7 @@ fn run_lepton_decoder_threads<P: Send + 'static>(
 
     let multiplex_reader_state = MultiplexReaderState::new(
         thread_handoff.len(),
+        reserve,
         move |thread_id, reader| -> Result<(Metrics, P)> {
             run_lepton_decoder_processor(
                 &jenc,
@@ -561,7 +710,10 @@ fn recode_jpeg<R: BufRead, W: Write>(
         .context(here!())?;
 
     let metrics = if lh.jpeg_header.jpeg_type == JPegType::Progressive {
-        recode_progressive_jpeg(lh, reader, writer, enabled_features).context(here!())?
+        let (merged, metrics) =
+            decode_as_single_image(lh, reader, enabled_features).context(here!())?;
+        recode_progressive_jpeg(lh, merged, writer, enabled_features).context(here!())?;
+        metrics
     } else {
         recode_baseline_jpeg(
             lh,
@@ -592,13 +744,14 @@ pub fn decode_as_single_image<R: BufRead>(
     reader: &mut R,
     features: &EnabledFeatures,
 ) -> Result<(Vec<BlockBasedImage>, Metrics)> {
-    let mut state = run_lepton_decoder_threads(lh, features, |_thread_handoff, image_data, _lh| {
-        // just return the image data directly to be merged together
-        return Ok(image_data);
-    })
-    .context(here!())?;
+    let mut state =
+        run_lepton_decoder_threads(lh, features, 0, |_thread_handoff, image_data, _lh| {
+            // just return the image data directly to be merged together
+            return Ok(image_data);
+        })
+        .context(here!())?;
 
-    state.process(reader)?;
+    state.process_to_end(reader)?;
 
     // run the threads first, since we need everything before we can start decoding
     let mut merged_metrics = Metrics::default();
@@ -621,16 +774,12 @@ pub fn decode_as_single_image<R: BufRead>(
 }
 
 /// progressive decoder, requires that the entire lepton file is processed first
-fn recode_progressive_jpeg<R: BufRead, W: Write>(
+fn recode_progressive_jpeg<W: Write>(
     lh: &mut LeptonHeader,
-    reader: &mut R,
+    merged: Vec<BlockBasedImage>,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    // run the threads first, since we need everything before we can start decoding
-    let (merged, metrics) =
-        decode_as_single_image(lh, reader, enabled_features).context(here!())?;
-
+) -> Result<()> {
     loop {
         // code another scan
         jpeg_write_entire_scan(writer, &merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
@@ -653,7 +802,7 @@ fn recode_progressive_jpeg<R: BufRead, W: Write>(
         lh.scnc += 1;
     }
 
-    Ok(metrics)
+    Ok(())
 }
 
 // baseline decoder can run the jpeg encoder inside the worker thread vs progressive encoding which needs to get the entire set of coefficients first
@@ -666,8 +815,11 @@ fn recode_baseline_jpeg<R: BufRead, W: Write>(
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     // recode image data
-    let mut state =
-        run_lepton_decoder_threads(lh, enabled_features, |thread_handoff, image_data, jenc| {
+    let mut state = run_lepton_decoder_threads(
+        lh,
+        enabled_features,
+        0,
+        |thread_handoff, image_data, jenc| {
             let mut result_buffer = Vec::with_capacity(thread_handoff.segment_size as usize);
 
             jpeg_write_baseline_row_range(&mut result_buffer, &image_data, &thread_handoff, jenc)
@@ -690,9 +842,10 @@ fn recode_baseline_jpeg<R: BufRead, W: Write>(
             }
 
             return Ok(result_buffer);
-        })?;
+        },
+    )?;
 
-    state.process(reader)?;
+    state.process_to_end(reader)?;
 
     // run the threads first, since we need everything before we can start decoding
     let mut metrics = Metrics::default();
@@ -879,10 +1032,11 @@ fn parse_and_write_header() {
         0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd2, 0xcf, 0x20, 0xff, 0xd9, // EOI
     ];
 
-    let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
+    lh.uncompressed_lepton_header_size = 140;
 
     lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
         .unwrap();
@@ -902,7 +1056,25 @@ fn parse_and_write_header() {
 
     let mut other = LeptonHeader::new();
     let mut other_reader = Cursor::new(&serialized);
-    other
-        .read_lepton_header(&mut other_reader, &mut enabled_features)
+
+    let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
+    other_reader.read_exact(&mut fixed_buffer).unwrap();
+
+    let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+    let compressed_header_size = other
+        .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
         .unwrap();
+    other
+        .read_compressed_lepton_header(
+            &mut other_reader,
+            &mut other_enabled_features,
+            compressed_header_size,
+        )
+        .unwrap();
+
+    assert_eq!(
+        lh.uncompressed_lepton_header_size,
+        other.uncompressed_lepton_header_size
+    );
 }

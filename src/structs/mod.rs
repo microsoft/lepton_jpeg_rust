@@ -26,6 +26,7 @@ pub mod lepton_header;
 mod model;
 mod multiplexer;
 mod neighbor_summary;
+mod partial_buffer;
 mod probability_tables;
 mod quantization_tables;
 mod row_spec;

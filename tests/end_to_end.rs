@@ -86,6 +86,13 @@ fn verify_decode(
     )
     .unwrap();
 
+    assert_eq!(
+        output.len(),
+        expected.len(),
+        "length mismatch {} {}",
+        output.len(),
+        expected.len()
+    );
     assert!(output[..] == expected[..]);
 }
 
