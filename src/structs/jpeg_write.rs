@@ -57,9 +57,9 @@ use super::{
 /// Only works with baseline non-progressive images.
 pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
-    overhang_byte : u8,
+    overhang_byte: u8,
     num_overhang_bits: u8,
-    mut last_dc : [i16; 4],
+    mut last_dc: [i16; 4],
     framebuffer: &[BlockBasedImage],
     thread_handoff: &ThreadHandoff,
     jenc: &JPegEncodingInfo,
@@ -69,10 +69,7 @@ pub fn jpeg_write_baseline_row_range(
     let mcuv = jenc.truncate_components.mcu_count_vertical;
 
     let mut huffw = BitWriter::new(encoded_length);
-    huffw.reset_from_overhang_byte_and_num_bits(
-        overhang_byte,
-        u32::from(num_overhang_bits),
-    );
+    huffw.reset_from_overhang_byte_and_num_bits(overhang_byte, u32::from(num_overhang_bits));
 
     let mut decode_index = 0;
     loop {
@@ -120,7 +117,7 @@ pub fn jpeg_write_entire_scan(
 ) -> Result<Vec<u8>> {
     let mut last_dc = [0i16; 4];
 
-    let mut huffw = BitWriter::new(128*1024);
+    let mut huffw = BitWriter::new(128 * 1024);
     let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
 
     let mut decode_index = 0;
