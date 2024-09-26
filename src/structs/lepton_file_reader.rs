@@ -273,16 +273,16 @@ impl LeptonFileReader {
             merged.push(BlockBasedImage::merge(&mut results, i));
         }
 
-        let mut result = Vec::new();
-        result.write_all(&SOI)?;
-        result
+        let mut header = Vec::new();
+        header.write_all(&SOI)?;
+        header
             .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
             .context(here!())?;
 
-        recode_progressive_jpeg(lh, merged, &mut result, &enabled_features).context(here!())?;
+        let mut results =
+            recode_progressive_jpeg(lh, merged, &enabled_features).context(here!())?;
 
-        let mut results = Vec::new();
-        results.push(result);
+        results.insert(0, header);
 
         Ok(DecoderState::AppendTrailer(results))
     }
@@ -314,11 +314,11 @@ impl LeptonFileReader {
                 &enabled_features,
                 4, /*reserve 4 bytes for the end */
                 |thread_handoff, image_data, jenc| {
-                    let mut result_buffer =
-                        Vec::with_capacity(thread_handoff.segment_size as usize);
-
-                    jpeg_write_baseline_row_range(
-                        &mut result_buffer,
+                    let mut result_buffer = jpeg_write_baseline_row_range(
+                        thread_handoff.segment_size as usize,
+                        thread_handoff.overhang_byte,
+                        thread_handoff.num_overhang_bits,
+                        thread_handoff.last_dc,
                         &image_data,
                         &thread_handoff,
                         jenc,
@@ -469,15 +469,17 @@ fn run_lepton_decoder_processor<P>(
 }
 
 /// progressive decoder, requires that the entire lepton file is processed first
-fn recode_progressive_jpeg<W: Write>(
+fn recode_progressive_jpeg(
     lh: &mut LeptonHeader,
     merged: Vec<BlockBasedImage>,
-    writer: &mut W,
     enabled_features: &EnabledFeatures,
-) -> Result<()> {
+) -> Result<Vec<Vec<u8>>> {
+    let mut results = Vec::new();
     loop {
         // code another scan
-        jpeg_write_entire_scan(writer, &merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
+        let scan =
+            jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
+        results.push(scan);
 
         // read the next headers (DHT, etc) while mirroring it back to the writer
         let old_pos = lh.raw_jpeg_header_read_index;
@@ -485,9 +487,7 @@ fn recode_progressive_jpeg<W: Write>(
             .advance_next_header_segment(enabled_features)
             .context(here!())?;
 
-        writer
-            .write_all(&lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index])
-            .context(here!())?;
+        results.push(lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
 
         if !result {
             break;
@@ -497,7 +497,7 @@ fn recode_progressive_jpeg<W: Write>(
         lh.scnc += 1;
     }
 
-    Ok(())
+    Ok(results)
 }
 
 // test serializing and deserializing header

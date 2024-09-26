@@ -34,7 +34,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use anyhow::{Context, Result};
 use bytemuck::{cast, cast_ref};
-use byteorder::WriteBytesExt;
 use wide::{i16x16, CmpEq};
 
 use crate::{
@@ -44,8 +43,6 @@ use crate::{
     lepton_error::ExitCode,
     structs::block_based_image::AlignedBlock,
 };
-
-use std::io::Write;
 
 use super::{
     bit_writer::BitWriter,
@@ -58,23 +55,24 @@ use super::{
 
 /// write a range of rows corresponding to the thread_handoff structure into the writer.
 /// Only works with baseline non-progressive images.
-pub fn jpeg_write_baseline_row_range<W: Write>(
-    writer: &mut W,
+pub fn jpeg_write_baseline_row_range(
+    encoded_length: usize,
+    overhang_byte : u8,
+    num_overhang_bits: u8,
+    mut last_dc : [i16; 4],
     framebuffer: &[BlockBasedImage],
     thread_handoff: &ThreadHandoff,
     jenc: &JPegEncodingInfo,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
 
     let mcuv = jenc.truncate_components.mcu_count_vertical;
 
-    let mut huffw = BitWriter::new();
+    let mut huffw = BitWriter::new(encoded_length);
     huffw.reset_from_overhang_byte_and_num_bits(
-        thread_handoff.overhang_byte,
-        thread_handoff.num_overhang_bits.into(),
+        overhang_byte,
+        u32::from(num_overhang_bits),
     );
-
-    let mut last_dc = thread_handoff.last_dc.clone();
 
     let mut decode_index = 0;
     loop {
@@ -103,30 +101,26 @@ pub fn jpeg_write_baseline_row_range<W: Write>(
             recode_one_mcu_row(
                 &mut huffw,
                 cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
-                writer,
                 &mut last_dc,
                 framebuffer,
                 jenc,
             )
             .context(here!())?;
-
-            huffw.flush_with_escape(writer).context(here!())?;
         }
     }
 
-    Ok(())
+    Ok(huffw.detach_buffer())
 }
 
 // writes an entire scan vs only a range of rows as above.
 // supports progressive encoding whereas the row range version does not
-pub fn jpeg_write_entire_scan<W: Write>(
-    writer: &mut W,
+pub fn jpeg_write_entire_scan(
     framebuffer: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let mut last_dc = [0i16; 4];
 
-    let mut huffw = BitWriter::new();
+    let mut huffw = BitWriter::new(128*1024);
     let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
 
     let mut decode_index = 0;
@@ -152,14 +146,11 @@ pub fn jpeg_write_entire_scan<W: Write>(
             let r = recode_one_mcu_row(
                 &mut huffw,
                 cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
-                writer,
                 &mut last_dc,
                 framebuffer,
                 jenc,
             )
             .context(here!())?;
-
-            huffw.flush_with_escape(writer).context(here!())?;
 
             if r {
                 break;
@@ -167,16 +158,13 @@ pub fn jpeg_write_entire_scan<W: Write>(
         }
     }
 
-    huffw.flush_with_escape(writer).context(here!())?;
-
-    Ok(())
+    Ok(huffw.detach_buffer())
 }
 
 #[inline(never)]
-fn recode_one_mcu_row<W: Write>(
+fn recode_one_mcu_row(
     huffw: &mut BitWriter,
     mcu: i32,
-    writer: &mut W,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,
@@ -218,7 +206,6 @@ fn recode_one_mcu_row<W: Write>(
                     &block,
                 );
 
-                huffw.flush_with_escape(writer).context(here!())?;
                 sta = state.next_mcu_pos(&jf);
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
@@ -248,7 +235,6 @@ fn recode_one_mcu_row<W: Write>(
                     );
                 }
 
-                huffw.flush_with_escape(writer).context(here!())?;
                 sta = state.next_mcu_pos(jf);
             } else {
                 // ---> progressive AC encoding <---
@@ -282,7 +268,6 @@ fn recode_one_mcu_row<W: Write>(
                     if sta != JPegDecodeStatus::DecodeInProgress {
                         encode_eobrun(huffw, jf.get_huff_ac_codes(state.get_cmp()), &mut state);
                     }
-                    huffw.flush_with_escape(writer).context(here!())?;
                 } else {
                     // ---> succesive approximation later stage <---
 
@@ -307,7 +292,6 @@ fn recode_one_mcu_row<W: Write>(
                         // encode remaining correction bits
                         encode_crbits(huffw, &mut correction_bits);
                     }
-                    huffw.flush_with_escape(writer).context(here!())?;
                 }
             }
 
@@ -315,12 +299,9 @@ fn recode_one_mcu_row<W: Write>(
                 end_of_row = true;
                 if sta == JPegDecodeStatus::DecodeInProgress {
                     // completed only MCU aligned row, not reset interval so don't emit anything special
-                    huffw.flush_with_escape(writer).context(here!())?;
                     return Ok(false);
                 }
             }
-
-            huffw.flush_with_escape(writer).context(here!())?;
         }
 
         // pad huffman writer
@@ -330,8 +311,6 @@ fn recode_one_mcu_row<W: Write>(
             huffw.has_no_remainder(),
             "shouldnt have a remainder after padding"
         );
-
-        huffw.flush_with_escape(writer).context(here!())?;
 
         // evaluate status
         if sta == JPegDecodeStatus::ScanCompleted {
@@ -346,8 +325,9 @@ fn recode_one_mcu_row<W: Write>(
                     || cumulative_reset_markers < jenc.rst_cnt[jenc.scnc]
                 {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
-                    writer.write_u8(0xFF)?;
-                    writer.write_u8(rst)?;
+
+                    huffw.write_byte_unescaped(0xFF);
+                    huffw.write_byte_unescaped(rst);
                     cumulative_reset_markers += 1;
                 }
 
@@ -658,9 +638,7 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
     };
     use std::io::Cursor;
 
-    let mut buf = Vec::new();
-
-    let mut bitwriter = BitWriter::new();
+    let mut bitwriter = BitWriter::new(1024);
 
     // create a weird distribution to test the huffman encoding for corner cases
     let mut dcdistribution = [0; 256];
@@ -679,8 +657,7 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
 
     bitwriter.pad(0);
 
-    bitwriter.flush_with_escape(&mut buf).unwrap();
-
+    let buf = bitwriter.detach_buffer();
     assert_eq!(buf, expected);
 
     let mut bitreader = BitReader::new(Cursor::new(&buf));
