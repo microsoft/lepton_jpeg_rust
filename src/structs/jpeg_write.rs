@@ -50,7 +50,6 @@ use super::{
     jpeg_header::{HuffCodes, JPegEncodingInfo},
     jpeg_position_state::JpegPositionState,
     row_spec::RowSpec,
-    thread_handoff::ThreadHandoff,
 };
 
 /// write a range of rows corresponding to the thread_handoff structure into the writer.
@@ -59,22 +58,25 @@ pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
     overhang_byte: u8,
     num_overhang_bits: u8,
+    luma_y_start: i32,
+    luma_y_end: i32,
     mut last_dc: [i16; 4],
-    framebuffer: &[BlockBasedImage],
-    thread_handoff: &ThreadHandoff,
+    image_data: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,
 ) -> Result<Vec<u8>> {
     let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
-
-    let mcuv = jenc.truncate_components.mcu_count_vertical;
 
     let mut huffw = BitWriter::new(encoded_length);
     huffw.reset_from_overhang_byte_and_num_bits(overhang_byte, u32::from(num_overhang_bits));
 
     let mut decode_index = 0;
     loop {
-        let cur_row =
-            RowSpec::get_row_spec_from_index(decode_index, framebuffer, mcuv, &max_coded_heights);
+        let cur_row = RowSpec::get_row_spec_from_index(
+            decode_index,
+            image_data,
+            jenc.truncate_components.mcu_count_vertical,
+            &max_coded_heights,
+        );
 
         decode_index += 1;
 
@@ -86,11 +88,11 @@ pub fn jpeg_write_baseline_row_range(
             continue;
         }
 
-        if cur_row.min_row_luma_y < thread_handoff.luma_y_start {
+        if cur_row.min_row_luma_y < luma_y_start {
             continue;
         }
 
-        if cur_row.next_row_luma_y > thread_handoff.luma_y_end {
+        if cur_row.next_row_luma_y > luma_y_end {
             break; // we're done here
         }
 
@@ -99,7 +101,7 @@ pub fn jpeg_write_baseline_row_range(
                 &mut huffw,
                 cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
                 &mut last_dc,
-                framebuffer,
+                image_data,
                 jenc,
             )
             .context(here!())?;
@@ -112,21 +114,22 @@ pub fn jpeg_write_baseline_row_range(
 // writes an entire scan vs only a range of rows as above.
 // supports progressive encoding whereas the row range version does not
 pub fn jpeg_write_entire_scan(
-    framebuffer: &[BlockBasedImage],
+    image_data: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,
 ) -> Result<Vec<u8>> {
+    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+
     let mut last_dc = [0i16; 4];
 
     let mut huffw = BitWriter::new(128 * 1024);
-    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
 
     let mut decode_index = 0;
     loop {
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
-            framebuffer,
+            image_data,
             jenc.truncate_components.mcu_count_vertical,
-            &max_coded_heights[..],
+            &max_coded_heights,
         );
 
         decode_index += 1;
@@ -144,7 +147,7 @@ pub fn jpeg_write_entire_scan(
                 &mut huffw,
                 cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
                 &mut last_dc,
-                framebuffer,
+                image_data,
                 jenc,
             )
             .context(here!())?;

@@ -318,9 +318,10 @@ impl LeptonFileReader {
                         thread_handoff.segment_size as usize,
                         thread_handoff.overhang_byte,
                         thread_handoff.num_overhang_bits,
+                        thread_handoff.luma_y_start,
+                        thread_handoff.luma_y_end,
                         thread_handoff.last_dc,
                         &image_data,
-                        &thread_handoff,
                         jenc,
                     )
                     .context(here!())?;
