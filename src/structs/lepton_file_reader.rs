@@ -34,7 +34,7 @@ pub fn decode_lepton_wrapper<R: BufRead, W: Write>(
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
-    let mut decoder = LeptonFileRead::new(enabled_features.clone());
+    let mut decoder = LeptonFileReader::new(enabled_features.clone());
 
     let mut done = false;
     while !done {
@@ -65,7 +65,7 @@ enum DecoderState {
 /// This is the state machine for the decoder for reading lepton files. The
 /// data is pushed into the state machine and processed in chuncks. Once
 /// the calculations are done the data is retrieved from the output buffers.
-pub struct LeptonFileRead {
+pub struct LeptonFileReader {
     state: DecoderState,
     lh: LeptonHeader,
     enabled_features: EnabledFeatures,
@@ -74,9 +74,9 @@ pub struct LeptonFileRead {
     total_read_size: u64,
 }
 
-impl LeptonFileRead {
+impl LeptonFileReader {
     pub fn new(features: EnabledFeatures) -> Self {
-        LeptonFileRead {
+        LeptonFileReader {
             state: DecoderState::FixedHeader(),
             lh: LeptonHeader::new(),
             enabled_features: features,
