@@ -21,7 +21,7 @@ use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegHeader;
 use crate::structs::lepton_encoder::lepton_encode_row_range;
-use crate::structs::lepton_file_reader::decode_lepton_wrapper;
+use crate::structs::lepton_file_reader::decode_lepton_file;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
@@ -92,7 +92,7 @@ pub fn encode_lepton_wrapper_verify(
     let mut c = enabled_features.clone();
 
     metrics.merge_from(
-        decode_lepton_wrapper(&mut verifyreader, &mut verify_buffer, &mut c).context(here!())?,
+        decode_lepton_file(&mut verifyreader, &mut verify_buffer, &mut c).context(here!())?,
     );
 
     if input_data.len() != verify_buffer.len() {

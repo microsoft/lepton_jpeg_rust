@@ -15,16 +15,15 @@ pub mod lepton_error;
 
 pub use crate::enabled_features::EnabledFeatures;
 pub use crate::lepton_error::{ExitCode, LeptonError};
+use crate::structs::lepton_file_reader::decode_lepton_file;
 pub use metrics::Metrics;
-use structs::lepton_file_reader::LeptonFileReader;
+pub use structs::lepton_file_reader::LeptonFileReader;
 use structs::lepton_file_writer::{encode_lepton_wrapper, encode_lepton_wrapper_verify};
 
 use core::result::Result;
 use std::panic::catch_unwind;
 
 use std::io::{BufRead, Cursor, Seek, Write};
-
-use crate::structs::lepton_file_reader::decode_lepton_wrapper;
 
 /// translates internal anyhow based exception into externally visible exception
 fn translate_error(e: anyhow::Error) -> LeptonError {
@@ -51,7 +50,7 @@ pub fn decode_lepton<R: BufRead + Seek, W: Write>(
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    decode_lepton_wrapper(reader, writer, enabled_features).map_err(translate_error)
+    decode_lepton_file(reader, writer, enabled_features).map_err(translate_error)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -182,7 +181,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton_wrapper(&mut reader, &mut writer, &mut enabled_features) {
+            match decode_lepton_file(&mut reader, &mut writer, &mut enabled_features) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return 0;

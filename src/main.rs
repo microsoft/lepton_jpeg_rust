@@ -20,7 +20,7 @@ use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
 use structs::block_based_image::BlockBasedImage;
-use structs::lepton_file_reader::run_lepton_decoder_threads;
+use structs::lepton_file_reader::{decode_lepton_file, run_lepton_decoder_threads};
 use structs::lepton_file_writer::{encode_lepton_wrapper_verify, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
@@ -34,7 +34,6 @@ use std::{
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_file_reader::decode_lepton_wrapper;
 use crate::structs::lepton_header::LeptonHeader;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
@@ -294,7 +293,7 @@ fn main_with_result() -> anyhow::Result<()> {
 
             output_data = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton_wrapper(&mut reader, &mut output_data, &enabled_features)
+            metrics = decode_lepton_file(&mut reader, &mut output_data, &enabled_features)
                 .context(here!())?;
         } else {
             return err_exit_code(

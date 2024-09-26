@@ -29,7 +29,8 @@ use super::multiplexer::{MultiplexReader, MultiplexReaderState};
 use super::partial_buffer::PartialBuffer;
 
 /// reads a lepton file and writes it out as a jpeg
-pub fn decode_lepton_wrapper<R: BufRead, W: Write>(
+/// wraps LeptonFileReader
+pub fn decode_lepton_file<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -86,10 +87,11 @@ impl LeptonFileReader {
         }
     }
 
-    fn read_metrics(&mut self) -> Metrics {
-        mem::take(&mut self.metrics)
-    }
-
+    /// Consume a buffer of data and possible write some
+    /// output if there is any available.
+    ///
+    /// Returns true if we are done processing the file
+    /// and there is no more output available.
     pub fn process_buffer(
         &mut self,
         in_buffer: &[u8],
@@ -203,6 +205,11 @@ impl LeptonFileReader {
         }
 
         Ok(false)
+    }
+
+    /// destructively reads the metrics
+    pub fn read_metrics(&mut self) -> Metrics {
+        mem::take(&mut self.metrics)
     }
 
     fn process_baseline(lh: &LeptonHeader, mut results: Vec<Vec<u8>>) -> Result<DecoderState> {
@@ -609,7 +616,7 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    decode_lepton_wrapper(&mut Cursor::new(&file), &mut output, &enabled_features).unwrap();
+    decode_lepton_file(&mut Cursor::new(&file), &mut output, &enabled_features).unwrap();
 
     assert_eq!(output.len(), original.len());
     assert!(output == original);
