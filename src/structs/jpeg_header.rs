@@ -45,6 +45,7 @@ use crate::consts::JPegType;
 
 use super::component_info::ComponentInfo;
 use super::lepton_header::LeptonHeader;
+use super::quantization_tables::QuantizationTables;
 use super::truncate_components::TruncateComponents;
 
 #[derive(Copy, Clone, Debug)]
@@ -902,6 +903,27 @@ impl JPegHeader {
                 }
         }
         return Ok(ParseSegmentResult::Continue);
+    }
+
+    /// constructs the quantization table based on the jpeg header
+    pub fn construct_quantization_table(&self) -> Result<Vec<QuantizationTables>> {
+        let mut quantization_tables = Vec::new();
+        for i in 0..self.cmpc {
+            let qtables = QuantizationTables::new(self, i);
+
+            // check to see if quantitization table was properly initialized
+            // (table contains divisors for edge coefficients so it never should have a zero)
+            for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
+                if qtables.get_quantization_table()[i] == 0 {
+                    return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "Quantization table contains zero for edge which would cause a divide by zero",
+                );
+                }
+            }
+            quantization_tables.push(qtables);
+        }
+        Ok(quantization_tables)
     }
 }
 

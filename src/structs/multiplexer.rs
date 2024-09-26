@@ -12,7 +12,7 @@ use std::{
     io::{BufRead, Cursor, Read, Write},
     mem::swap,
     sync::{
-        mpsc::{channel, Receiver, SendError, Sender},
+        mpsc::{channel, Receiver, Sender},
         Arc,
     },
 };
@@ -339,6 +339,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn process_to_end(&mut self, source: &mut impl BufRead) -> Result<()> {
         loop {
             let b = source.fill_buf().context(here!())?;
@@ -354,7 +355,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
     /// process as much incoming data as we can and send it to the appropriate thread
     pub fn process_buffer(&mut self, source: &mut PartialBuffer<'_>) -> Result<()> {
-        loop {
+        while source.continue_processing() {
             match self.current_state {
                 State::StartBlock => {
                     if let Some(a) = source.take_n::<1>(self.reserve) {
@@ -441,7 +442,9 @@ fn test_multiplex_end_to_end() {
     let mut output = Vec::new();
 
     let w = multiplex_write(&mut output, 10, |writer, thread_id| -> Result<usize> {
-        writer.write_u32::<byteorder::LittleEndian>(thread_id as u32)?;
+        for i in thread_id as u32..10000 {
+            writer.write_u32::<byteorder::LittleEndian>(i)?;
+        }
 
         Ok(thread_id)
     })
@@ -450,16 +453,21 @@ fn test_multiplex_end_to_end() {
     assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     let mut extra = Vec::new();
-    let mut i = PartialBuffer::new(&output, &mut extra);
 
     let mut multiplex_state =
         MultiplexReaderState::new(10, 0, |thread_id, reader| -> Result<usize> {
-            let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
-            assert_eq!(read_thread_id, thread_id as u32);
+            for i in thread_id as u32..10000 {
+                let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
+                assert_eq!(read_thread_id, i);
+            }
             Ok(thread_id)
         });
 
-    multiplex_state.process_buffer(&mut i).unwrap();
+    // do worst case, we are just given byte at a time
+    for i in 0..output.len() {
+        let mut i = PartialBuffer::new(&output[i..=i], &mut extra);
+        multiplex_state.process_buffer(&mut i).unwrap();
+    }
 
     let r = multiplex_state.complete().unwrap();
 

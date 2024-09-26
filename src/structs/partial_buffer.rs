@@ -1,10 +1,9 @@
 use std::cmp::min;
 
-/// This struct is used to handle partial buffers, since we have
-/// to take buffers as they arrive and there might not be all the
-/// data we need.
+/// This struct is used to the fact that we have to take buffers
+/// as they arrive, and we might not have all the data we need.
 ///
-/// The use-case is via the take function, which attempts to grab
+/// This used is via the take function, which attempts to grab
 /// the amount of data specified, and if it isn't available, stores
 /// the partial data in the extra buffer, and returns None.
 ///
@@ -20,6 +19,7 @@ use std::cmp::min;
 pub struct PartialBuffer<'a> {
     slice: &'a [u8],
     extra_buffer: &'a mut Vec<u8>,
+    continue_processing: bool,
 }
 
 impl<'a> PartialBuffer<'a> {
@@ -27,7 +27,12 @@ impl<'a> PartialBuffer<'a> {
         PartialBuffer {
             slice,
             extra_buffer,
+            continue_processing: true,
         }
+    }
+
+    pub fn continue_processing(&self) -> bool {
+        self.continue_processing
     }
 
     /// grabs a variable amount of data if is available, otherwise put it in the extra
@@ -35,6 +40,8 @@ impl<'a> PartialBuffer<'a> {
     pub fn take(&mut self, size: usize, reserve: usize) -> Option<Vec<u8>> {
         if self.extra_buffer.len() + self.slice.len() < size + reserve {
             self.extra_buffer.extend_from_slice(self.slice);
+            self.slice = &[];
+            self.continue_processing = false;
             return None;
         }
 
@@ -60,6 +67,8 @@ impl<'a> PartialBuffer<'a> {
     pub fn take_n<const N: usize>(&mut self, reserve: usize) -> Option<[u8; N]> {
         if self.extra_buffer.len() + self.slice.len() < N + reserve {
             self.extra_buffer.extend_from_slice(self.slice);
+            self.slice = &[];
+            self.continue_processing = false;
             return None;
         }
 

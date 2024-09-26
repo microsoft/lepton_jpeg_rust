@@ -164,13 +164,6 @@ impl LeptonHeader {
             .read_lepton_compressed_header(&mut compressed_reader)
             .context(here!())?;
 
-        // CMP marker
-        let mut current_lepton_marker = [0 as u8; 3];
-        reader.read_exact(&mut current_lepton_marker)?;
-        if !buffer_prefix_matches_marker(current_lepton_marker, LEPTON_HEADER_COMPLETION_MARKER) {
-            return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
-        }
-
         self.raw_jpeg_header_read_index = 0;
 
         {

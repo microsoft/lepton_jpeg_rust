@@ -16,15 +16,15 @@ pub mod lepton_error;
 pub use crate::enabled_features::EnabledFeatures;
 pub use crate::lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
+use structs::lepton_file_read::LeptonFileRead;
+use structs::lepton_file_write::{encode_lepton_wrapper, encode_lepton_wrapper_verify};
 
 use core::result::Result;
 use std::panic::catch_unwind;
 
 use std::io::{BufRead, Cursor, Seek, Write};
 
-use crate::structs::lepton_format::{
-    decode_lepton_wrapper, encode_lepton_wrapper, encode_lepton_wrapper_verify,
-};
+use crate::structs::lepton_file_read::decode_lepton_wrapper;
 
 /// translates internal anyhow based exception into externally visible exception
 fn translate_error(e: anyhow::Error) -> LeptonError {
@@ -214,4 +214,67 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             return -2;
         }
     }
+}
+
+const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
+
+#[no_mangle]
+pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
+    let enabled_features = if features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0 {
+        EnabledFeatures::compat_lepton_vector_read()
+    } else {
+        EnabledFeatures::compat_lepton_scalar_read()
+    };
+
+    let context = Box::new(LeptonFileRead::new(enabled_features));
+    Box::into_raw(context) as *mut std::ffi::c_void
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
+    let _ = Box::from_raw(context as *mut LeptonFileRead);
+    // let Box destroy the object
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn decompress_image(
+    context: *mut std::ffi::c_void,
+    input_buffer: *const u8,
+    input_buffer_size: u64,
+    input_complete: bool,
+    output_buffer: *mut u8,
+    output_buffer_size: u64,
+    result_size: *mut u64,
+) -> i32 {
+    match catch_unwind(|| {
+        let context = context as *mut LeptonFileRead;
+        let context = &mut *context;
+
+        let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
+        let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
+
+        let mut writer = Cursor::new(output);
+        let result = context.process_buffer(
+            input,
+            input_complete,
+            &mut writer,
+            output_buffer_size as usize,
+        );
+        match result {
+            Ok(done) => {
+                *result_size = writer.position().into();
+                return done as i32;
+            }
+            Err(e) => {
+                return translate_error(e).exit_code as i32;
+            }
+        }
+    }) {
+        Ok(code) => {
+            return code;
+        }
+        Err(_) => {
+            return -2;
+        }
+    };
 }

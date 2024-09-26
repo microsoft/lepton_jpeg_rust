@@ -12,11 +12,14 @@ use std::io::Read;
 
 use lepton_jpeg::metrics::Metrics;
 use lepton_jpeg::{
+    create_decompression_context, decompress_image, free_decompression_context,
+    WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx,
+};
+use lepton_jpeg::{
     decode_lepton, encode_lepton, encode_lepton_verify,
     lepton_error::{ExitCode, LeptonError},
     EnabledFeatures,
 };
-use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx};
 
 use rstest::rstest;
 
@@ -427,6 +430,54 @@ fn extern_interface() {
     }
     assert_eq!(input.len() as u64, original_size);
     assert_eq!(input[..], original[..(original_size as usize)]);
+}
+
+/// tests the chunked decompression interface
+#[test]
+fn extern_interface_decompress_chunked() {
+    let input = read_file("slrcity", ".lep");
+
+    let mut output = Vec::new();
+
+    unsafe {
+        let context = create_decompression_context(1);
+
+        let mut file_read = Cursor::new(input);
+        let mut input_buffer = [0u8; 7];
+        let mut output_buffer = [0u8; 13];
+
+        loop {
+            let amount_read = file_read.read(&mut input_buffer).unwrap();
+
+            let mut result_size = 0;
+            let result = decompress_image(
+                context,
+                input_buffer.as_ptr(),
+                amount_read as u64,
+                amount_read == 0,
+                output_buffer.as_mut_ptr(),
+                output_buffer.len() as u64,
+                &mut result_size,
+            );
+
+            output.extend_from_slice(&output_buffer[..result_size as usize]);
+
+            match result {
+                0 => {}
+                1 => {
+                    break;
+                }
+                _ => {
+                    panic!("unexpected error {0}", result);
+                }
+            }
+        }
+        free_decompression_context(context);
+    }
+
+    let test_result = read_file("slrcity", ".jpg");
+    assert_eq!(test_result.len(), output.len());
+    assert!(test_result[..] == output[..]);
 }
 
 #[rstest]

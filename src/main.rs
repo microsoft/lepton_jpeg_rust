@@ -19,7 +19,9 @@ use lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
-use structs::lepton_format::{decode_as_single_image, read_jpeg};
+use structs::block_based_image::BlockBasedImage;
+use structs::lepton_file_read::run_lepton_decoder_threads;
+use structs::lepton_file_write::{encode_lepton_wrapper_verify, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
@@ -32,7 +34,7 @@ use std::{
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper_verify};
+use crate::structs::lepton_file_read::decode_lepton_wrapper;
 use crate::structs::lepton_header::LeptonHeader;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
@@ -137,12 +139,11 @@ fn main_with_result() -> anyhow::Result<()> {
 
     if dump {
         let file_in = File::open(filenames[0]).unwrap();
-        let filelen = file_in.metadata()?.len() as u64;
 
         let mut reader = BufReader::new(file_in);
 
         let mut lh;
-        let block_image;
+        let mut block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
             (lh, block_image) =
@@ -171,14 +172,33 @@ fn main_with_result() -> anyhow::Result<()> {
             )
             .context(here!())?;
 
-            let _metrics;
-
-            (block_image, _metrics) = decode_as_single_image(
-                &mut lh,
-                &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
+            let mut state = run_lepton_decoder_threads(
+                &lh,
                 &enabled_features,
+                0,
+                |_thread_handoff, image_data, _lh| {
+                    // just return the image data directly to be merged together
+                    return Ok(image_data);
+                },
             )
             .context(here!())?;
+
+            state.process_to_end(&mut reader)?;
+
+            // run the threads first, since we need everything before we can start decoding
+            let mut results = Vec::new();
+
+            for (_metric, vec) in state.complete().context(here!())? {
+                results.push(vec);
+            }
+
+            // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
+            let num_components = results[0].len();
+
+            block_image = Vec::new();
+            for i in 0..num_components {
+                block_image.push(BlockBasedImage::merge(&mut results, i));
+            }
 
             loop {
                 println!("parsed header:");
