@@ -390,8 +390,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::new(
-        predicted_val.edge_pixels_h,
-        predicted_val.edge_pixels_v,
+        predicted_val.next_edge_pixels_h,
+        predicted_val.next_edge_pixels_v,
         here_tr.get_dc() as i32 * q0,
         num_non_zeros_7x7,
         horiz_pred,

@@ -31,8 +31,8 @@ pub struct PredictDCResult {
     pub predicted_dc: i32,
     pub uncertainty: i16,
     pub uncertainty2: i16,
-    pub edge_pixels_h: i16x8,
-    pub edge_pixels_v: i16x8,
+    pub next_edge_pixels_h: i16x8,
+    pub next_edge_pixels_v: i16x8,
 }
 
 impl ProbabilityTables {
@@ -241,8 +241,8 @@ impl ProbabilityTables {
         // here DC in raster_cols should be 0
         let pixels_sans_dc = run_idct(raster_cols);
 
-        // helper functions to avoid code duplication that calculate the left and above prediction values
-
+        // helper functions to avoid code duplication that calculate prediction values
+        #[inline]
         fn calc_pred(a1: i16x8, a2: i16x8, is_16_bit: bool) -> i16x8 {
             if is_16_bit {
                 let pixel_delta = a1 - a2;
@@ -260,25 +260,26 @@ impl ProbabilityTables {
             }
         }
 
+        // transpose so we can get the vertical rows as single vectors
+        let transposed = pixels_sans_dc.transpose();
+
         let a1 = pixels_sans_dc.as_i16x8(0);
         let a2 = pixels_sans_dc.as_i16x8(1);
-        let v =
+        let v_pred =
             calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
 
-        let prev = pixels_sans_dc.as_i16x8(6);
-        let curr = pixels_sans_dc.as_i16x8(7);
-        let edge_pixels_h = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
-
-        let t = pixels_sans_dc.transpose();
-
-        let a1 = t.as_i16x8(0);
-        let a2 = t.as_i16x8(1);
-        let h =
+        let a1 = transposed.as_i16x8(0);
+        let a2 = transposed.as_i16x8(1);
+        let h_pred =
             calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
 
-        let prev = t.as_i16x8(6);
-        let curr = t.as_i16x8(7);
-        let edge_pixels_v = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
+        let a1 = pixels_sans_dc.as_i16x8(7);
+        let a2 = pixels_sans_dc.as_i16x8(6);
+        let next_edge_pixels_v = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
+
+        let a1 = transposed.as_i16x8(7);
+        let a2 = transposed.as_i16x8(6);
+        let next_edge_pixels_h = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
         let min_dc;
         let max_dc;
@@ -287,8 +288,8 @@ impl ProbabilityTables {
 
         if ALL_PRESENT {
             // most common case where we have both left and above
-            let horiz = neighbor_data.neighbor_context_left.get_vertical_pix() - h;
-            let vert = neighbor_data.neighbor_context_above.get_horizontal_pix() - v;
+            let horiz = neighbor_data.neighbor_context_left.get_horizontal_pix() - h_pred;
+            let vert = neighbor_data.neighbor_context_above.get_vertical_pix() - v_pred;
 
             min_dc = horiz.min(vert).reduce_min();
             max_dc = horiz.max(vert).reduce_max();
@@ -296,14 +297,14 @@ impl ProbabilityTables {
             avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
             avg_vertical = i32x8::from_i16x8(vert).reduce_add();
         } else if self.left_present {
-            let horiz = neighbor_data.neighbor_context_left.get_vertical_pix() - h;
+            let horiz = neighbor_data.neighbor_context_left.get_horizontal_pix() - h_pred;
             min_dc = horiz.reduce_min();
             max_dc = horiz.reduce_max();
 
             avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
             avg_vertical = avg_horizontal;
         } else if self.above_present {
-            let vert = neighbor_data.neighbor_context_above.get_horizontal_pix() - v;
+            let vert = neighbor_data.neighbor_context_above.get_vertical_pix() - v_pred;
             min_dc = vert.reduce_min();
             max_dc = vert.reduce_max();
 
@@ -314,8 +315,8 @@ impl ProbabilityTables {
                 predicted_dc: 0,
                 uncertainty: 0,
                 uncertainty2: 0,
-                edge_pixels_h,
-                edge_pixels_v,
+                next_edge_pixels_h,
+                next_edge_pixels_v,
             };
         }
 
@@ -335,8 +336,8 @@ impl ProbabilityTables {
             predicted_dc: (avgmed / q0 + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
-            edge_pixels_h,
-            edge_pixels_v,
+            next_edge_pixels_h,
+            next_edge_pixels_v,
         };
     }
 }

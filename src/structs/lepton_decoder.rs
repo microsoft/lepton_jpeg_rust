@@ -245,8 +245,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     // read how many of these are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
     let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)
-        .context(here!())?;
+        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)?;
 
     if num_non_zeros_7x7 > 49 {
         // most likely a stream or model synchronization error
@@ -285,8 +284,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                     zig49,
                     num_non_zeros_bin,
                     best_prior_bit_length as usize,
-                )
-                .context(here!())?;
+                )?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
@@ -348,8 +346,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             color_index,
             predicted_dc.uncertainty,
             predicted_dc.uncertainty2,
-        )
-        .context(here!())?;
+        )?;
+
     output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
@@ -358,8 +356,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::new(
-        predicted_dc.edge_pixels_h,
-        predicted_dc.edge_pixels_v,
+        predicted_dc.next_edge_pixels_h,
+        predicted_dc.next_edge_pixels_v,
         output.get_dc() as i32 * q0,
         num_non_zeros_7x7,
         horiz_pred,
