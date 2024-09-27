@@ -31,8 +31,8 @@ pub struct PredictDCResult {
     pub predicted_dc: i32,
     pub uncertainty: i16,
     pub uncertainty2: i16,
-    pub h_delta: i16x8,
-    pub v_delta: i16x8,
+    pub edge_pixels_h: i16x8,
+    pub edge_pixels_v: i16x8,
 }
 
 impl ProbabilityTables {
@@ -267,7 +267,7 @@ impl ProbabilityTables {
 
         let prev = pixels_sans_dc.as_i16x8(6);
         let curr = pixels_sans_dc.as_i16x8(7);
-        let h_delta = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
+        let edge_pixels_h = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
 
         let t = pixels_sans_dc.transpose();
 
@@ -278,7 +278,7 @@ impl ProbabilityTables {
 
         let prev = t.as_i16x8(6);
         let curr = t.as_i16x8(7);
-        let v_delta = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
+        let edge_pixels_v = calc_pred(curr, prev, enabled_features.use_16bit_dc_estimate);
 
         let min_dc;
         let max_dc;
@@ -314,8 +314,8 @@ impl ProbabilityTables {
                 predicted_dc: 0,
                 uncertainty: 0,
                 uncertainty2: 0,
-                h_delta: h_delta,
-                v_delta: v_delta,
+                edge_pixels_h,
+                edge_pixels_v,
             };
         }
 
@@ -335,8 +335,8 @@ impl ProbabilityTables {
             predicted_dc: (avgmed / q0 + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
-            h_delta,
-            v_delta,
+            edge_pixels_h,
+            edge_pixels_v,
         };
     }
 }

@@ -358,13 +358,12 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::new(
-        predicted_dc.h_delta,
-        predicted_dc.v_delta,
+        predicted_dc.edge_pixels_h,
+        predicted_dc.edge_pixels_v,
         output.get_dc() as i32 * q0,
         num_non_zeros_7x7,
         horiz_pred,
         vert_pred,
-        features,
     );
 
     Ok((output, neighbor_summary))

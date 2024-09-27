@@ -8,9 +8,7 @@ use std::num::Wrapping;
 
 use wide::{i16x8, i32x8};
 
-use super::block_based_image::AlignedBlock;
 use crate::consts::X_IDCT_SCALE;
-use crate::enabled_features::EnabledFeatures;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct NeighborSummary {
@@ -39,17 +37,16 @@ impl Default for NeighborSummary {
 
 impl NeighborSummary {
     pub fn new(
-        h_delta: i16x8,
-        v_delta: i16x8,
+        edge_pixels_h: i16x8,
+        edge_pixels_v: i16x8,
         dc_deq: i32,
         num_non_zeros_7x7: u8,
         horiz_pred: i32x8,
         vert_pred: i32x8,
-        features: &EnabledFeatures,
     ) -> Self {
         NeighborSummary {
-            edge_pixels_h: Self::set_horizontal(h_delta, dc_deq, features),
-            edge_pixels_v: Self::set_vertical(v_delta, dc_deq, features),
+            edge_pixels_h: edge_pixels_h + (dc_deq + 128 * X_IDCT_SCALE) as i16,
+            edge_pixels_v: edge_pixels_v + (dc_deq + 128 * X_IDCT_SCALE) as i16,
             edge_coefs_h: horiz_pred,
             edge_coefs_v: vert_pred,
             num_non_zeros: num_non_zeros_7x7,
@@ -66,19 +63,6 @@ impl NeighborSummary {
 
     pub fn get_horizontal_pix(&self) -> i16x8 {
         return self.edge_pixels_h;
-    }
-
-    fn set_pixel_pred(v: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
-        // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-        v + (dc_deq + 128 * X_IDCT_SCALE) as i16
-    }
-
-    fn set_horizontal(h_delta: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
-        Self::set_pixel_pred(h_delta, dc_deq, features)
-    }
-
-    fn set_vertical(v_delta: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
-        Self::set_pixel_pred(v_delta, dc_deq, features)
     }
 
     pub fn get_vertical_coef(&self) -> i32x8 {
