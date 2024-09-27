@@ -52,6 +52,67 @@ pub fn decode_lepton_file<R: BufRead, W: Write>(
     return Ok(decoder.read_metrics());
 }
 
+/// this is a debug function only called by the utility EXE code
+/// used to dump the contents of the file
+#[allow(dead_code)]
+pub fn decode_lepton_file_image<R: BufRead>(
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
+    let mut lh = LeptonHeader::new();
+    let mut enabled_features = enabled_features.clone();
+
+    let mut fixed_header_buffer = [0; FIXED_HEADER_SIZE];
+    reader
+        .read_exact(&mut fixed_header_buffer)
+        .context(here!())?;
+
+    let compressed_header_size = lh
+        .read_lepton_fixed_header(&fixed_header_buffer, &mut enabled_features)
+        .context(here!())?;
+
+    lh.read_compressed_lepton_header(reader, &mut enabled_features, compressed_header_size)
+        .context(here!())?;
+
+    let mut buf = [0; 3];
+    reader.read_exact(&mut buf).context(here!())?;
+
+    if buf != LEPTON_HEADER_COMPLETION_MARKER {
+        return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
+    }
+
+    let mut state = LeptonFileReader::run_lepton_decoder_threads(
+        &lh,
+        &enabled_features,
+        4,
+        |_thread_handoff, image_data, _lh| {
+            // just return the image data directly to be merged together
+            return Ok(image_data);
+        },
+    )
+    .context(here!())?;
+
+    // process the rest of the file (except for the 4 byte EOF marker)
+    state.process_to_end(reader)?;
+
+    // run the threads first, since we need everything before we can start decoding
+    let mut results = Vec::new();
+
+    for (_metric, vec) in state.complete().context(here!())? {
+        results.push(vec);
+    }
+
+    // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
+    let num_components = results[0].len();
+
+    let mut block_image = Vec::new();
+    for i in 0..num_components {
+        block_image.push(BlockBasedImage::merge(&mut results, i));
+    }
+
+    Ok((lh, block_image))
+}
+
 enum DecoderState {
     FixedHeader(),
     CompressedHeader(usize),
@@ -192,19 +253,22 @@ impl LeptonFileReader {
 
                             if leftover.len() == 0 {
                                 self.state = DecoderState::EOI;
-                                return Ok(true);
+                                break;
                             }
                         }
                     }
-                    return Ok(false);
+                    break;
                 }
                 DecoderState::EOI => {
-                    return Ok(true);
+                    break;
                 }
             }
         }
 
-        Ok(false)
+        Ok(match self.state {
+            DecoderState::EOI => true,
+            _ => false,
+        })
     }
 
     /// destructively reads the metrics
@@ -265,12 +329,12 @@ impl LeptonFileReader {
     fn process_progressive(
         lh: &mut LeptonHeader,
         enabled_features: &EnabledFeatures,
-        mut results: Vec<Vec<BlockBasedImage>>,
+        mut image_segments: Vec<Vec<BlockBasedImage>>,
     ) -> Result<DecoderState> {
-        let num_components = results[0].len();
+        let num_components = image_segments[0].len();
         let mut merged = Vec::new();
         for i in 0..num_components {
-            merged.push(BlockBasedImage::merge(&mut results, i));
+            merged.push(BlockBasedImage::merge(&mut image_segments, i));
         }
 
         let mut header = Vec::new();
@@ -279,10 +343,30 @@ impl LeptonFileReader {
             .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
             .context(here!())?;
 
-        let mut results =
-            recode_progressive_jpeg(lh, merged, &enabled_features).context(here!())?;
+        let mut results = Vec::new();
+        results.push(header);
 
-        results.insert(0, header);
+        loop {
+            // progressive JPEG consists of scans followed by headers
+            let scan =
+                jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
+            results.push(scan);
+
+            // read the next headers (DHT, etc) while mirroring it back to the writer
+            let old_pos = lh.raw_jpeg_header_read_index;
+            let result = lh
+                .advance_next_header_segment(enabled_features)
+                .context(here!())?;
+
+            results.push(lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
+
+            if !result {
+                break;
+            }
+
+            // advance to next scan
+            lh.scnc += 1;
+        }
 
         Ok(DecoderState::AppendTrailer(results))
     }
@@ -296,7 +380,7 @@ impl LeptonFileReader {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
         }
         Ok(if lh.jpeg_header.jpeg_type == JPegType::Progressive {
-            let mux = run_lepton_decoder_threads(
+            let mux = Self::run_lepton_decoder_threads(
                 lh,
                 enabled_features,
                 4, /* reserve 4 bytes for the very end */
@@ -309,7 +393,7 @@ impl LeptonFileReader {
 
             DecoderState::ScanProgressive(mux)
         } else {
-            let mux = run_lepton_decoder_threads(
+            let mux = Self::run_lepton_decoder_threads(
                 &lh,
                 &enabled_features,
                 4, /*reserve 4 bytes for the end */
@@ -379,126 +463,95 @@ impl LeptonFileReader {
             )
         }
     }
-}
 
-pub fn run_lepton_decoder_threads<P: Send + 'static>(
-    lh: &LeptonHeader,
-    features: &EnabledFeatures,
-    reserve: usize,
-    process: fn(
-        thread_handoff: &ThreadHandoff,
-        image_data: Vec<BlockBasedImage>,
-        jenc: &JPegEncodingInfo,
-    ) -> Result<P>,
-) -> Result<MultiplexReaderState<(Metrics, P)>> {
-    let qt = lh.jpeg_header.construct_quantization_table()?;
+    /// starts the decoder threads
+    fn run_lepton_decoder_threads<P: Send + 'static>(
+        lh: &LeptonHeader,
+        features: &EnabledFeatures,
+        reserve: usize,
+        process: fn(
+            thread_handoff: &ThreadHandoff,
+            image_data: Vec<BlockBasedImage>,
+            jenc: &JPegEncodingInfo,
+        ) -> Result<P>,
+    ) -> Result<MultiplexReaderState<(Metrics, P)>> {
+        let qt = lh.jpeg_header.construct_quantization_table()?;
 
-    let features = features.clone();
+        let features = features.clone();
 
-    let jenc = JPegEncodingInfo::new(lh);
+        let jenc = JPegEncodingInfo::new(lh);
 
-    let thread_handoff = lh.thread_handoff.clone();
+        let thread_handoff = lh.thread_handoff.clone();
 
-    let multiplex_reader_state = MultiplexReaderState::new(
-        thread_handoff.len(),
-        reserve,
-        move |thread_id, reader| -> Result<(Metrics, P)> {
-            run_lepton_decoder_processor(
-                &jenc,
-                &thread_handoff[thread_id],
-                thread_id == thread_handoff.len() - 1,
-                &qt,
-                reader,
-                &features,
-                process,
-            )
-        },
-    );
-
-    Ok(multiplex_reader_state)
-}
-
-/// the logic of a decoder thread. Takes a range of rows
-fn run_lepton_decoder_processor<P>(
-    jenc: &JPegEncodingInfo,
-    thread_handoff: &ThreadHandoff,
-    is_last_thread: bool,
-    qt: &[QuantizationTables],
-    reader: &mut MultiplexReader,
-    features: &EnabledFeatures,
-    process: fn(&ThreadHandoff, Vec<BlockBasedImage>, &JPegEncodingInfo) -> Result<P>,
-) -> Result<(Metrics, P)> {
-    let cpu_time = CpuTimeMeasure::new();
-
-    let mut image_data = Vec::new();
-    for i in 0..jenc.jpeg_header.cmpc {
-        image_data.push(BlockBasedImage::new(
-            &jenc.jpeg_header,
-            i,
-            thread_handoff.luma_y_start,
-            if is_last_thread {
-                // if this is the last thread, then the image should extend all the way to the bottom
-                jenc.jpeg_header.cmp_info[0].bcv
-            } else {
-                thread_handoff.luma_y_end
+        let multiplex_reader_state = MultiplexReaderState::new(
+            thread_handoff.len(),
+            reserve,
+            move |thread_id, reader| -> Result<(Metrics, P)> {
+                Self::run_lepton_decoder_processor(
+                    &jenc,
+                    &thread_handoff[thread_id],
+                    thread_id == thread_handoff.len() - 1,
+                    &qt,
+                    reader,
+                    &features,
+                    process,
+                )
             },
-        ));
+        );
+
+        Ok(multiplex_reader_state)
     }
 
-    let mut metrics = Metrics::default();
+    /// the logic of a decoder thread. Takes a range of rows
+    fn run_lepton_decoder_processor<P>(
+        jenc: &JPegEncodingInfo,
+        thread_handoff: &ThreadHandoff,
+        is_last_thread: bool,
+        qt: &[QuantizationTables],
+        reader: &mut MultiplexReader,
+        features: &EnabledFeatures,
+        process: fn(&ThreadHandoff, Vec<BlockBasedImage>, &JPegEncodingInfo) -> Result<P>,
+    ) -> Result<(Metrics, P)> {
+        let cpu_time = CpuTimeMeasure::new();
 
-    metrics.merge_from(
-        lepton_decode_row_range(
-            &qt,
-            &jenc.truncate_components,
-            &mut image_data,
-            reader,
-            thread_handoff.luma_y_start,
-            thread_handoff.luma_y_end,
-            is_last_thread,
-            true,
-            &features,
-        )
-        .context(here!())?,
-    );
-
-    let process_result = process(thread_handoff, image_data, &jenc)?;
-
-    metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-    Ok((metrics, process_result))
-}
-
-/// progressive decoder, requires that the entire lepton file is processed first
-fn recode_progressive_jpeg(
-    lh: &mut LeptonHeader,
-    merged: Vec<BlockBasedImage>,
-    enabled_features: &EnabledFeatures,
-) -> Result<Vec<Vec<u8>>> {
-    let mut results = Vec::new();
-    loop {
-        // code another scan
-        let scan =
-            jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
-        results.push(scan);
-
-        // read the next headers (DHT, etc) while mirroring it back to the writer
-        let old_pos = lh.raw_jpeg_header_read_index;
-        let result = lh
-            .advance_next_header_segment(enabled_features)
-            .context(here!())?;
-
-        results.push(lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
-
-        if !result {
-            break;
+        let mut image_data = Vec::new();
+        for i in 0..jenc.jpeg_header.cmpc {
+            image_data.push(BlockBasedImage::new(
+                &jenc.jpeg_header,
+                i,
+                thread_handoff.luma_y_start,
+                if is_last_thread {
+                    // if this is the last thread, then the image should extend all the way to the bottom
+                    jenc.jpeg_header.cmp_info[0].bcv
+                } else {
+                    thread_handoff.luma_y_end
+                },
+            ));
         }
 
-        // advance to next scan
-        lh.scnc += 1;
-    }
+        let mut metrics = Metrics::default();
 
-    Ok(results)
+        metrics.merge_from(
+            lepton_decode_row_range(
+                &qt,
+                &jenc.truncate_components,
+                &mut image_data,
+                reader,
+                thread_handoff.luma_y_start,
+                thread_handoff.luma_y_end,
+                is_last_thread,
+                true,
+                &features,
+            )
+            .context(here!())?,
+        );
+
+        let process_result = process(thread_handoff, image_data, &jenc)?;
+
+        metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+        Ok((metrics, process_result))
+    }
 }
 
 // test serializing and deserializing header
@@ -614,6 +667,8 @@ fn test_file(filename: &str) {
     let original = read_file(filename, ".jpg");
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+    let _ = decode_lepton_file_image(&mut Cursor::new(&file), &enabled_features).unwrap();
 
     let mut output = Vec::new();
 

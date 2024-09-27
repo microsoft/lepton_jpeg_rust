@@ -339,18 +339,18 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn process_to_end(&mut self, source: &mut impl BufRead) -> Result<()> {
+    pub fn process_to_end(&mut self, source: &mut impl BufRead) -> Result<Vec<u8>> {
+        let mut extra_buffer = Vec::new();
         loop {
             let b = source.fill_buf().context(here!())?;
             let b_len = b.len();
             if b_len == 0 {
                 break;
             }
-            self.process_buffer(&mut PartialBuffer::new(b, &mut Vec::new()))?;
+            self.process_buffer(&mut PartialBuffer::new(b, &mut extra_buffer))?;
             source.consume(b_len);
         }
-        Ok(())
+        Ok(extra_buffer)
     }
 
     /// process as much incoming data as we can and send it to the appropriate thread

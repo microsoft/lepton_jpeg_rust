@@ -19,12 +19,12 @@ use lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
-use structs::block_based_image::BlockBasedImage;
-use structs::lepton_file_reader::{decode_lepton_file, run_lepton_decoder_threads};
+use structs::lepton_file_reader::{decode_lepton_file, decode_lepton_file_image};
 use structs::lepton_file_writer::{encode_lepton_wrapper_verify, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
+use std::time::Instant;
 use std::{
     env,
     fs::{File, OpenOptions},
@@ -34,7 +34,6 @@ use std::{
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_header::LeptonHeader;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     if arg.starts_with(name) {
@@ -142,7 +141,7 @@ fn main_with_result() -> anyhow::Result<()> {
         let mut reader = BufReader::new(file_in);
 
         let mut lh;
-        let mut block_image;
+        let block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
             (lh, block_image) =
@@ -153,51 +152,8 @@ fn main_with_result() -> anyhow::Result<()> {
                 })
                 .context(here!())?;
         } else {
-            lh = LeptonHeader::new();
-
-            let mut fixed_header_buffer = [0; 28];
-            reader
-                .read_exact(&mut fixed_header_buffer)
-                .context(here!())?;
-
-            let compressed_header_size = lh
-                .read_lepton_fixed_header(&fixed_header_buffer, &mut enabled_features)
-                .context(here!())?;
-
-            lh.read_compressed_lepton_header(
-                &mut reader,
-                &mut enabled_features,
-                compressed_header_size,
-            )
-            .context(here!())?;
-
-            let mut state = run_lepton_decoder_threads(
-                &lh,
-                &enabled_features,
-                0,
-                |_thread_handoff, image_data, _lh| {
-                    // just return the image data directly to be merged together
-                    return Ok(image_data);
-                },
-            )
-            .context(here!())?;
-
-            state.process_to_end(&mut reader)?;
-
-            // run the threads first, since we need everything before we can start decoding
-            let mut results = Vec::new();
-
-            for (_metric, vec) in state.complete().context(here!())? {
-                results.push(vec);
-            }
-
-            // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
-            let num_components = results[0].len();
-
-            block_image = Vec::new();
-            for i in 0..num_components {
-                block_image.push(BlockBasedImage::merge(&mut results, i));
-            }
+            (lh, block_image) =
+                decode_lepton_file_image(&mut reader, &enabled_features).context(here!())?;
 
             loop {
                 println!("parsed header:");
@@ -271,6 +227,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut current_iteration = 0;
     loop {
         let thread_cpu = CpuTimeMeasure::new();
+        let walltime = Instant::now();
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results
@@ -302,11 +259,17 @@ fn main_with_result() -> anyhow::Result<()> {
             );
         }
 
-        let iter_duration = thread_cpu.elapsed() + metrics.get_cpu_time_worker_time();
+        let localthread = thread_cpu.elapsed();
+        let workers = metrics.get_cpu_time_worker_time();
 
-        info!("Total CPU time consumed:{0}ms", iter_duration.as_millis());
+        info!(
+            "Main thread CPU: {}ms, Worker thread CPU: {}ms, walltime: {}ms",
+            localthread.as_millis(),
+            workers.as_millis(),
+            walltime.elapsed().as_millis()
+        );
 
-        overall_cpu += iter_duration;
+        overall_cpu += localthread + workers;
 
         current_iteration += 1;
         if current_iteration >= iterations {
