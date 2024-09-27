@@ -39,7 +39,8 @@ impl Default for NeighborSummary {
 
 impl NeighborSummary {
     pub fn new(
-        here_idct: &AlignedBlock,
+        h_delta: i16x8,
+        v_delta: i16x8,
         dc_deq: i32,
         num_non_zeros_7x7: u8,
         horiz_pred: i32x8,
@@ -47,8 +48,8 @@ impl NeighborSummary {
         features: &EnabledFeatures,
     ) -> Self {
         NeighborSummary {
-            edge_pixels_h: Self::set_horizontal(here_idct, dc_deq, features),
-            edge_pixels_v: Self::set_vertical(here_idct, dc_deq, features),
+            edge_pixels_h: Self::set_horizontal(h_delta, dc_deq, features),
+            edge_pixels_v: Self::set_vertical(v_delta, dc_deq, features),
             edge_coefs_h: horiz_pred,
             edge_coefs_v: vert_pred,
             num_non_zeros: num_non_zeros_7x7,
@@ -67,35 +68,17 @@ impl NeighborSummary {
         return self.edge_pixels_h;
     }
 
-    fn set_pixel_pred(curr: i16x8, prev: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
+    fn set_pixel_pred(v: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
         // Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
-        if features.use_16bit_dc_estimate {
-            let delta = curr - prev;
-            // ((delta - (delta >> 15)) >> 1) = delta / 2
-            curr + (dc_deq + 128 * X_IDCT_SCALE) as i16 + ((delta - (delta >> 15)) >> 1)
-        } else {
-            let curr = i32x8::from_i16x8(curr);
-            let prev = i32x8::from_i16x8(prev);
-            let delta = curr - prev;
-            // ((delta - (delta >> 31)) >> 1) = delta / 2
-            i16x8::from_i32x8_truncate(
-                curr + (dc_deq + 128 * X_IDCT_SCALE) + ((delta - (delta >> 31)) >> 1),
-            )
-        }
+        v + (dc_deq + 128 * X_IDCT_SCALE) as i16
     }
 
-    fn set_horizontal(here_idct: &AlignedBlock, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
-        let curr = here_idct.from_stride(56, 1);
-        let prev = here_idct.from_stride(48, 1);
-
-        Self::set_pixel_pred(curr, prev, dc_deq, features)
+    fn set_horizontal(h_delta: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
+        Self::set_pixel_pred(h_delta, dc_deq, features)
     }
 
-    fn set_vertical(here_idct: &AlignedBlock, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
-        let curr = here_idct.from_stride(7, 8);
-        let prev = here_idct.from_stride(6, 8);
-
-        Self::set_pixel_pred(curr, prev, dc_deq, features)
+    fn set_vertical(v_delta: i16x8, dc_deq: i32, features: &EnabledFeatures) -> i16x8 {
+        Self::set_pixel_pred(v_delta, dc_deq, features)
     }
 
     pub fn get_vertical_coef(&self) -> i32x8 {
