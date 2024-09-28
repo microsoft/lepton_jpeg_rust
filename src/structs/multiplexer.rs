@@ -100,6 +100,23 @@ where
     s.spawn::<F, T>(f);
 }
 
+// if we are not using Rayon, just spawn regular threads
+#[cfg(not(feature = "use_rayon"))]
+fn my_spawn_simple<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::spawn(f);
+}
+
+#[cfg(feature = "use_rayon")]
+fn my_spawn_simple<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    rayon_core::spawn(f);
+}
+
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
 /// on each of them, and collect the output written by each thread to the writer in blocks identified by the thread_id.
 ///
@@ -315,7 +332,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             let cloned_processor = arc_processor.clone();
             let cloned_result_sender = result_sender.clone();
 
-            std::thread::spawn(move || {
+            my_spawn_simple(move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id as u8,
