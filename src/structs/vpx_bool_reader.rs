@@ -42,6 +42,27 @@ pub struct VPXBoolReader<R> {
     pub hash: SimpleHash,
 }
 
+pub trait BoolReader {
+    fn get(&mut self, branch: &mut Branch, cmp: ModelComponent) -> Result<bool>;
+    fn get_grid<const A: usize>(
+        &mut self,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<usize>;
+
+    fn get_unary_encoded<const A: usize>(
+        &mut self,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<usize>;
+    fn get_n_bits<const A: usize>(
+        &mut self,
+        n: usize,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<usize>;
+}
+
 impl<R: Read> VPXBoolReader<R> {
     pub fn new(reader: R) -> Result<Self> {
         let mut r = VPXBoolReader {
@@ -61,12 +82,39 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(r);
     }
 
+    #[cold]
+    #[inline(always)]
+    fn vpx_reader_fill(
+        tmp_value: &mut u32,
+        tmp_count: &mut i32,
+        upstream_reader: &mut R,
+    ) -> Result<()> {
+        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+
+        while shift >= 0 {
+            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
+            let mut v = [0u8; 1];
+            let bytes_read = upstream_reader.read(&mut v)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            *tmp_value |= (v[0] as u32) << shift;
+            shift -= BITS_IN_BYTE;
+            *tmp_count += BITS_IN_BYTE;
+        }
+
+        return Ok(());
+    }
+
     pub fn drain_stats(&mut self) -> Metrics {
         self.model_statistics.drain()
     }
+}
 
-    #[inline(never)]
-    pub fn get_grid<const A: usize>(
+impl<R: Read> BoolReader for VPXBoolReader<R> {
+    #[inline]
+    fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
         cmp: ModelComponent,
@@ -88,8 +136,8 @@ impl<R: Read> VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(never)]
-    pub fn get_unary_encoded<const A: usize>(
+    #[inline]
+    fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
         cmp: ModelComponent,
@@ -108,8 +156,8 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(value);
     }
 
-    #[inline(never)]
-    pub fn get_n_bits<const A: usize>(
+    #[inline]
+    fn get_n_bits<const A: usize>(
         &mut self,
         n: usize,
         branches: &mut [Branch; A],
@@ -146,8 +194,8 @@ impl<R: Read> VPXBoolReader<R> {
     // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
     // and it allows to reduce number of operations to compute `split` - previously `big_split` -
     // and to update `range` and `shift`).
-    #[inline(always)]
-    pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
+    #[inline]
+    fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
@@ -214,30 +262,5 @@ impl<R: Read> VPXBoolReader<R> {
         }
 
         return Ok(bit);
-    }
-
-    #[cold]
-    #[inline(always)]
-    fn vpx_reader_fill(
-        tmp_value: &mut u32,
-        tmp_count: &mut i32,
-        upstream_reader: &mut R,
-    ) -> Result<()> {
-        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
-
-        while shift >= 0 {
-            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
-            let mut v = [0u8; 1];
-            let bytes_read = upstream_reader.read(&mut v)?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            *tmp_value |= (v[0] as u32) << shift;
-            shift -= BITS_IN_BYTE;
-            *tmp_count += BITS_IN_BYTE;
-        }
-
-        return Ok(());
     }
 }

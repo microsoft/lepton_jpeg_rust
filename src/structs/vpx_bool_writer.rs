@@ -39,6 +39,29 @@ pub struct VPXBoolWriter<W> {
     pub hash: SimpleHash,
 }
 
+pub trait BoolWriter {
+    fn put_grid<const A: usize>(
+        &mut self,
+        v: u8,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<()>;
+    fn put_n_bits<const A: usize>(
+        &mut self,
+        bits: usize,
+        num_bits: usize,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<()>;
+    fn put_unary_encoded<const A: usize>(
+        &mut self,
+        v: usize,
+        branches: &mut [Branch; A],
+        cmp: ModelComponent,
+    ) -> Result<()>;
+    fn put(&mut self, value: bool, branch: &mut Branch, _cmp: ModelComponent) -> Result<()>;
+}
+
 impl<W: Write> VPXBoolWriter<W> {
     pub fn new(writer: W) -> Result<Self> {
         let mut retval = VPXBoolWriter {
@@ -61,8 +84,41 @@ impl<W: Write> VPXBoolWriter<W> {
         self.model_statistics.drain()
     }
 
-    #[inline(never)]
-    pub fn put_grid<const A: usize>(
+    pub fn finish(&mut self) -> Result<()> {
+        for _i in 0..32 {
+            let mut dummy_branch = Branch::new();
+            self.put(false, &mut dummy_branch, ModelComponent::Dummy)?;
+        }
+
+        // Ensure there's no ambigous collision with any index marker bytes
+        if (self.buffer.last().unwrap() & 0xe0) == 0xc0 {
+            self.buffer.push(0);
+        }
+
+        self.writer.write_all(&self.buffer[..])?;
+        Ok(())
+    }
+
+    /// When buffer is full and is going to be sent to output, preserve buffer data that
+    /// is not final and should carried over to the next buffer.
+    fn flush_non_final_data(&mut self) -> Result<()> {
+        // carry over buffer data that might be not final
+        let mut i = self.buffer.len() - 1;
+        while self.buffer[i] == 0xFF {
+            assert!(i > 0);
+            i -= 1;
+        }
+
+        self.writer.write_all(&self.buffer[..i])?;
+        self.buffer.drain(..i);
+
+        Ok(())
+    }
+}
+
+impl<W: Write> BoolWriter for VPXBoolWriter<W> {
+    #[inline]
+    fn put_grid<const A: usize>(
         &mut self,
         v: u8,
         branches: &mut [Branch; A],
@@ -91,8 +147,8 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
-    #[inline(never)]
-    pub fn put_n_bits<const A: usize>(
+    #[inline]
+    fn put_n_bits<const A: usize>(
         &mut self,
         bits: usize,
         num_bits: usize,
@@ -108,8 +164,8 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
-    #[inline(never)]
-    pub fn put_unary_encoded<const A: usize>(
+    #[inline]
+    fn put_unary_encoded<const A: usize>(
         &mut self,
         v: usize,
         branches: &mut [Branch; A],
@@ -130,7 +186,7 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     #[inline(always)]
-    pub fn put(&mut self, value: bool, branch: &mut Branch, _cmp: ModelComponent) -> Result<()> {
+    fn put(&mut self, value: bool, branch: &mut Branch, _cmp: ModelComponent) -> Result<()> {
         #[cfg(feature = "detailed_tracing")]
         {
             // used to detect divergences between the C++ and rust versions
@@ -218,41 +274,10 @@ impl<W: Write> VPXBoolWriter<W> {
 
         Ok(())
     }
-
-    pub fn finish(&mut self) -> Result<()> {
-        for _i in 0..32 {
-            let mut dummy_branch = Branch::new();
-            self.put(false, &mut dummy_branch, ModelComponent::Dummy)?;
-        }
-
-        // Ensure there's no ambigous collision with any index marker bytes
-        if (self.buffer.last().unwrap() & 0xe0) == 0xc0 {
-            self.buffer.push(0);
-        }
-
-        self.writer.write_all(&self.buffer[..])?;
-        Ok(())
-    }
-
-    /// When buffer is full and is going to be sent to output, preserve buffer data that
-    /// is not final and should carried over to the next buffer.
-    fn flush_non_final_data(&mut self) -> Result<()> {
-        // carry over buffer data that might be not final
-        let mut i = self.buffer.len() - 1;
-        while self.buffer[i] == 0xFF {
-            assert!(i > 0);
-            i -= 1;
-        }
-
-        self.writer.write_all(&self.buffer[..i])?;
-        self.buffer.drain(..i);
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
-use super::vpx_bool_reader::VPXBoolReader;
+use super::{vpx_bool_reader::BoolReader, vpx_bool_reader::VPXBoolReader};
 
 #[test]
 fn test_roundtrip_vpxboolwriter_n_bits() {

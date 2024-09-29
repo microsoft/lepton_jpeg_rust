@@ -28,6 +28,7 @@ use crate::structs::{
 };
 
 use super::block_context::{BlockContext, NeighborData};
+use super::vpx_bool_reader::BoolReader;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -124,9 +125,9 @@ pub fn lepton_decode_row_range<R: Read>(
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-fn decode_row_wrapper<R: Read>(
+fn decode_row_wrapper(
     model: &mut Model,
-    bool_reader: &mut VPXBoolReader<R>,
+    bool_reader: &mut impl BoolReader,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
     color_index: usize,
@@ -149,7 +150,7 @@ fn decode_row_wrapper<R: Read>(
         };
 
         if pt.is_all_present() {
-            parse_token::<R, true>(
+            parse_token::<true>(
                 model,
                 bool_reader,
                 image_data,
@@ -162,7 +163,7 @@ fn decode_row_wrapper<R: Read>(
             )
             .context(here!())?;
         } else {
-            parse_token::<R, false>(
+            parse_token::<false>(
                 model,
                 bool_reader,
                 image_data,
@@ -187,9 +188,9 @@ fn decode_row_wrapper<R: Read>(
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-fn parse_token<R: Read, const ALL_PRESENT: bool>(
+fn parse_token<const ALL_PRESENT: bool>(
     model: &mut Model,
-    bool_reader: &mut VPXBoolReader<R>,
+    bool_reader: &mut impl BoolReader,
     image_data: &mut BlockBasedImage,
     context: &BlockContext,
     neighbor_summary_cache: &mut [NeighborSummary],
@@ -203,7 +204,7 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
     let neighbors =
         context.get_neighbor_data::<ALL_PRESENT>(image_data, neighbor_summary_cache, pt);
 
-    let (output, ns) = read_coefficient_block::<ALL_PRESENT, R>(
+    let (output, ns) = read_coefficient_block::<ALL_PRESENT>(
         pt,
         color_index,
         &neighbors,
@@ -225,12 +226,12 @@ fn parse_token<R: Read, const ALL_PRESENT: bool>(
 ///
 /// This function is designed to be independently callable without needing to know the context,
 /// image data, etc so it can be extensively unit tested.
-pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
+pub fn read_coefficient_block<const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     color_index: usize,
     neighbor_data: &NeighborData,
     model: &mut Model,
-    bool_reader: &mut VPXBoolReader<R>,
+    bool_reader: &mut impl BoolReader,
     qt: &QuantizationTables,
     features: &EnabledFeatures,
 ) -> Result<(AlignedBlock, NeighborSummary)> {
@@ -325,7 +326,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     // step 2, read the edge coefficients
     // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
     // and build transposed raster of dequantized DCT coefficients with 0 in DC
-    let (horiz_pred, vert_pred) = decode_edge::<R, ALL_PRESENT>(
+    let (horiz_pred, vert_pred) = decode_edge::<ALL_PRESENT>(
         neighbor_data,
         model_per_color,
         bool_reader,
@@ -370,10 +371,10 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 }
 
 //#[inline(never)] // don't inline so that the profiler can get proper data
-fn decode_edge<R: Read, const ALL_PRESENT: bool>(
+fn decode_edge<const ALL_PRESENT: bool>(
     neighbor_data: &NeighborData,
     model_per_color: &mut ModelPerColor,
-    bool_reader: &mut VPXBoolReader<R>,
+    bool_reader: &mut impl BoolReader,
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -388,7 +389,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     let (curr_horiz_pred, curr_vert_pred) =
         ProbabilityTables::predict_current_edges(neighbor_data, raster);
 
-    decode_one_edge::<R, ALL_PRESENT, true>(
+    decode_one_edge::<ALL_PRESENT, true>(
         model_per_color,
         bool_reader,
         &curr_horiz_pred.to_array(),
@@ -399,7 +400,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
         eob_x,
         cast_mut(raster),
     )?;
-    decode_one_edge::<R, ALL_PRESENT, false>(
+    decode_one_edge::<ALL_PRESENT, false>(
         model_per_color,
         bool_reader,
         &curr_vert_pred.to_array(),
@@ -417,9 +418,9 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     Ok((next_horiz_pred, next_vert_pred))
 }
 
-fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
+fn decode_one_edge<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     model_per_color: &mut ModelPerColor,
-    bool_reader: &mut VPXBoolReader<R>,
+    bool_reader: &mut impl BoolReader,
     pred: &[i32; 8],
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
@@ -429,7 +430,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     raster: &mut [i32; 64],
 ) -> Result<()> {
     let mut num_non_zeros_edge = model_per_color
-        .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
+        .read_non_zero_edge_count::<HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context(here!())?;
 
     let delta;

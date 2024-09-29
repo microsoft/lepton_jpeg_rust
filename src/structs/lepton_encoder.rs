@@ -28,6 +28,7 @@ use crate::structs::{
 use default_boxed::DefaultBoxed;
 
 use super::block_context::NeighborData;
+use super::vpx_bool_writer::BoolWriter;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -146,9 +147,9 @@ pub fn lepton_encode_row_range<W: Write>(
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-fn process_row<W: Write>(
+fn process_row(
     model: &mut Model,
-    bool_writer: &mut VPXBoolWriter<W>,
+    bool_writer: &mut impl BoolWriter,
     left_model: &ProbabilityTables,
     middle_model: &ProbabilityTables,
     color_index: usize,
@@ -171,7 +172,7 @@ fn process_row<W: Write>(
 
         // shortcut all the checks for the presence of left/right components by passing a constant generic parameter
         if pt.is_all_present() {
-            serialize_tokens::<W, true>(
+            serialize_tokens::<true>(
                 &block_context,
                 qt,
                 pt,
@@ -184,7 +185,7 @@ fn process_row<W: Write>(
             )
             .context(here!())?;
         } else {
-            serialize_tokens::<W, false>(
+            serialize_tokens::<false>(
                 &block_context,
                 qt,
                 pt,
@@ -209,7 +210,7 @@ fn process_row<W: Write>(
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
+fn serialize_tokens<const ALL_PRESENT: bool>(
     context: &BlockContext,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -217,7 +218,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
     color_index: usize,
     image_data: &BlockBasedImage,
     neighbor_summary_cache: &mut [NeighborSummary],
-    bool_writer: &mut VPXBoolWriter<W>,
+    bool_writer: &mut impl BoolWriter,
     features: &EnabledFeatures,
 ) -> Result<()> {
     debug_assert!(ALL_PRESENT == pt.is_all_present());
@@ -234,7 +235,7 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
         block.get_hash()
     );
 
-    let ns = write_coefficient_block::<ALL_PRESENT, W>(
+    let ns = write_coefficient_block::<ALL_PRESENT>(
         pt,
         color_index,
         &neighbors,
@@ -255,13 +256,13 @@ fn serialize_tokens<W: Write, const ALL_PRESENT: bool>(
 ///
 /// This function is designed to be independently callable without needing to know the context,
 /// image data, etc so it can be extensively unit tested.
-pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
+pub fn write_coefficient_block<const ALL_PRESENT: bool>(
     pt: &ProbabilityTables,
     color_index: usize,
     neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
     model: &mut Model,
-    bool_writer: &mut VPXBoolWriter<W>,
+    bool_writer: &mut impl BoolWriter,
     qt: &QuantizationTables,
     features: &EnabledFeatures,
 ) -> Result<NeighborSummary> {
@@ -344,7 +345,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     // Next step is the edge coefficients.
     // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
     // and transposed raster of dequantized DCT coefficients with 0 in DC
-    let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
+    let (raster, horiz_pred, vert_pred) = encode_edge::<ALL_PRESENT>(
         neighbors_data,
         &here_tr,
         model_per_color,
@@ -402,11 +403,11 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-fn encode_edge<W: Write, const ALL_PRESENT: bool>(
+fn encode_edge<const ALL_PRESENT: bool>(
     neighbors_data: &NeighborData,
     here_tr: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
-    bool_writer: &mut VPXBoolWriter<W>,
+    bool_writer: &mut impl BoolWriter,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
     num_non_zeros_7x7: u8,
@@ -428,7 +429,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 
     let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
 
-    encode_one_edge::<W, ALL_PRESENT, true>(
+    encode_one_edge::<ALL_PRESENT, true>(
         here_tr,
         model_per_color,
         bool_writer,
@@ -440,7 +441,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     )
     .context(here!())?;
 
-    encode_one_edge::<W, ALL_PRESENT, false>(
+    encode_one_edge::<ALL_PRESENT, false>(
         here_tr,
         model_per_color,
         bool_writer,
@@ -466,10 +467,10 @@ fn count_non_zero(v: i16) -> u8 {
     }
 }
 
-fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
+fn encode_one_edge<const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     block: &AlignedBlock,
     model_per_color: &mut ModelPerColor,
-    bool_writer: &mut VPXBoolWriter<W>,
+    bool_writer: &mut impl BoolWriter,
     pred: &[i32; 8],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
@@ -497,7 +498,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     }
 
     model_per_color
-        .write_non_zero_edge_count::<W, HORIZONTAL>(
+        .write_non_zero_edge_count::<HORIZONTAL>(
             bool_writer,
             est_eob,
             num_non_zeros_bin,
@@ -847,7 +848,7 @@ fn roundtrip_read_write_coefficients(
 
         // call the right version depending on if we have all neighbors or not
         if left.is_some() && above.is_some() {
-            write_coefficient_block::<true, _>(
+            write_coefficient_block::<true>(
                 &pt,
                 color_index,
                 &n,
@@ -859,7 +860,7 @@ fn roundtrip_read_write_coefficients(
             )
             .unwrap()
         } else {
-            write_coefficient_block::<false, _>(
+            write_coefficient_block::<false>(
                 &pt,
                 color_index,
                 &n,
@@ -895,7 +896,7 @@ fn roundtrip_read_write_coefficients(
 
         // call the right version depending on if we have all neighbors or not
         let r = if left.is_some() && above.is_some() {
-            read_coefficient_block::<true, _>(
+            read_coefficient_block::<true>(
                 &pt,
                 color_index,
                 &n,
@@ -906,7 +907,7 @@ fn roundtrip_read_write_coefficients(
             )
             .unwrap()
         } else {
-            read_coefficient_block::<false, _>(
+            read_coefficient_block::<false>(
                 &pt,
                 color_index,
                 &n,

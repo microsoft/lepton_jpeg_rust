@@ -6,7 +6,6 @@
 
 use anyhow::{Context, Result};
 use std::cmp;
-use std::io::{Read, Write};
 
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length, u32_bit_length};
@@ -16,8 +15,8 @@ use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
 use super::quantization_tables::QuantizationTables;
-use super::vpx_bool_reader::VPXBoolReader;
-use super::vpx_bool_writer::VPXBoolWriter;
+use super::vpx_bool_reader::BoolReader;
+use super::vpx_bool_writer::BoolWriter;
 
 const BLOCK_TYPES: usize = 2; // setting this to 3 gives us ~1% savings.. 2/3 from BLOCK_TYPES=2
 
@@ -183,9 +182,9 @@ struct CountsDC {
 
 impl ModelPerColor {
     #[inline(never)]
-    pub fn read_coef<R: Read>(
+    pub fn read_coef(
         &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
+        bool_reader: &mut impl BoolReader,
         zig49: usize,
         num_non_zeros_bin: usize,
         best_prior_bit_len: usize,
@@ -205,9 +204,9 @@ impl ModelPerColor {
     }
 
     #[inline(never)]
-    pub fn write_coef<W: Write>(
+    pub fn write_coef(
         &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
+        bool_writer: &mut impl BoolWriter,
         coef: i16,
         zig49: usize,
         num_non_zeros_bin: usize,
@@ -262,9 +261,9 @@ impl ModelPerColor {
         (exp, sign, bits)
     }
 
-    pub fn write_non_zero_7x7_count<W: Write>(
+    pub fn write_non_zero_7x7_count(
         &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
+        bool_writer: &mut impl BoolWriter,
         num_non_zeros_7x7_context_bin: u8,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
@@ -280,9 +279,9 @@ impl ModelPerColor {
             .context(here!());
     }
 
-    pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
+    pub fn write_non_zero_edge_count<const HORIZONTAL: bool>(
         &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
+        bool_writer: &mut impl BoolWriter,
         est_eob: u8,
         num_non_zeros_bin: u8,
         num_non_zeros_edge: u8,
@@ -299,9 +298,9 @@ impl ModelPerColor {
             .context(here!());
     }
 
-    pub fn read_non_zero_7x7_count<R: Read>(
+    pub fn read_non_zero_7x7_count(
         &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
+        bool_reader: &mut impl BoolReader,
         num_non_zeros_7x7_context_bin: u8,
     ) -> Result<u8> {
         let num_non_zeros_prob =
@@ -312,9 +311,9 @@ impl ModelPerColor {
             .context(here!())? as u8);
     }
 
-    pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
+    pub fn read_non_zero_edge_count<const HORIZONTAL: bool>(
         &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
+        bool_reader: &mut impl BoolReader,
         est_eob: u8,
         num_non_zeros_bin: u8,
     ) -> Result<u8> {
@@ -326,9 +325,9 @@ impl ModelPerColor {
             .context(here!())? as u8);
     }
 
-    pub fn read_edge_coefficient<R: Read>(
+    pub fn read_edge_coefficient(
         &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
+        bool_reader: &mut impl BoolReader,
         qt: &QuantizationTables,
         zig15offset: usize,
         num_non_zeros_edge: u8,
@@ -423,9 +422,9 @@ impl ModelPerColor {
         Ok(coef)
     }
 
-    pub fn write_edge_coefficient<W: Write>(
+    pub fn write_edge_coefficient(
         &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
+        bool_writer: &mut impl BoolWriter,
         qt: &QuantizationTables,
         coef: i16,
         zig15offset: usize,
@@ -567,9 +566,9 @@ impl Model {
         &mut self.per_color[color_index]
     }
 
-    pub fn read_dc<R: Read>(
+    pub fn read_dc(
         &mut self,
-        bool_reader: &mut VPXBoolReader<R>,
+        bool_reader: &mut impl BoolReader,
         color_index: usize,
         uncertainty: i16,
         uncertainty2: i16,
@@ -588,9 +587,9 @@ impl Model {
         .context(here!());
     }
 
-    pub fn write_dc<W: Write>(
+    pub fn write_dc(
         &mut self,
-        bool_writer: &mut VPXBoolWriter<W>,
+        bool_writer: &mut impl BoolWriter,
         color_index: usize,
         coef: i16,
         uncertainty: i16,
@@ -634,9 +633,9 @@ impl Model {
         (exp, sign, bits)
     }
 
-    #[inline(always)]
-    fn read_length_sign_coef<const A: usize, const B: usize, R: Read>(
-        bool_reader: &mut VPXBoolReader<R>,
+    #[inline]
+    fn read_length_sign_coef<const A: usize, const B: usize>(
+        bool_reader: &mut impl BoolReader,
         magnitude_branches: &mut [Branch; A],
         sign_branch: &mut Branch,
         bits_branch: &mut [Branch; B],
@@ -671,8 +670,8 @@ impl Model {
         return Ok(coef);
     }
 
-    fn write_length_sign_coef<const A: usize, const B: usize, W: Write>(
-        bool_writer: &mut VPXBoolWriter<W>,
+    fn write_length_sign_coef<const A: usize, const B: usize>(
+        bool_writer: &mut impl BoolWriter,
         coef: i16,
         magnitude_branches: &mut [Branch; A],
         sign_branch: &mut Branch,
