@@ -813,7 +813,7 @@ fn roundtrip_read_write_coefficients(
     // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
     use std::hash::Hasher;
-    use std::io::{Cursor, Read};
+    use std::io::{BufRead, Cursor, Read};
 
     let mut write_model = make_random_model();
 
@@ -875,7 +875,7 @@ fn roundtrip_read_write_coefficients(
     }
 
     /// This is a helper function to avoid having to duplicate the code for the different cases.
-    fn call_read_coefficient_block<R: Read>(
+    fn call_read_coefficient_block<R: BufRead>(
         left: Option<(&AlignedBlock, &NeighborSummary)>,
         above: Option<(&AlignedBlock, &NeighborSummary)>,
         above_left: Option<&AlignedBlock>,

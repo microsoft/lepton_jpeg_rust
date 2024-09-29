@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::{
     cmp,
-    io::{Cursor, Read, Write},
+    io::{BufRead, Cursor, Read, Write},
     mem::swap,
     sync::mpsc::{channel, Receiver, SendError, Sender},
 };
@@ -17,7 +17,7 @@ use std::{
 /// The message that is sent between the threads
 enum Message {
     Eof,
-    WriteBlock(u8, Vec<u8>),
+    WriteBlock(u8, Box<[u8]>),
 }
 
 pub struct MultiplexWriter {
@@ -55,7 +55,10 @@ impl Write for MultiplexWriter {
             swap(&mut new_buffer, &mut self.buffer);
 
             self.sender
-                .send(Message::WriteBlock(self.thread_id, new_buffer))
+                .send(Message::WriteBlock(
+                    self.thread_id,
+                    new_buffer.into_boxed_slice(),
+                ))
                 .unwrap();
         }
         Ok(())
@@ -206,7 +209,7 @@ pub struct MultiplexReader {
 
     /// what we are reading. When this returns zero, we try to
     /// refill the buffer if we haven't reached the end of the stream
-    current_buffer: Cursor<Vec<u8>>,
+    current_buffer: Cursor<Box<[u8]>>,
 
     /// once we get told we are at the end of the stream, we just
     /// always return 0 bytes
@@ -222,7 +225,27 @@ impl Read for MultiplexReader {
             return Ok(amount_read);
         }
 
-        self.read_slow(buf)
+        self.fill_buffer()?;
+
+        self.current_buffer.read(buf)
+    }
+}
+
+impl BufRead for MultiplexReader {
+    /// fast path for reads. If we run out of data, take the slow path
+    #[inline(always)]
+    fn fill_buf<'a>(&'a mut self) -> std::io::Result<&'a [u8]> {
+        if self.current_buffer.position() == self.current_buffer.get_ref().len() as u64 {
+            self.fill_buffer()?;
+        }
+
+        self.current_buffer.fill_buf()
+    }
+
+    /// fast path for reads. If we run out of data, take the slow path
+    #[inline(always)]
+    fn consume(&mut self, amt: usize) {
+        self.current_buffer.consume(amt);
     }
 }
 
@@ -231,13 +254,8 @@ impl MultiplexReader {
     /// return zero if at the end of the stream
     #[cold]
     #[inline(never)]
-    fn read_slow(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        while !self.end_of_file {
-            let amount_read = self.current_buffer.read(buf)?;
-            if amount_read > 0 {
-                return Ok(amount_read);
-            }
-
+    fn fill_buffer(&mut self) -> std::io::Result<usize> {
+        if !self.end_of_file {
             match self.receiver.recv() {
                 Ok(r) => match r {
                     Message::Eof => {
@@ -302,7 +320,7 @@ where
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id as u8,
-                    current_buffer: Cursor::new(Vec::new()),
+                    current_buffer: Cursor::new(Box::new([])),
                     receiver: rx,
                     end_of_file: false,
                 };
@@ -348,8 +366,8 @@ where
                 .read_exact(&mut buffer)
                 .with_context(|| format!("reading {0} bytes", buffer.len()))?;
 
-            let e =
-                channel_to_sender[thread_id as usize].send(Message::WriteBlock(thread_id, buffer));
+            let e = channel_to_sender[thread_id as usize]
+                .send(Message::WriteBlock(thread_id, buffer.into_boxed_slice()));
 
             if let Err(e) = e {
                 error_sending = Some(e);

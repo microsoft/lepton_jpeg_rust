@@ -22,7 +22,7 @@ Neither the name of Google nor the names of its contributors may be used to endo
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use std::io::{Read, Result};
+use std::io::{BufRead, Read, Result};
 
 use crate::metrics::{Metrics, ModelComponent};
 
@@ -65,7 +65,7 @@ pub trait BoolReader {
     ) -> Result<usize>;
 }
 
-impl<R: Read> VPXBoolReader<R> {
+impl<R: BufRead> VPXBoolReader<R> {
     pub fn new(reader: R) -> Result<Self> {
         let mut r = VPXBoolReader {
             upstream_reader: reader,
@@ -93,17 +93,34 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> Result<()> {
         let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
 
-        while shift >= 0 {
-            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
-            let mut v = [0u8; 1];
-            let bytes_read = upstream_reader.read(&mut v)?;
-            if bytes_read == 0 {
-                break;
-            }
+        let b = upstream_reader.fill_buf()?;
 
-            *tmp_value |= (v[0] as u32) << shift;
-            shift -= BITS_IN_BYTE;
-            *tmp_count += BITS_IN_BYTE;
+        let precount = *tmp_count;
+        if b.len() > 4 {
+            // fast path if we have more that 4 bytes to process
+            let be = u32::from_be_bytes(b[0..4].try_into().unwrap());
+
+            let (consume, v) = if precount == -8 {
+                (4, be)
+            } else {
+                (3, be & 0xffffff00)
+            };
+
+            *tmp_value |= v >> (8 + precount);
+            *tmp_count += consume * 8;
+            upstream_reader.consume(consume as usize);
+            return Ok(());
+        } else {
+            // slow path
+
+            while shift >= 0 {
+                let mut b = [0u8; 1];
+                upstream_reader.read(&mut b)?;
+
+                *tmp_value |= (b[0] as u32) << shift;
+                shift -= BITS_IN_BYTE;
+                *tmp_count += BITS_IN_BYTE;
+            }
         }
 
         return Ok(());
@@ -114,7 +131,7 @@ impl<R: Read> VPXBoolReader<R> {
     }
 }
 
-impl<R: Read> BoolReader for VPXBoolReader<R> {
+impl<R: BufRead> BoolReader for VPXBoolReader<R> {
     #[inline(never)]
     fn get_grid<const A: usize>(
         &mut self,

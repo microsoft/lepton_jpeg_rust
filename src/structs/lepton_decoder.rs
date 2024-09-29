@@ -12,7 +12,7 @@ use wide::i32x8;
 use default_boxed::DefaultBoxed;
 
 use std::cmp;
-use std::io::Read;
+use std::io::{BufRead, Read};
 
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
@@ -33,7 +33,7 @@ use super::vpx_bool_reader::BoolReader;
 // reads stream from reader and populates image_data with the decoded data
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-pub fn lepton_decode_row_range<R: Read>(
+pub fn lepton_decode_row_range<R: BufRead>(
     qt: &[QuantizationTables],
     trunc: &TruncateComponents,
     image_data: &mut [BlockBasedImage],
