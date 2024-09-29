@@ -12,7 +12,7 @@ use wide::i32x8;
 use default_boxed::DefaultBoxed;
 
 use std::cmp;
-use std::io::{BufRead, Read};
+use std::io::BufRead;
 
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;

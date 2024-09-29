@@ -91,27 +91,25 @@ impl<R: BufRead> VPXBoolReader<R> {
         tmp_count: &mut i32,
         upstream_reader: &mut R,
     ) -> Result<()> {
-        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
-
         let b = upstream_reader.fill_buf()?;
 
-        let precount = *tmp_count;
         if b.len() > 4 {
             // fast path if we have more that 4 bytes to process
             let be = u32::from_be_bytes(b[0..4].try_into().unwrap());
 
-            let (consume, v) = if precount == -8 {
+            let (consume, v) = if *tmp_count == -8 {
                 (4, be)
             } else {
                 (3, be & 0xffffff00)
             };
 
-            *tmp_value |= v >> (8 + precount);
+            *tmp_value |= v >> (8 + *tmp_count);
             *tmp_count += consume * 8;
             upstream_reader.consume(consume as usize);
             return Ok(());
         } else {
             // slow path
+            let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
 
             while shift >= 0 {
                 let mut b = [0u8; 1];
