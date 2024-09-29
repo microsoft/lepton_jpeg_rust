@@ -245,9 +245,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool>(
 
     // read how many of these are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
-    let num_non_zeros_7x7 = model_per_color
-        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)
-        .context(here!())?;
+    let num_non_zeros_7x7 =
+        model_per_color.read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)?;
 
     if num_non_zeros_7x7 > 49 {
         // most likely a stream or model synchronization error
@@ -280,14 +279,12 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool>(
         for (zig49, &coord_tr) in UNZIGZAG_49_TR.iter().enumerate() {
             let best_prior_bit_length = u16_bit_length(best_priors[coord_tr as usize]);
 
-            let coef = model_per_color
-                .read_coef(
-                    bool_reader,
-                    zig49,
-                    num_non_zeros_bin,
-                    best_prior_bit_length as usize,
-                )
-                .context(here!())?;
+            let coef = model_per_color.read_coef(
+                bool_reader,
+                zig49,
+                num_non_zeros_bin,
+                best_prior_bit_length as usize,
+            )?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
@@ -343,14 +340,13 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool>(
     let q0 = qt.get_quantization_table()[0] as i32;
     let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
 
-    let coef = model
-        .read_dc(
-            bool_reader,
-            color_index,
-            predicted_dc.uncertainty,
-            predicted_dc.uncertainty2,
-        )
-        .context(here!())?;
+    let coef = model.read_dc(
+        bool_reader,
+        color_index,
+        predicted_dc.uncertainty,
+        predicted_dc.uncertainty2,
+    )?;
+
     output.set_dc(ProbabilityTables::adv_predict_or_unpredict_dc(
         coef,
         true,
