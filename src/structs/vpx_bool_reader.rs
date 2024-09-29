@@ -113,7 +113,7 @@ impl<R: Read> VPXBoolReader<R> {
 }
 
 impl<R: Read> BoolReader for VPXBoolReader<R> {
-    #[inline]
+    #[inline(always)]
     fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -136,7 +136,7 @@ impl<R: Read> BoolReader for VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -156,7 +156,7 @@ impl<R: Read> BoolReader for VPXBoolReader<R> {
         return Ok(value);
     }
 
-    #[inline]
+    #[inline(always)]
     fn get_n_bits<const A: usize>(
         &mut self,
         n: usize,
@@ -194,7 +194,7 @@ impl<R: Read> BoolReader for VPXBoolReader<R> {
     // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
     // and it allows to reduce number of operations to compute `split` - previously `big_split` -
     // and to update `range` and `shift`).
-    #[inline]
+    #[inline(always)]
     fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
