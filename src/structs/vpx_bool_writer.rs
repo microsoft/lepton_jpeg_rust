@@ -46,6 +46,7 @@ pub trait BoolWriter {
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<()>;
+
     fn put_n_bits<const A: usize>(
         &mut self,
         bits: usize,
@@ -53,12 +54,14 @@ pub trait BoolWriter {
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<()>;
+
     fn put_unary_encoded<const A: usize>(
         &mut self,
         v: usize,
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<()>;
+
     fn put(&mut self, value: bool, branch: &mut Branch, _cmp: ModelComponent) -> Result<()>;
 }
 
@@ -117,7 +120,7 @@ impl<W: Write> VPXBoolWriter<W> {
 }
 
 impl<W: Write> BoolWriter for VPXBoolWriter<W> {
-    #[inline]
+    #[inline(never)]
     fn put_grid<const A: usize>(
         &mut self,
         v: u8,
@@ -147,7 +150,7 @@ impl<W: Write> BoolWriter for VPXBoolWriter<W> {
         Ok(())
     }
 
-    #[inline]
+    #[inline(never)]
     fn put_n_bits<const A: usize>(
         &mut self,
         bits: usize,
@@ -164,7 +167,7 @@ impl<W: Write> BoolWriter for VPXBoolWriter<W> {
         Ok(())
     }
 
-    #[inline]
+    #[inline(never)]
     fn put_unary_encoded<const A: usize>(
         &mut self,
         v: usize,

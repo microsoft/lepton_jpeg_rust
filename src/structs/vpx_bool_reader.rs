@@ -44,6 +44,7 @@ pub struct VPXBoolReader<R> {
 
 pub trait BoolReader {
     fn get(&mut self, branch: &mut Branch, cmp: ModelComponent) -> Result<bool>;
+
     fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -55,6 +56,7 @@ pub trait BoolReader {
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<usize>;
+
     fn get_n_bits<const A: usize>(
         &mut self,
         n: usize,
@@ -113,7 +115,7 @@ impl<R: Read> VPXBoolReader<R> {
 }
 
 impl<R: Read> BoolReader for VPXBoolReader<R> {
-    #[inline(always)]
+    #[inline(never)]
     fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -136,7 +138,7 @@ impl<R: Read> BoolReader for VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -156,7 +158,7 @@ impl<R: Read> BoolReader for VPXBoolReader<R> {
         return Ok(value);
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn get_n_bits<const A: usize>(
         &mut self,
         n: usize,
