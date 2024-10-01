@@ -70,9 +70,6 @@ pub struct LeptonHeader {
 
     pub jpeg_file_size: u32,
 
-    /// on decompression, plain-text size
-    pub plain_text_size: u32,
-
     /// on decompression, uncompressed lepton header size. This is only
     /// saved by this encoder for historical reasons. It is not used be
     /// the decoder.
@@ -80,6 +77,9 @@ pub struct LeptonHeader {
 
     /// the git revision of the encoder that created this file (first 8 hex characters)
     pub git_revision_prefix: [u8; 4],
+
+    /// writer version
+    pub encoder_version: u8,
 }
 
 impl LeptonHeader {
@@ -102,9 +102,9 @@ impl LeptonHeader {
             max_bpos: 0,
             max_sah: 0,
             jpeg_file_size: 0,
-            plain_text_size: 0,
             uncompressed_lepton_header_size: None,
             git_revision_prefix: [0u8; 4],
+            encoder_version: 0,
         };
     }
 
@@ -150,15 +150,20 @@ impl LeptonHeader {
                 enabled_features.use_16bit_adv_predict = (flags & 0x02) != 0;
             }
 
+            self.encoder_version = header[15];
             self.git_revision_prefix = header[16..20].try_into().unwrap();
         } else {
             // take first bytes for git revision prefix
             self.git_revision_prefix = header[8..12].try_into().unwrap();
         }
 
-        self.plain_text_size = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        // total size of original JPEG
+        self.jpeg_file_size = u32::from_le_bytes(header[20..24].try_into().unwrap());
 
-        Ok(u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize)
+        let compressed_header_size =
+            u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize;
+
+        Ok(compressed_header_size)
     }
 
     /// reads the start of the lepton file and parses the compressed header. Returns the raw JPEG header contents.
@@ -171,7 +176,7 @@ impl LeptonHeader {
         if compressed_header_size > MAX_FILE_SIZE_BYTES as usize {
             return err_exit_code(ExitCode::BadLeptonFile, "Too big compressed header");
         }
-        if self.plain_text_size > MAX_FILE_SIZE_BYTES as u32 {
+        if self.jpeg_file_size > MAX_FILE_SIZE_BYTES as u32 {
             return err_exit_code(ExitCode::BadLeptonFile, "Only support images < 128 megs");
         }
 
@@ -208,7 +213,7 @@ impl LeptonHeader {
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
         if self.early_eof_encountered {
-            let mut max_last_segment_size = i32::try_from(self.plain_text_size)?
+            let mut max_last_segment_size = i32::try_from(self.jpeg_file_size)?
                 - i32::try_from(self.garbage_data.len())?
                 - i32::try_from(self.raw_jpeg_header_read_index)?
                 - SOI.len() as i32;
@@ -404,9 +409,12 @@ impl LeptonHeader {
         writer.write_all(&[0; 3])?;
 
         // Original lepton format reserves 12 bytes for git revision. We use this space for additional info
-        // that our implementation needs - mark that it's MS implementation and a not-compressed header size.
+        // to store information about the version that wrote this.
         writer.write_u8('M' as u8)?;
         writer.write_u8('S' as u8)?;
+
+        // write the uncompressed lepton header size
+        // (historical, used by a previous version of the decoder)
         writer.write_u32::<LittleEndian>(lepton_header.len() as u32)?;
 
         // write the flags that were used to encode this file
@@ -422,8 +430,8 @@ impl LeptonHeader {
             },
         )?;
 
-        // reserved
-        writer.write_u8(0)?;
+        // version of the encoder
+        writer.write_u8(self.encoder_version)?;
 
         // write the git revision prefix that was used to write this
         writer.write_all(&self.git_revision_prefix)?;

@@ -271,6 +271,18 @@ pub fn read_jpeg<R: Read + Seek>(
     Ok((lp, image_data))
 }
 
+const fn string_to_int(s: &str) -> u8 {
+    let mut result = 0;
+    let mut i = 0;
+    let b = s.as_bytes();
+    while i < b.len() {
+        let c = b[i];
+        result = result * 10 + c - b'0';
+        i += 1;
+    }
+    result
+}
+
 fn get_git_revision(lp: &mut LeptonHeader) {
     let hex_str = git_version::git_version!(args = ["--abbrev=8", "--always", "--dirty=M"]);
     if let Ok(v) = u32::from_str_radix(hex_str, 16) {
@@ -278,6 +290,12 @@ fn get_git_revision(lp: &mut LeptonHeader) {
         // were modified so the version is not a clean git version, so we don't write it.
         lp.git_revision_prefix = v.to_be_bytes();
     }
+
+    const ENCODER_VERSION: u8 = string_to_int(env!("CARGO_PKG_VERSION_MAJOR")) * 100
+        + string_to_int(env!("CARGO_PKG_VERSION_MINOR")) * 10
+        + string_to_int(env!("CARGO_PKG_VERSION_PATCH"));
+
+    lp.encoder_version = ENCODER_VERSION;
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)

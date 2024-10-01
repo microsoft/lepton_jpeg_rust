@@ -309,12 +309,12 @@ impl LeptonFileReader {
                 + lh.garbage_data.len()
                 + (lh.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
 
-            if expected_total_length < lh.plain_text_size as usize {
+            if expected_total_length < lh.jpeg_file_size as usize {
                 // figure out how much extra space we have, since C++ files can have
                 // more restart markers than there is space to fit them
                 let space_for_markers = min(
                     markers.len(),
-                    lh.plain_text_size as usize - expected_total_length,
+                    lh.jpeg_file_size as usize - expected_total_length,
                 );
 
                 markers.resize(space_for_markers, 0);
