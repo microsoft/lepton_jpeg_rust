@@ -215,6 +215,20 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     }
 }
 
+static GIT_VERSION: &str =
+    git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"]);
+
+static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[no_mangle]
+pub unsafe extern "C" fn get_version(
+    package: &mut *const std::os::raw::c_char,
+    git: &mut *const std::os::raw::c_char,
+) {
+    *git = GIT_VERSION.as_ptr() as *const std::os::raw::c_char;
+    *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
+}
+
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 
 #[no_mangle]
