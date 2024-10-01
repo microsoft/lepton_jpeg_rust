@@ -73,8 +73,13 @@ pub struct LeptonHeader {
     /// on decompression, plain-text size
     pub plain_text_size: u32,
 
-    /// on decompression, uncompressed lepton header size
-    pub uncompressed_lepton_header_size: u32,
+    /// on decompression, uncompressed lepton header size. This is only
+    /// saved by this encoder for historical reasons. It is not used be
+    /// the decoder.
+    pub uncompressed_lepton_header_size: Option<u32>,
+
+    /// the git revision of the encoder that created this file (first 8 hex characters)
+    pub git_revision_prefix: [u8; 4],
 }
 
 impl LeptonHeader {
@@ -98,7 +103,8 @@ impl LeptonHeader {
             max_sah: 0,
             jpeg_file_size: 0,
             plain_text_size: 0,
-            uncompressed_lepton_header_size: 0,
+            uncompressed_lepton_header_size: None,
+            git_revision_prefix: [0u8; 4],
         };
     }
 
@@ -125,10 +131,17 @@ impl LeptonHeader {
             );
         }
 
-        let mut uncompressed_lepton_header_size = 0;
+        // header[4] is the number of threads, but we don't care about that
+        // header[5..8] is reserved
+
+        // header[8..20] 12 bytes were the GIT revision, but for historical reasons we
+        // also use this space to store the uncompressed lepton header size plus some
+        // flags to detect the SIMD flavor that was used to encode, since
+        // previously the encoder would generate different incompatible files depending on
+        // whether SIMD or scalar was selected by the build options.
         if header[8] == 'M' as u8 && header[9] == 'S' as u8 {
-            uncompressed_lepton_header_size =
-                u32::from_le_bytes(header[10..14].try_into().unwrap());
+            self.uncompressed_lepton_header_size =
+                Some(u32::from_le_bytes(header[10..14].try_into().unwrap()));
 
             // read the flag bits to know how we should decode this file
             let flags = header[14];
@@ -136,9 +149,14 @@ impl LeptonHeader {
                 enabled_features.use_16bit_dc_estimate = (flags & 0x01) != 0;
                 enabled_features.use_16bit_adv_predict = (flags & 0x02) != 0;
             }
+
+            self.git_revision_prefix = header[16..20].try_into().unwrap();
+        } else {
+            // take first bytes for git revision prefix
+            self.git_revision_prefix = header[8..12].try_into().unwrap();
         }
+
         self.plain_text_size = u32::from_le_bytes(header[20..24].try_into().unwrap());
-        self.uncompressed_lepton_header_size = uncompressed_lepton_header_size;
 
         Ok(u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize)
     }
@@ -404,7 +422,11 @@ impl LeptonHeader {
             },
         )?;
 
-        writer.write_all(&[0; 5])?;
+        // reserved
+        writer.write_u8(0)?;
+
+        // write the git revision prefix that was used to write this
+        writer.write_all(&self.git_revision_prefix)?;
 
         writer.write_u32::<LittleEndian>(self.jpeg_file_size)?;
         writer.write_u32::<LittleEndian>(compressed_header.len() as u32)?;

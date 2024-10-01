@@ -582,7 +582,7 @@ fn parse_and_write_header() {
 
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
-    lh.uncompressed_lepton_header_size = 140;
+    lh.uncompressed_lepton_header_size = Some(140);
 
     lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
         .unwrap();

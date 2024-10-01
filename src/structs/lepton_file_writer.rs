@@ -128,13 +128,17 @@ pub fn read_jpeg<R: Read + Seek>(
     max_threads: usize,
     callback: fn(&JPegHeader),
 ) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
-    let mut startheader = [0u8; 2];
+    let var_name = [0u8; 2];
+    let mut startheader = var_name;
     reader.read_exact(&mut startheader)?;
     if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
         return err_exit_code(ExitCode::UnsupportedJpeg, "header invalid");
     }
 
     let mut lp = LeptonHeader::new();
+
+    get_git_revision(&mut lp);
+
     if !prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context(here!())? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
@@ -265,6 +269,15 @@ pub fn read_jpeg<R: Read + Seek>(
     lp.thread_handoff = merged_handoffs;
     lp.jpeg_file_size = reader.stream_position().context(here!())? as u32;
     Ok((lp, image_data))
+}
+
+fn get_git_revision(lp: &mut LeptonHeader) {
+    let hex_str = git_version::git_version!(args = ["--abbrev=8", "--always", "--dirty=M"]);
+    if let Ok(v) = u32::from_str_radix(hex_str, 16) {
+        // place the warning if we got a git revision. The --dirty=M suffix means that some files
+        // were modified so the version is not a clean git version, so we don't write it.
+        lp.git_revision_prefix = v.to_be_bytes();
+    }
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
@@ -483,7 +496,7 @@ fn parse_and_write_header() {
 
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
-    lh.uncompressed_lepton_header_size = 140;
+    lh.uncompressed_lepton_header_size = Some(140);
 
     lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
         .unwrap();
@@ -524,4 +537,12 @@ fn parse_and_write_header() {
         lh.uncompressed_lepton_header_size,
         other.uncompressed_lepton_header_size
     );
+}
+
+#[test]
+fn test_get_git_revision() {
+    let mut lh = LeptonHeader::new();
+    get_git_revision(&mut lh);
+
+    println!("{:x?}", lh.git_revision_prefix);
 }

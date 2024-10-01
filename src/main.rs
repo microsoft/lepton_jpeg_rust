@@ -74,6 +74,14 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-version" {
+                println!(
+                    "lepton version {} {}",
+                    env!("CARGO_PKG_VERSION"),
+                    git_version::git_version!(
+                        args = ["--abbrev=40", "--always", "--dirty=-modified"]
+                    )
+                );
             } else if args[i] == "-highpriority" {
                 // used to force to run on p-cores, make sure this and
                 // any threadpool threads are set to the high priority
