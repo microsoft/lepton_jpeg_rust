@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::Read;
+use std::io::BufRead;
 
 use crate::{helpers::err_exit_code, jpeg_code};
 
@@ -22,7 +22,7 @@ pub struct BitReader<R> {
     last_byte_read: u8,
 }
 
-impl<R: Read> BitReader<R> {
+impl<R: BufRead> BitReader<R> {
     pub fn new(inner: R) -> Self {
         BitReader {
             inner: inner,
@@ -65,31 +65,37 @@ impl<R: Read> BitReader<R> {
 
     #[inline(always)]
     pub fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
-        while self.num_bits < bits_to_read {
-            let mut buffer = [0u8];
-            if self.inner.read(&mut buffer)? == 0 {
-                return self.fill_register_slow(None, bits_to_read);
-            } else if buffer[0] == 0xff {
-                return self.fill_register_slow(Some(buffer[0]), bits_to_read);
-            } else {
+        let buffer = self.inner.fill_buf()?;
+        if buffer.len() > 8 {
+            let fill = u64::from_be_bytes(buffer[..8].try_into().unwrap());
+            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) != 0 {
+                return self.fill_register_slow(bits_to_read);
+            }
+
+            let mut v = 0;
+            while self.num_bits < bits_to_read {
                 self.prev_offset = self.offset;
                 self.offset += 1;
-                self.bits |= (buffer[0] as u64) << (56 - self.num_bits);
+                self.bits |= (buffer[v] as u64) << (56 - self.num_bits);
                 self.num_bits += 8;
-                self.last_byte_read = buffer[0];
+                self.last_byte_read = buffer[v];
+                v += 1;
             }
+            self.inner.consume(v);
+
+            return Ok(());
+        } else {
+            return self.fill_register_slow(bits_to_read);
         }
-        return Ok(());
     }
 
     #[cold]
-    fn fill_register_slow(
-        &mut self,
-        mut byte_read: Option<u8>,
-        bits_to_read: u8,
-    ) -> Result<(), std::io::Error> {
+    fn fill_register_slow(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
         loop {
-            if let Some(b) = byte_read {
+            let fb = self.inner.fill_buf()?;
+            if let &[b, ..] = fb {
+                self.inner.consume(1);
+
                 // 0xff is an escape code, if the next by is zero, then it is just a normal 0
                 // otherwise it is a reset code, which should also be skipped
                 if b == 0xff {
@@ -145,13 +151,6 @@ impl<R: Read> BitReader<R> {
 
             if self.num_bits >= bits_to_read {
                 break;
-            }
-
-            let mut buffer = [0u8];
-            if self.inner.read(&mut buffer)? == 0 {
-                byte_read = None;
-            } else {
-                byte_read = Some(buffer[0]);
             }
         }
         Ok(())

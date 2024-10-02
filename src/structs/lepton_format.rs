@@ -7,7 +7,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, warn};
 use std::cmp;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -80,7 +80,7 @@ pub fn decode_lepton_wrapper<R: Read + Seek, W: Write>(
 }
 
 /// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
+pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     max_threads: usize,
@@ -173,7 +173,7 @@ pub fn encode_lepton_wrapper_verify(
 ///
 /// The callback is called for each jpeg header that is parsed, which
 /// is currently only used by the dump utility for debugging purposes.
-pub fn read_jpeg<R: Read + Seek>(
+pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
     max_threads: usize,

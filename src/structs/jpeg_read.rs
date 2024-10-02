@@ -34,7 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use anyhow::{Context, Result};
 use std::cmp::{self, max};
-use std::io::Read;
+use std::io::BufRead;
 
 use crate::helpers::here;
 
@@ -50,7 +50,7 @@ use crate::helpers::*;
 
 use super::jpeg_header::HuffTree;
 
-pub fn read_scan<R: Read>(
+pub fn read_scan<R: BufRead>(
     lp: &mut LeptonHeader,
     reader: &mut R,
     thread_handoff: &mut Vec<ThreadHandoff>,
@@ -145,7 +145,7 @@ pub fn read_scan<R: Read>(
 
 /// stores handoff information in vector for the current position. This should
 /// be enough information to independently restart encoding at this offset (at least for baseline images)
-fn crystallize_thread_handoff<R: Read>(
+fn crystallize_thread_handoff<R: BufRead>(
     state: &JpegPositionState,
     lp: &LeptonHeader,
     bit_reader: &BitReader<R>,
@@ -173,7 +173,7 @@ fn crystallize_thread_handoff<R: Read>(
 }
 
 // reads subsequent scans for progressive images
-pub fn read_progressive_scan<R: Read>(
+pub fn read_progressive_scan<R: BufRead>(
     lp: &mut LeptonHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
@@ -370,7 +370,7 @@ pub fn read_progressive_scan<R: Read>(
 }
 
 /// reads an entire interval until the RST code
-fn decode_baseline_rst<R: Read>(
+fn decode_baseline_rst<R: BufRead>(
     state: &mut JpegPositionState,
     lp: &mut LeptonHeader,
     thread_handoff: &mut Vec<ThreadHandoff>,
@@ -446,7 +446,7 @@ fn decode_baseline_rst<R: Read>(
 /// <summary>
 /// sequential block decoding routine
 /// </summary>
-pub fn decode_block_seq<R: Read>(
+pub fn decode_block_seq<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     dctree: &HuffTree,
     actree: &HuffTree,
@@ -509,7 +509,7 @@ pub fn decode_block_seq<R: Read>(
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
-fn next_huff_code<R: Read>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
+fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
     let mut node: u16 = 0;
 
     while node < 256 {
@@ -523,7 +523,7 @@ fn next_huff_code<R: Read>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> R
     }
 }
 
-fn read_dc<R: Read>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i16> {
+fn read_dc<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i16> {
     let (z, coef) = read_coef(bit_reader, tree)?.unwrap_or((0, 0));
     if z != 0 {
         err_exit_code(
@@ -536,7 +536,7 @@ fn read_dc<R: Read>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i1
 }
 
 #[inline(always)]
-fn read_coef<R: Read>(
+fn read_coef<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,
 ) -> Result<Option<(usize, i16)>> {
@@ -584,7 +584,7 @@ fn read_coef<R: Read>(
 }
 
 /// progressive AC decoding (first pass)
-fn decode_ac_prg_fs<R: Read>(
+fn decode_ac_prg_fs<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     actree: &HuffTree,
     block: &mut [i16; 64],
@@ -638,7 +638,7 @@ fn decode_ac_prg_fs<R: Read>(
 }
 
 /// progressive AC SA decoding routine
-fn decode_ac_prg_sa<R: Read>(
+fn decode_ac_prg_sa<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     actree: &HuffTree,
     block: &mut [i16; 64],
@@ -717,7 +717,7 @@ fn decode_ac_prg_sa<R: Read>(
 }
 
 /// fast eobrun decoding routine for succesive approximation when the entire block is zero
-fn decode_eobrun_sa<R: Read>(
+fn decode_eobrun_sa<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     block: &mut [i16; 64],
     state: &mut JpegPositionState,
