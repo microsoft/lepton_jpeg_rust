@@ -14,7 +14,7 @@ use crate::lepton_error::ExitCode;
 pub struct BitReader<R> {
     inner: R,
     bits: u64,
-    num_bits: u8,
+    bits_left: u8,
     cpos: u32,
     offset: i32, // offset of next bit that we will read in the file
     eof: bool,
@@ -27,7 +27,7 @@ impl<R: BufRead> BitReader<R> {
         BitReader {
             inner: inner,
             bits: 0,
-            num_bits: 0,
+            bits_left: 0,
             cpos: 0,
             offset: 0,
             eof: false,
@@ -42,25 +42,28 @@ impl<R: BufRead> BitReader<R> {
             return Ok(0);
         }
 
-        if self.num_bits < bits_to_read {
+        if self.bits_left < bits_to_read {
             self.fill_register(bits_to_read)?;
         }
 
-        let retval = (self.bits >> (64 - bits_to_read)) as u16;
-        self.bits <<= bits_to_read as usize;
-        self.num_bits -= bits_to_read;
+        let retval =
+            (self.bits >> (self.bits_left - bits_to_read) & ((1 << bits_to_read) - 1)) as u16;
+        self.bits_left -= bits_to_read;
         return Ok(retval);
     }
 
     #[inline(always)]
     pub fn peek(&self) -> (u8, u8) {
-        return ((self.bits >> 56) as u8, self.num_bits);
+        if self.bits_left < 8 {
+            return ((self.bits << (8 - self.bits_left)) as u8, self.bits_left);
+        } else {
+            return ((self.bits >> (self.bits_left - 8)) as u8, 8);
+        }
     }
 
     #[inline(always)]
     pub fn advance(&mut self, bits: u8) {
-        self.num_bits -= bits;
-        self.bits <<= bits;
+        self.bits_left -= bits;
     }
 
     #[inline(always)]
@@ -73,11 +76,11 @@ impl<R: BufRead> BitReader<R> {
             }
 
             let mut v = 0;
-            while self.num_bits < bits_to_read {
+            while self.bits_left < bits_to_read {
                 self.prev_offset = self.offset;
                 self.offset += 1;
-                self.bits |= (buffer[v] as u64) << (56 - self.num_bits);
-                self.num_bits += 8;
+                self.bits = (self.bits << 8) | buffer[v] as u64;
+                self.bits_left += 8;
                 self.last_byte_read = buffer[v];
                 v += 1;
             }
@@ -107,8 +110,8 @@ impl<R: BufRead> BitReader<R> {
                         // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
                         self.prev_offset = self.offset;
                         self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
-                        self.bits |= (0xff as u64) << (56 - self.num_bits);
-                        self.num_bits += 8;
+                        self.bits = (self.bits << 8) | 0xff;
+                        self.bits_left += 8;
                         self.last_byte_read = 0xff;
 
                         // continue since we still might need to read more 0 bits
@@ -116,8 +119,8 @@ impl<R: BufRead> BitReader<R> {
                         // this was an escaped FF
                         self.prev_offset = self.offset;
                         self.offset += 2;
-                        self.bits |= (0xff as u64) << (56 - self.num_bits);
-                        self.num_bits += 8;
+                        self.bits = (self.bits << 8) | 0xff;
+                        self.bits_left += 8;
                         self.last_byte_read = 0xff;
                     } else {
                         // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
@@ -133,8 +136,8 @@ impl<R: BufRead> BitReader<R> {
                 } else {
                     self.prev_offset = self.offset;
                     self.offset += 1;
-                    self.bits |= (b as u64) << (56 - self.num_bits);
-                    self.num_bits += 8;
+                    self.bits = (self.bits << 8) | (b as u64);
+                    self.bits_left += 8;
                     self.last_byte_read = b;
                 }
             } else {
@@ -142,14 +145,15 @@ impl<R: BufRead> BitReader<R> {
                 // bits that were ok still get returned so that we get the partial last byte right
                 // the caller periodically checks for EOF to see if it should stop encoding
                 self.eof = true;
-                self.num_bits += 8;
+                self.bits_left += 8;
+                self.bits <<= 8;
                 self.prev_offset = self.offset;
                 self.last_byte_read = 0;
 
                 // continue since we still might need to read more 0 bits
             }
 
-            if self.num_bits >= bits_to_read {
+            if self.bits_left >= bits_to_read {
                 break;
             }
         }
@@ -158,7 +162,7 @@ impl<R: BufRead> BitReader<R> {
 
     pub fn get_stream_position(&self) -> i32 {
         // if there are still bits left, then we should be referring to the previous offset
-        if self.num_bits > 0 {
+        if self.bits_left > 0 {
             // if we still have bits, we need to go back to the last offset
             return self.prev_offset;
         } else {
@@ -176,8 +180,8 @@ impl<R: BufRead> BitReader<R> {
         // if there are bits left, we need to see whether they
         // are 1s or zeros.
 
-        if self.num_bits > 0 && !self.eof {
-            let num_bits_to_read = self.num_bits;
+        if self.bits_left > 0 && !self.eof {
+            let num_bits_to_read = self.bits_left;
             let actual = self.read(num_bits_to_read)?;
             let all_one = (1 << num_bits_to_read) - 1;
 
@@ -234,7 +238,7 @@ impl<R: BufRead> BitReader<R> {
         self.offset += 2;
         self.prev_offset = self.offset;
         self.bits = 0;
-        self.num_bits = 0;
+        self.bits_left = 0;
 
         Ok(())
     }
@@ -246,7 +250,7 @@ impl<R: BufRead> BitReader<R> {
     /// bitsAlreadyRead: the number of bits already read from the current byte
     /// byteBeingRead: the byte currently being read, with any bits not read from it yet cleared (0'ed)
     pub fn overhang(&self) -> (u8, u8) {
-        let bits_already_read = ((64 - self.num_bits) & 7) as u8; // already read bits in the current byte
+        let bits_already_read = ((64 - self.bits_left) & 7) as u8; // already read bits in the current byte
 
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 

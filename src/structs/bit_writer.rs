@@ -200,6 +200,12 @@ fn roundtrip_bits() {
 /// verify the the bits roundtrip correctly with random bits
 #[test]
 fn roundtrip_randombits() {
+    #[derive(Copy, Clone)]
+    enum Action {
+        Write(u16, u8),
+        Pad(u8),
+    }
+
     use rand::Rng;
 
     let mut buf = Vec::new();
@@ -211,16 +217,33 @@ fn roundtrip_randombits() {
 
     for _ in 0..ITERATIONS {
         let bits = rng.gen_range(0..=16);
-        let v = rng.gen_range(0..=65535) & ((1 << bits) - 1);
-        test_data.push((v as u16, bits as u8));
+
+        let t = rng.gen_range(0..=3);
+        let v = match t {
+            0 => 0,
+            1 => 0xffff,
+            _ => rng.gen_range(0..=65535),
+        };
+
+        let v = v & ((1 << bits) - 1);
+
+        if rng.gen_range(0..100) == 0 {
+            test_data.push(Action::Pad(0xff));
+        } else {
+            test_data.push(Action::Write(v as u16, bits as u8));
+        }
     }
+    test_data.push(Action::Pad(0xff));
 
     {
         let mut writer = Cursor::new(&mut buf);
 
         let mut b = BitWriter::new();
-        for i in &test_data {
-            b.write(i.0 as u32, i.1 as u32);
+        for &i in &test_data {
+            match i {
+                Action::Write(v, bits) => b.write(v as u32, bits as u32),
+                Action::Pad(fill) => b.pad(fill),
+            }
 
             // randomly flush the buffer
             if rng.gen_range(0..50) == 0 {
@@ -228,19 +251,39 @@ fn roundtrip_randombits() {
             }
         }
 
-        b.pad(0xff);
-
         b.flush_with_escape(&mut writer).unwrap();
     }
 
     {
         let mut r = BitReader::new(Cursor::new(&buf));
 
-        for i in &test_data {
-            assert_eq!(i.0, r.read(i.1).unwrap());
-        }
+        for a in test_data {
+            match a {
+                Action::Write(code, numbits) => {
+                    let expected_peek_byte = if numbits < 8 {
+                        (code << (8 - numbits)) as u8
+                    } else {
+                        (code >> (numbits - 8)) as u8
+                    };
 
-        let mut pad = Some(0xff);
-        r.read_and_verify_fill_bits(&mut pad).unwrap();
+                    let (peekcode, peekbits) = r.peek();
+                    let num_valid_bits = peekbits.min(8).min(numbits);
+
+                    let mask = (0xff00 >> num_valid_bits) as u8;
+
+                    assert_eq!(
+                        expected_peek_byte & mask,
+                        peekcode & mask,
+                        "peek unexpected result"
+                    );
+
+                    assert_eq!(code, r.read(numbits).unwrap(), "read unexpected result");
+                }
+                Action::Pad(fill) => {
+                    let mut pad = Some(fill);
+                    r.read_and_verify_fill_bits(&mut pad).unwrap();
+                }
+            }
+        }
     }
 }
