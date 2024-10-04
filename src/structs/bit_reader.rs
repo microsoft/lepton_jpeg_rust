@@ -55,24 +55,19 @@ impl<R: BufRead> BitReader<R> {
     #[inline(always)]
     pub fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
         let buffer = self.inner.fill_buf()?;
-        if buffer.len() > 8 {
-            let fill = u64::from_be_bytes(buffer[..8].try_into().unwrap());
-            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) != 0 {
-                return self.fill_register_slow(bits_to_read);
+        let mut i = 0;
+        while i < buffer.len() && buffer[i] != 0xff {
+            self.bits = (self.bits << 8) | buffer[i] as u64;
+            self.bits_left += 8;
+            i += 1;
+            if self.bits_left >= bits_to_read {
+                self.inner.consume(i);
+                return Ok(());
             }
-
-            let mut v = 0;
-            while self.bits_left < bits_to_read {
-                self.bits = (self.bits << 8) | buffer[v] as u64;
-                self.bits_left += 8;
-                v += 1;
-            }
-            self.inner.consume(v);
-
-            return Ok(());
-        } else {
-            return self.fill_register_slow(bits_to_read);
         }
+
+        self.inner.consume(i);
+        return self.fill_register_slow(bits_to_read);
     }
 
     #[cold]
