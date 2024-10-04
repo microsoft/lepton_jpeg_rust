@@ -18,7 +18,7 @@ pub struct BitReader<R> {
     cpos: u32,
     offset: i32, // offset of next bit that we will read in the file
     eof: bool,
-    prev_offset: i32, // position of last escape. used to adjust the current position.
+    truncated_0xff: bool,
     last_byte_read: u8,
 }
 
@@ -31,8 +31,8 @@ impl<R: BufRead> BitReader<R> {
             cpos: 0,
             offset: 0,
             eof: false,
-            prev_offset: 0,
             last_byte_read: 0,
+            truncated_0xff: false,
         }
     }
 
@@ -77,7 +77,6 @@ impl<R: BufRead> BitReader<R> {
 
             let mut v = 0;
             while self.bits_left < bits_to_read {
-                self.prev_offset = self.offset;
                 self.offset += 1;
                 self.bits = (self.bits << 8) | buffer[v] as u64;
                 self.bits_left += 8;
@@ -105,19 +104,20 @@ impl<R: BufRead> BitReader<R> {
                     let mut buffer = [0u8];
 
                     if self.inner.read(&mut buffer)? == 0 {
-                        // Handle case of truncation: Since we assume that everything passed the end
+                        // Handle case of truncation in the middle of 0xff sequence:
+                        // Since we assume that everything passed the end
                         // is a 0, if the file ends with 0xFF, then we have to assume that this was
                         // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
-                        self.prev_offset = self.offset;
+
                         self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                         self.last_byte_read = 0xff;
+                        self.truncated_0xff = true;
 
                         // continue since we still might need to read more 0 bits
                     } else if buffer[0] == 0 {
                         // this was an escaped FF
-                        self.prev_offset = self.offset;
                         self.offset += 2;
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
@@ -134,7 +134,6 @@ impl<R: BufRead> BitReader<R> {
                         ));
                     }
                 } else {
-                    self.prev_offset = self.offset;
                     self.offset += 1;
                     self.bits = (self.bits << 8) | (b as u64);
                     self.bits_left += 8;
@@ -147,7 +146,6 @@ impl<R: BufRead> BitReader<R> {
                 self.eof = true;
                 self.bits_left += 8;
                 self.bits <<= 8;
-                self.prev_offset = self.offset;
                 self.last_byte_read = 0;
 
                 // continue since we still might need to read more 0 bits
@@ -162,11 +160,15 @@ impl<R: BufRead> BitReader<R> {
 
     pub fn get_stream_position(&self) -> i32 {
         // if there are still bits left, then we should be referring to the previous offset
-        if self.bits_left > 0 {
-            // if we still have bits, we need to go back to the last offset
-            return self.prev_offset;
+        if !self.eof && self.bits_left > 0 {
+            // if it was an escape, we need to back 2
+            if (self.bits & 0xff) == 0xff && !self.truncated_0xff {
+                self.offset - 2
+            } else {
+                self.offset - 1
+            }
         } else {
-            return self.offset;
+            self.offset
         }
     }
 
@@ -236,7 +238,6 @@ impl<R: BufRead> BitReader<R> {
         // start from scratch after RST
         self.cpos += 1;
         self.offset += 2;
-        self.prev_offset = self.offset;
         self.bits = 0;
         self.bits_left = 0;
 
