@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::BufRead;
+use std::io::{BufRead, Seek};
 
 use crate::{helpers::err_exit_code, jpeg_code};
 
@@ -16,24 +16,12 @@ pub struct BitReader<R> {
     bits: u64,
     bits_left: u8,
     cpos: u32,
-    offset: i32, // offset of next bit that we will read in the file
     eof: bool,
     truncated_0xff: bool,
+    start_position: u64,
 }
 
 impl<R: BufRead> BitReader<R> {
-    pub fn new(inner: R) -> Self {
-        BitReader {
-            inner: inner,
-            bits: 0,
-            bits_left: 0,
-            cpos: 0,
-            offset: 0,
-            eof: false,
-            truncated_0xff: false,
-        }
-    }
-
     #[inline(always)]
     pub fn read(&mut self, bits_to_read: u8) -> std::io::Result<u16> {
         if bits_to_read == 0 {
@@ -75,7 +63,6 @@ impl<R: BufRead> BitReader<R> {
 
             let mut v = 0;
             while self.bits_left < bits_to_read {
-                self.offset += 1;
                 self.bits = (self.bits << 8) | buffer[v] as u64;
                 self.bits_left += 8;
                 v += 1;
@@ -106,7 +93,6 @@ impl<R: BufRead> BitReader<R> {
                         // is a 0, if the file ends with 0xFF, then we have to assume that this was
                         // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
 
-                        self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                         self.truncated_0xff = true;
@@ -114,7 +100,6 @@ impl<R: BufRead> BitReader<R> {
                         // continue since we still might need to read more 0 bits
                     } else if buffer[0] == 0 {
                         // this was an escaped FF
-                        self.offset += 2;
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                     } else {
@@ -123,13 +108,12 @@ impl<R: BufRead> BitReader<R> {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             format!(
-                                "invalid reset {0:x} {1:x} code found in stream at offset {2}",
-                                0xff, buffer[0], self.offset
+                                "invalid reset {0:x} {1:x} code found in stream",
+                                0xff, buffer[0]
                             ),
                         ));
                     }
                 } else {
-                    self.offset += 1;
                     self.bits = (self.bits << 8) | (b as u64);
                     self.bits_left += 8;
                 }
@@ -149,20 +133,6 @@ impl<R: BufRead> BitReader<R> {
             }
         }
         Ok(())
-    }
-
-    pub fn get_stream_position(&self) -> i32 {
-        // if there are still bits left, then we should be referring to the previous offset
-        if !self.eof && self.bits_left > 0 {
-            // if it was an escape, we need to back 2
-            if (self.bits & 0xff) == 0xff && !self.truncated_0xff {
-                self.offset - 2
-            } else {
-                self.offset - 1
-            }
-        } else {
-            self.offset
-        }
     }
 
     pub fn is_eof(&mut self) -> bool {
@@ -220,17 +190,12 @@ impl<R: BufRead> BitReader<R> {
         if h[0] != 0xff || h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
             return err_exit_code(
                 ExitCode::UnsupportedJpeg,
-                format!(
-                    "invalid reset code {0:x} {1:x} found in stream at offset {2}",
-                    h[0], h[1], self.offset
-                )
-                .as_str(),
+                format!("invalid reset code {0:x} {1:x} found in stream", h[0], h[1],).as_str(),
             );
         }
 
         // start from scratch after RST
         self.cpos += 1;
-        self.offset += 2;
         self.bits = 0;
         self.bits_left = 0;
 
@@ -249,6 +214,36 @@ impl<R: BufRead> BitReader<R> {
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 
         return (bits_already_read, self.bits as u8 & mask);
+    }
+}
+
+impl<R: BufRead + Seek> BitReader<R> {
+    pub fn new(mut inner: R) -> Self {
+        let start_position = inner.stream_position().unwrap();
+
+        BitReader {
+            inner: inner,
+            bits: 0,
+            bits_left: 0,
+            cpos: 0,
+            eof: false,
+            truncated_0xff: false,
+            start_position: start_position,
+        }
+    }
+
+    pub fn get_stream_position(&mut self) -> u64 {
+        // if there are still bits left, then we should be referring to the previous offset
+        if !self.eof && self.bits_left > 0 {
+            // if it was an escape, we need to back 2
+            if (self.bits & 0xff) == 0xff && !self.truncated_0xff {
+                self.inner.stream_position().unwrap() - 2 - self.start_position
+            } else {
+                self.inner.stream_position().unwrap() - 1 - self.start_position
+            }
+        } else {
+            self.inner.stream_position().unwrap() - self.start_position
+        }
     }
 }
 
