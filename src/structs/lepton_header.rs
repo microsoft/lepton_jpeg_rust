@@ -71,7 +71,7 @@ pub struct LeptonHeader {
     pub jpeg_file_size: u32,
 
     /// on decompression, uncompressed lepton header size. This is only
-    /// saved by this encoder for historical reasons. It is not used be
+    /// saved by this encoder for historical reasons. It is not used by
     /// the decoder.
     pub uncompressed_lepton_header_size: Option<u32>,
 

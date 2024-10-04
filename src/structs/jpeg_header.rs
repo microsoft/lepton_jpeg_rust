@@ -906,7 +906,7 @@ impl JPegHeader {
     }
 
     /// constructs the quantization table based on the jpeg header
-    pub fn construct_quantization_table(&self) -> Result<Vec<QuantizationTables>> {
+    pub fn construct_quantization_tables(&self) -> Result<Vec<QuantizationTables>> {
         let mut quantization_tables = Vec::new();
         for i in 0..self.cmpc {
             let qtables = QuantizationTables::new(self, i);

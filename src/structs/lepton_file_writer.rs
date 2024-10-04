@@ -317,7 +317,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     // Prepare quantization tables
-    let quantization_tables = jpeg_header.construct_quantization_table()?;
+    let quantization_tables = jpeg_header.construct_quantization_tables()?;
 
     let colldata = colldata.clone();
     let thread_handoffs = thread_handoffs.to_vec();

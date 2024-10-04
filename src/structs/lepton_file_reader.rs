@@ -475,7 +475,7 @@ impl LeptonFileReader {
             jenc: &JPegEncodingInfo,
         ) -> Result<P>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
-        let qt = lh.jpeg_header.construct_quantization_table()?;
+        let qt = lh.jpeg_header.construct_quantization_tables()?;
 
         let features = features.clone();
 
