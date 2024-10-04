@@ -19,7 +19,6 @@ pub struct BitReader<R> {
     offset: i32, // offset of next bit that we will read in the file
     eof: bool,
     truncated_0xff: bool,
-    last_byte_read: u8,
 }
 
 impl<R: BufRead> BitReader<R> {
@@ -31,7 +30,6 @@ impl<R: BufRead> BitReader<R> {
             cpos: 0,
             offset: 0,
             eof: false,
-            last_byte_read: 0,
             truncated_0xff: false,
         }
     }
@@ -80,7 +78,6 @@ impl<R: BufRead> BitReader<R> {
                 self.offset += 1;
                 self.bits = (self.bits << 8) | buffer[v] as u64;
                 self.bits_left += 8;
-                self.last_byte_read = buffer[v];
                 v += 1;
             }
             self.inner.consume(v);
@@ -112,7 +109,6 @@ impl<R: BufRead> BitReader<R> {
                         self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
-                        self.last_byte_read = 0xff;
                         self.truncated_0xff = true;
 
                         // continue since we still might need to read more 0 bits
@@ -121,7 +117,6 @@ impl<R: BufRead> BitReader<R> {
                         self.offset += 2;
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
-                        self.last_byte_read = 0xff;
                     } else {
                         // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
                         // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
@@ -137,7 +132,6 @@ impl<R: BufRead> BitReader<R> {
                     self.offset += 1;
                     self.bits = (self.bits << 8) | (b as u64);
                     self.bits_left += 8;
-                    self.last_byte_read = b;
                 }
             } else {
                 // in case of a truncated file, we treat the rest of the file as zeros, but the
@@ -146,7 +140,6 @@ impl<R: BufRead> BitReader<R> {
                 self.eof = true;
                 self.bits_left += 8;
                 self.bits <<= 8;
-                self.last_byte_read = 0;
 
                 // continue since we still might need to read more 0 bits
             }
@@ -255,7 +248,7 @@ impl<R: BufRead> BitReader<R> {
 
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 
-        return (bits_already_read, self.last_byte_read & mask);
+        return (bits_already_read, self.bits as u8 & mask);
     }
 }
 
