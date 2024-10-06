@@ -44,13 +44,33 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
 }
 
 #[inline(always)]
-pub const fn devli(s: u8, value: u16) -> i16 {
+pub fn devli(s: u8, value: u16) -> i16 {
+    let mask = (1 << (s as u16)) - 1;
+
     if s == 0 {
         value as i16
-    } else if value < (1 << (s as u16 - 1)) {
-        value as i16 + (-1 << s as i16) + 1
+    } else if value < (mask >> 1) + 1 {
+        (value + !mask + 1) as i16
     } else {
         value as i16
+    }
+}
+
+#[test]
+fn devli_test() {
+    for s in 0u8..15 {
+        for value in 0..(1 << s) {
+            assert_eq!(
+                devli(s, value),
+                if s == 0 {
+                    value as i16
+                } else if value < (1 << (s as u16 - 1)) {
+                    value as i16 + (-1 << s as i16) + 1
+                } else {
+                    value as i16
+                }
+            );
+        }
     }
 }
 
