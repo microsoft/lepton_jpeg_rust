@@ -152,7 +152,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     input_buffer_size: u64,
     output_buffer: *mut u8,
     output_buffer_size: u64,
-    _number_of_threads: i32,
+    number_of_threads: i32,
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
@@ -171,6 +171,10 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             use_16bit_dc_estimate: use_16bit_dc_estimate,
             ..EnabledFeatures::compat_lepton_vector_read()
         };
+
+        if number_of_threads > 0 {
+            enabled_features.max_threads = number_of_threads as u32;
+        }
 
         loop {
             let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
