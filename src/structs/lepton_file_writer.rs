@@ -33,10 +33,9 @@ use super::lepton_header::LeptonHeader;
 pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
-    max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
-    let (lp, image_data) = read_jpeg(reader, enabled_features, max_threads, |_jh| {})?;
+    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
 
     lp.write_lepton_header(writer, enabled_features)
         .context(here!())?;
@@ -64,7 +63,6 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
 /// since we need to pass through the data multiple times
 pub fn encode_lepton_wrapper_verify(
     input_data: &[u8],
-    max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
@@ -74,13 +72,8 @@ pub fn encode_lepton_wrapper_verify(
     let mut reader = Cursor::new(&input_data);
     let mut writer = Cursor::new(&mut output_data);
 
-    let mut metrics = encode_lepton_wrapper(
-        &mut reader,
-        &mut writer,
-        max_threads as usize,
-        &enabled_features,
-    )
-    .context(here!())?;
+    let mut metrics =
+        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features).context(here!())?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -125,7 +118,6 @@ pub fn encode_lepton_wrapper_verify(
 pub fn read_jpeg<R: Read + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    max_threads: usize,
     callback: fn(&JPegHeader),
 ) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
     let var_name = [0u8; 2];
@@ -265,7 +257,8 @@ pub fn read_jpeg<R: Read + Seek>(
     }
 
     set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan as i32);
-    let merged_handoffs = split_row_handoffs_to_threads(&thread_handoff[..], max_threads);
+    let merged_handoffs =
+        split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
     lp.jpeg_file_size = reader.stream_position().context(here!())? as u32;
     Ok((lp, image_data))

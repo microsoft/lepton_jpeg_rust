@@ -57,19 +57,17 @@ pub fn decode_lepton<R: BufRead + Seek, W: Write>(
 pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
-    max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    encode_lepton_wrapper(reader, writer, max_threads, enabled_features).map_err(translate_error)
+    encode_lepton_wrapper(reader, writer, enabled_features).map_err(translate_error)
 }
 
 /// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
 pub fn encode_lepton_verify(
     input_data: &[u8],
-    max_threads: usize,
     enabled_features: &EnabledFeatures,
 ) -> Result<(Vec<u8>, Metrics), LeptonError> {
-    encode_lepton_wrapper_verify(input_data, max_threads, enabled_features).map_err(translate_error)
+    encode_lepton_wrapper_verify(input_data, enabled_features).map_err(translate_error)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -91,12 +89,12 @@ pub unsafe extern "C" fn WrapperCompressImage(
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
 
-        match encode_lepton_wrapper(
-            &mut reader,
-            &mut writer,
-            number_of_threads as usize,
-            &EnabledFeatures::compat_lepton_vector_write(),
-        ) {
+        let mut features = EnabledFeatures::compat_lepton_vector_write();
+        if number_of_threads > 0 {
+            features.max_threads = number_of_threads as u32;
+        }
+
+        match encode_lepton_wrapper(&mut reader, &mut writer, &features) {
             Ok(_) => {}
             Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
                 // try to extract the exit code if it was a well known error

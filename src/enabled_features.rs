@@ -21,6 +21,9 @@ pub struct EnabledFeatures {
 
     /// Accept JPEG files that have invalid DHT tables
     pub accept_invalid_dht: bool,
+
+    /// number of threads used for encoding/decoding
+    pub max_threads: u32,
 }
 
 impl EnabledFeatures {
@@ -35,6 +38,7 @@ impl EnabledFeatures {
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: false,
+            max_threads: 8,
         }
     }
 
@@ -50,6 +54,7 @@ impl EnabledFeatures {
             use_16bit_dc_estimate: false,
             use_16bit_adv_predict: false,
             accept_invalid_dht: true,
+            max_threads: 8,
         }
     }
 
@@ -65,6 +70,7 @@ impl EnabledFeatures {
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: true,
+            max_threads: 8,
         }
     }
 }

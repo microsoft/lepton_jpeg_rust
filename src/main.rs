@@ -48,7 +48,6 @@ fn main_with_result() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
 
     let mut filenames = Vec::new();
-    let mut num_threads = 8;
     let mut iterations = 1;
     let mut dump = false;
     let mut all = false;
@@ -63,7 +62,7 @@ fn main_with_result() -> anyhow::Result<()> {
     for i in 1..args.len() {
         if args[i].starts_with("-") {
             if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-threads:") {
-                num_threads = x;
+                enabled_features.max_threads = x as u32;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-iter:") {
                 iterations = x;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-width:") {
@@ -152,13 +151,12 @@ fn main_with_result() -> anyhow::Result<()> {
         let block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
-            (lh, block_image) =
-                read_jpeg(&mut reader, &enabled_features, num_threads as usize, |jh| {
-                    println!("parsed header:");
-                    let s = format!("{jh:?}");
-                    println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-                })
-                .context(here!())?;
+            (lh, block_image) = read_jpeg(&mut reader, &enabled_features, |jh| {
+                println!("parsed header:");
+                let s = format!("{jh:?}");
+                println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+            })
+            .context(here!())?;
         } else {
             (lh, block_image) =
                 decode_lepton_file_image(&mut reader, &enabled_features).context(here!())?;
@@ -239,12 +237,9 @@ fn main_with_result() -> anyhow::Result<()> {
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results
-            (output_data, metrics) = encode_lepton_wrapper_verify(
-                &input_data[..],
-                num_threads as usize,
-                &enabled_features,
-            )
-            .context(here!())?;
+            (output_data, metrics) =
+                encode_lepton_wrapper_verify(&input_data[..], &enabled_features)
+                    .context(here!())?;
 
             info!(
                 "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",

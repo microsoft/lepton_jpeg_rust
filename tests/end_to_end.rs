@@ -236,7 +236,6 @@ fn verify_encode(
     encode_lepton(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
-        8,
         &EnabledFeatures::compat_lepton_vector_write(),
     )
     .unwrap();
@@ -317,12 +316,7 @@ fn verify_extern_16bit_math_retry() {
 fn verify_encode_verify(#[values("slrcity")] file: &str) {
     let input = read_file(file, ".jpg");
 
-    encode_lepton_verify(
-        &input[..],
-        8,
-        &EnabledFeatures::compat_lepton_vector_write(),
-    )
-    .unwrap();
+    encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()).unwrap();
 }
 
 fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
@@ -346,7 +340,6 @@ fn verify_encode_progressive_false(
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures {
                 progressive: false,
                 ..EnabledFeatures::compat_lepton_vector_write()
@@ -366,7 +359,6 @@ fn verify_nonoptimal() {
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
@@ -383,7 +375,6 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
