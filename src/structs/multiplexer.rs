@@ -7,13 +7,15 @@
 use crate::{helpers::*, structs::partial_buffer::PartialBuffer, ExitCode};
 use anyhow::{Context, Result};
 use byteorder::WriteBytesExt;
+
 use std::{
     cmp,
-    io::{BufRead, Cursor, Read, Write},
+    collections::VecDeque,
+    io::{Cursor, Read, Write},
     mem::swap,
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -296,7 +298,7 @@ impl MultiplexReader {
 pub struct MultiplexReaderState<RESULT> {
     sender_channels: Vec<Sender<Message>>,
     result_receiver: Receiver<(usize, Result<RESULT>)>,
-    reserve: usize,
+    retention_bytes: usize,
     current_state: State,
 }
 
@@ -309,7 +311,8 @@ enum State {
 impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn new<FN>(
         num_threads: usize,
-        reserve: usize,
+        retention_bytes: usize,
+        max_processor_threads: usize,
         processor: FN,
     ) -> MultiplexReaderState<RESULT>
     where
@@ -322,17 +325,20 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
         let mut channel_to_sender = Vec::new();
 
-        // create a channel for each stream and spawn a work item to read from it
-        // the return value from each work item is stored in thread_results, which
-        // is collected at the end
+        // collect the worker threads in a queue so we can spawn them
+        let mut work = VecDeque::new();
+
         for thread_id in 0..num_threads {
+            // create a channel for each stream and spawn a work item to read from it
+            // the return value from each work item is stored in thread_results, which
+            // is collected at the end
             let (tx, rx) = channel::<Message>();
             channel_to_sender.push(tx);
 
             let cloned_processor = arc_processor.clone();
             let cloned_result_sender = result_sender.clone();
 
-            my_spawn_simple(move || {
+            work.push_back(move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id as u8,
@@ -348,26 +354,26 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             });
         }
 
+        let shared_queue = Arc::new(Mutex::new(work));
+
+        // spawn the worker threads to process all the items
+        // (there may be less processor threads than the number of threads in the image)
+        for _i in 0..num_threads.min(max_processor_threads) {
+            let q = shared_queue.clone();
+
+            my_spawn_simple(move || {
+                while let Some(work) = q.lock().unwrap().pop_front() {
+                    work();
+                }
+            });
+        }
+
         MultiplexReaderState {
             sender_channels: channel_to_sender,
             result_receiver: result_receiver,
             current_state: State::StartBlock,
-            reserve,
+            retention_bytes,
         }
-    }
-
-    pub fn process_to_end(&mut self, source: &mut impl BufRead) -> Result<Vec<u8>> {
-        let mut extra_buffer = Vec::new();
-        loop {
-            let b = source.fill_buf().context(here!())?;
-            let b_len = b.len();
-            if b_len == 0 {
-                break;
-            }
-            self.process_buffer(&mut PartialBuffer::new(b, &mut extra_buffer))?;
-            source.consume(b_len);
-        }
-        Ok(extra_buffer)
     }
 
     /// process as much incoming data as we can and send it to the appropriate thread
@@ -375,7 +381,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         while source.continue_processing() {
             match self.current_state {
                 State::StartBlock => {
-                    if let Some(a) = source.take_n::<1>(self.reserve) {
+                    if let Some(a) = source.take_n::<1>(self.retention_bytes) {
                         let thread_marker = a[0];
 
                         let thread_id = thread_marker & 0xf;
@@ -398,7 +404,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     }
                 }
                 State::U16Length(thread_marker) => {
-                    if let Some(a) = source.take_n::<2>(self.reserve) {
+                    if let Some(a) = source.take_n::<2>(self.retention_bytes) {
                         let b0 = usize::from(a[0]);
                         let b1 = usize::from(a[1]);
 
@@ -408,7 +414,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     }
                 }
                 State::Block(thread_id, data_length) => {
-                    if let Some(a) = source.take(data_length, self.reserve) {
+                    if let Some(a) = source.take(data_length, self.retention_bytes) {
                         self.sender_channels[usize::from(thread_id)]
                             .send(Message::WriteBlock(thread_id, a))?;
                         self.current_state = State::StartBlock;
@@ -422,6 +428,8 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         Ok(())
     }
 
+    /// Called once all the incoming buffers are passed to process buffers,
+    /// waits for all the threads to finish processing and returns the results.
     pub fn complete(&mut self) -> Result<Vec<RESULT>> {
         let mut results = Vec::new();
         for thread_id in 0..self.sender_channels.len() {
@@ -472,7 +480,7 @@ fn test_multiplex_end_to_end() {
     let mut extra = Vec::new();
 
     let mut multiplex_state =
-        MultiplexReaderState::new(10, 0, |thread_id, reader| -> Result<usize> {
+        MultiplexReaderState::new(10, 0, 8, |thread_id, reader| -> Result<usize> {
             for i in thread_id as u32..10000 {
                 let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
                 assert_eq!(read_thread_id, i);

@@ -93,7 +93,16 @@ pub fn decode_lepton_file_image<R: BufRead>(
     .context(here!())?;
 
     // process the rest of the file (except for the 4 byte EOF marker)
-    state.process_to_end(reader)?;
+    let mut extra_buffer = Vec::new();
+    loop {
+        let b = reader.fill_buf().context(here!())?;
+        let b_len = b.len();
+        if b_len == 0 {
+            break;
+        }
+        state.process_buffer(&mut PartialBuffer::new(b, &mut extra_buffer))?;
+        reader.consume(b_len);
+    }
 
     // run the threads first, since we need everything before we can start decoding
     let mut results = Vec::new();
@@ -383,7 +392,7 @@ impl LeptonFileReader {
             let mux = Self::run_lepton_decoder_threads(
                 lh,
                 enabled_features,
-                4, /* reserve 4 bytes for the very end */
+                4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
                 |_thread_handoff, image_data, _lh| {
                     // just return the image data directly to be merged together
                     return Ok(image_data);
@@ -396,7 +405,7 @@ impl LeptonFileReader {
             let mux = Self::run_lepton_decoder_threads(
                 &lh,
                 &enabled_features,
-                4, /*reserve 4 bytes for the end */
+                4, /*retain 4 bytes for the end for the file size that is appended */
                 |thread_handoff, image_data, jenc| {
                     let mut result_buffer = jpeg_write_baseline_row_range(
                         thread_handoff.segment_size as usize,
@@ -468,7 +477,7 @@ impl LeptonFileReader {
     fn run_lepton_decoder_threads<P: Send + 'static>(
         lh: &LeptonHeader,
         features: &EnabledFeatures,
-        reserve: usize,
+        retention_bytes: usize,
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,
@@ -485,7 +494,8 @@ impl LeptonFileReader {
 
         let multiplex_reader_state = MultiplexReaderState::new(
             thread_handoff.len(),
-            reserve,
+            retention_bytes,
+            features.max_threads as usize,
             move |thread_id, reader| -> Result<(Metrics, P)> {
                 Self::run_lepton_decoder_processor(
                     &jenc,

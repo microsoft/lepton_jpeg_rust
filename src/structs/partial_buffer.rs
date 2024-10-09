@@ -11,9 +11,10 @@ use std::cmp::min;
 /// buffer, so eventually the amount of data requested will become
 /// available.
 ///
-/// The concept of reserve is used to handle the case where we need
+/// The concept of retention_bytes is used to handle the case where we need
 /// to leave a certain amount of data in the buffer, perticularly
-///  where Lepton files have the 32bit file size appended.
+/// where Lepton files have the 32bit file size appended.
+///
 /// We don't want this to get parsed out, so we ensure that there are
 /// always at least 4 bytes in the buffer.
 pub struct PartialBuffer<'a> {
@@ -37,8 +38,10 @@ impl<'a> PartialBuffer<'a> {
 
     /// grabs a variable amount of data if is available, otherwise put it in the extra
     /// buffer for next time.
-    pub fn take(&mut self, size: usize, reserve: usize) -> Option<Vec<u8>> {
-        if self.extra_buffer.len() + self.slice.len() < size + reserve {
+    ///
+    /// retention_bytes (see comment at top of file)
+    pub fn take(&mut self, size: usize, retention_bytes: usize) -> Option<Vec<u8>> {
+        if self.extra_buffer.len() + self.slice.len() < size + retention_bytes {
             self.extra_buffer.extend_from_slice(self.slice);
             self.slice = &[];
             self.continue_processing = false;
