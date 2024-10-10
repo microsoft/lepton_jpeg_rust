@@ -49,8 +49,8 @@ pub struct ComponentInfo {
     pub jid: u8,
 }
 
-impl ComponentInfo {
-    pub fn new() -> ComponentInfo {
+impl Default for ComponentInfo {
+    fn default() -> ComponentInfo {
         return ComponentInfo {
             q_table_index: 0xff,
             sfv: -1,

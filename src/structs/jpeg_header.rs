@@ -334,18 +334,18 @@ enum ParseSegmentResult {
     SOS,
 }
 
-impl JPegHeader {
-    pub fn new() -> Self {
+impl Default for JPegHeader {
+    fn default() -> Self {
         return JPegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
             ht_set: [[0; 4]; 2],
             cmp_info: [
-                ComponentInfo::new(),
-                ComponentInfo::new(),
-                ComponentInfo::new(),
-                ComponentInfo::new(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
             ],
             cmpc: 0,
             img_width: 0,
@@ -365,7 +365,9 @@ impl JPegHeader {
             cs_cmp: [0; 4],
         };
     }
+}
 
+impl JPegHeader {
     pub fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }

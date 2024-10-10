@@ -1,6 +1,7 @@
 use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use default_boxed::DefaultBoxed;
 
 use crate::helpers::{buffer_prefix_matches_marker, err_exit_code, here};
 use crate::EnabledFeatures;
@@ -18,7 +19,7 @@ use flate2::Compression;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
 
-#[derive(Debug)]
+#[derive(Debug, DefaultBoxed)]
 pub struct LeptonHeader {
     /// raw jpeg header to be written back to the file when it is recreated
     pub raw_jpeg_header: Vec<u8>,
@@ -83,31 +84,6 @@ pub struct LeptonHeader {
 }
 
 impl LeptonHeader {
-    pub fn new() -> Self {
-        return LeptonHeader {
-            max_dpos: [0; 4],
-            raw_jpeg_header: Vec::new(),
-            raw_jpeg_header_read_index: 0,
-            thread_handoff: Vec::new(),
-            jpeg_header: JPegHeader::new(),
-            truncate_components: TruncateComponents::new(),
-            rst_err: Vec::new(),
-            rst_cnt: Vec::new(),
-            pad_bit: None,
-            rst_cnt_set: false,
-            garbage_data: Vec::new(),
-            scnc: 0,
-            early_eof_encountered: false,
-            max_cmp: 0,
-            max_bpos: 0,
-            max_sah: 0,
-            jpeg_file_size: 0,
-            uncompressed_lepton_header_size: None,
-            git_revision_prefix: [0u8; 4],
-            encoder_version: 0,
-        };
-    }
-
     pub fn read_lepton_fixed_header(
         &mut self,
         header: &[u8; FIXED_HEADER_SIZE],
@@ -626,7 +602,7 @@ fn test_roundtrip_fixed_header() {
 
         let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-        let mut other = LeptonHeader::new();
+        let mut other = LeptonHeader::default_boxed();
         let compressed_header_size = other
             .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
             .unwrap();
@@ -669,7 +645,7 @@ fn parse_and_write_header() {
     lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
         .unwrap();
 
-    let mut other = LeptonHeader::new();
+    let mut other = LeptonHeader::default_boxed();
     let mut other_reader = Cursor::new(&serialized);
 
     let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
@@ -703,7 +679,7 @@ fn parse_and_write_header() {
 }
 
 #[cfg(test)]
-fn make_minimal_lepton_header() -> LeptonHeader {
+fn make_minimal_lepton_header() -> Box<LeptonHeader> {
     // minimal jpeg that will pass the validity read tests
     let min_jpeg = [
         0xffu8, 0xe0, // APP0
@@ -725,7 +701,7 @@ fn make_minimal_lepton_header() -> LeptonHeader {
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let mut lh = LeptonHeader::new();
+    let mut lh = LeptonHeader::default_boxed();
     lh.jpeg_file_size = 123;
     lh.uncompressed_lepton_header_size = Some(156);
 
@@ -757,13 +733,13 @@ fn make_minimal_lepton_header() -> LeptonHeader {
 fn verify_roundtrip(
     header: &LeptonHeader,
     enabled_features: &EnabledFeatures,
-) -> (LeptonHeader, EnabledFeatures) {
+) -> (Box<LeptonHeader>, EnabledFeatures) {
     let mut output = Vec::new();
     header
         .write_lepton_header(&mut output, &enabled_features)
         .unwrap();
 
-    let mut read_header = LeptonHeader::new();
+    let mut read_header = LeptonHeader::default_boxed();
     let mut read_enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
     println!("output: {:?}", &output[0..FIXED_HEADER_SIZE]);

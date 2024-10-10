@@ -28,8 +28,8 @@ pub struct TruncateComponents {
     pub mcu_count_vertical: i32,
 }
 
-impl TruncateComponents {
-    pub fn new() -> Self {
+impl Default for TruncateComponents {
+    fn default() -> Self {
         return TruncateComponents {
             trunc_info: Vec::new(),
             components_count: 0,
@@ -37,7 +37,9 @@ impl TruncateComponents {
             mcu_count_vertical: 0,
         };
     }
+}
 
+impl TruncateComponents {
     pub fn init(&mut self, jpeg_header: &JPegHeader) {
         self.mcu_count_horizontal = jpeg_header.mcuh;
         self.mcu_count_vertical = jpeg_header.mcuv;

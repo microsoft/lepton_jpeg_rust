@@ -5,6 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use byteorder::{LittleEndian, WriteBytesExt};
+use default_boxed::DefaultBoxed;
 use log::info;
 use std::cmp;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -119,7 +120,7 @@ pub fn read_jpeg<R: Read + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
     callback: fn(&JPegHeader),
-) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
+) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let var_name = [0u8; 2];
     let mut startheader = var_name;
     reader.read_exact(&mut startheader)?;
@@ -127,7 +128,7 @@ pub fn read_jpeg<R: Read + Seek>(
         return err_exit_code(ExitCode::UnsupportedJpeg, "header invalid");
     }
 
-    let mut lp = LeptonHeader::new();
+    let mut lp = LeptonHeader::default_boxed();
 
     get_git_revision(&mut lp);
 
@@ -481,7 +482,7 @@ fn set_segment_size_in_row_thread_handoffs(
 
 #[test]
 fn test_get_git_revision() {
-    let mut lh = LeptonHeader::new();
+    let mut lh = LeptonHeader::default_boxed();
     get_git_revision(&mut lh);
 
     println!("{:x?}", lh.git_revision_prefix);

@@ -53,6 +53,7 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut all = false;
     let mut overwrite = false;
     let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    let mut corrupt = false;
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
     if stdout().is_terminal() {
@@ -73,6 +74,9 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-corrupt" {
+                // randomly corrupt the files for testing
+                corrupt = true;
             } else if args[i] == "-version" {
                 println!(
                     "compiled library Lepton version {}, git revision: {}",
@@ -231,9 +235,25 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut overall_cpu = Duration::ZERO;
 
     let mut current_iteration = 0;
+
+    let mut seed = 0x123456789abcdef0;
+    fn simple_lcg(seed: &mut u64) -> u64 {
+        let r = seed.wrapping_mul(6364136223846793005) + 1;
+        *seed = r;
+        r
+    }
+
     loop {
         let thread_cpu = CpuTimeMeasure::new();
         let walltime = Instant::now();
+
+        if corrupt {
+            let r = simple_lcg(&mut seed) as usize % input_data.len();
+
+            let bitnumber = simple_lcg(&mut seed) as usize % 8;
+
+            input_data[r] ^= 1 << bitnumber;
+        }
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results

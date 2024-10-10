@@ -4,6 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use default_boxed::DefaultBoxed;
 use log::warn;
 use std::cmp::min;
 use std::io::{BufRead, Cursor, Write};
@@ -58,8 +59,8 @@ pub fn decode_lepton_file<R: BufRead, W: Write>(
 pub fn decode_lepton_file_image<R: BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-) -> Result<(LeptonHeader, Vec<BlockBasedImage>)> {
-    let mut lh = LeptonHeader::new();
+) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
+    let mut lh = LeptonHeader::default_boxed();
     let mut enabled_features = enabled_features.clone();
 
     let mut fixed_header_buffer = [0; FIXED_HEADER_SIZE];
@@ -138,7 +139,7 @@ enum DecoderState {
 /// the calculations are done the data is retrieved from the output buffers.
 pub struct LeptonFileReader {
     state: DecoderState,
-    lh: LeptonHeader,
+    lh: Box<LeptonHeader>,
     enabled_features: EnabledFeatures,
     extra_buffer: Vec<u8>,
     metrics: Metrics,
@@ -150,7 +151,7 @@ impl LeptonFileReader {
     pub fn new(features: EnabledFeatures) -> Self {
         LeptonFileReader {
             state: DecoderState::FixedHeader(),
-            lh: LeptonHeader::new(),
+            lh: LeptonHeader::default_boxed(),
             enabled_features: features,
             extra_buffer: Vec::new(),
             metrics: Metrics::default(),
@@ -622,7 +623,7 @@ fn parse_and_write_header() {
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let mut lh = LeptonHeader::new();
+    let mut lh = LeptonHeader::default_boxed();
     lh.jpeg_file_size = 123;
     lh.uncompressed_lepton_header_size = Some(140);
 
@@ -642,7 +643,7 @@ fn parse_and_write_header() {
     lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
         .unwrap();
 
-    let mut other = LeptonHeader::new();
+    let mut other = LeptonHeader::default_boxed();
     let mut other_reader = Cursor::new(&serialized);
 
     let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
