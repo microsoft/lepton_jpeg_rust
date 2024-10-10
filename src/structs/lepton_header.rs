@@ -3,8 +3,8 @@ use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::helpers::{buffer_prefix_matches_marker, err_exit_code, here};
-use crate::EnabledFeatures;
 use crate::{consts::*, ExitCode};
+use crate::{enabled_features, EnabledFeatures};
 
 use super::{
     jpeg_header::JPegHeader, thread_handoff::ThreadHandoff, truncate_components::TruncateComponents,
@@ -131,7 +131,7 @@ impl LeptonHeader {
             );
         }
 
-        // header[4] is the number of threads, but we don't care about that
+        // header[4] is the number of streams/threads, but we don't care about that
         // header[5..8] is reserved
 
         // header[8..20] 12 bytes were the GIT revision, but for historical reasons we
@@ -606,4 +606,164 @@ impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
         self.amount_written += n;
         Ok(n)
     }
+}
+
+#[test]
+fn test_roundtrip_fixed_header() {
+    let test_data = [
+        (0, true, true),
+        (128, false, false),
+        (129, true, false),
+        (130, false, true),
+        (131, true, true),
+    ];
+    for (v, dc_16_bit, adv_16_bit) in test_data {
+        // test known good version of the header so we can detect breaks
+        let fixed_buffer = [
+            207, 132, 1, 90, 1, 0, 0, 0, 77, 83, 140, 0, 0, 0, v, 187, 18, 52, 86, 120, 123, 0, 0,
+            0, 122, 0, 0, 0,
+        ];
+
+        let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+        let mut other = LeptonHeader::new();
+        let compressed_header_size = other
+            .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
+            .unwrap();
+        assert_eq!(compressed_header_size, 122);
+        assert_eq!(other_enabled_features.use_16bit_dc_estimate, dc_16_bit);
+        assert_eq!(other_enabled_features.use_16bit_adv_predict, adv_16_bit);
+    }
+
+    // test all combinations of the flags
+    for (dc_16_bit, adv_16_bit) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut header = make_minimal_lepton_header();
+        header.git_revision_prefix = [0x12, 0x34, 0x56, 0x78];
+        header.encoder_version = 0xBB;
+
+        let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
+        enabled_features.use_16bit_dc_estimate = dc_16_bit;
+        enabled_features.use_16bit_adv_predict = adv_16_bit;
+
+        let (result_header, result_features) = verify_roundtrip(&header, &enabled_features);
+
+        assert_eq!(result_features.use_16bit_dc_estimate, dc_16_bit);
+        assert_eq!(result_features.use_16bit_adv_predict, adv_16_bit);
+        assert_eq!(
+            result_header.git_revision_prefix,
+            header.git_revision_prefix
+        );
+        assert_eq!(result_header.encoder_version, header.encoder_version);
+    }
+}
+
+// test serializing and deserializing header
+#[test]
+fn parse_and_write_header() {
+    use crate::structs::lepton_header::FIXED_HEADER_SIZE;
+
+    let lh = make_minimal_lepton_header();
+
+    let enabled_features = EnabledFeatures::compat_lepton_vector_write();
+    let mut serialized = Vec::new();
+    lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
+        .unwrap();
+
+    let mut other = LeptonHeader::new();
+    let mut other_reader = Cursor::new(&serialized);
+
+    let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
+    other_reader.read_exact(&mut fixed_buffer).unwrap();
+
+    let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+    let compressed_header_size = other
+        .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
+        .unwrap();
+    other
+        .read_compressed_lepton_header(
+            &mut other_reader,
+            &mut other_enabled_features,
+            compressed_header_size,
+        )
+        .unwrap();
+
+    assert_eq!(
+        lh.uncompressed_lepton_header_size,
+        other.uncompressed_lepton_header_size
+    );
+}
+
+#[cfg(test)]
+fn make_minimal_lepton_header() -> LeptonHeader {
+    // minimal jpeg that will pass the validity read tests
+    let min_jpeg = [
+        0xffu8, 0xe0, // APP0
+        0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00,
+        0x00, 0xff, 0xdb, // DQT
+        0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03, 0x02, 0x02, 0x02, 0x03, 0x03,
+        0x03, 0x03, 0x04, 0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08, 0x06, 0x06, 0x05, 0x06, 0x09,
+        0x08, 0x0a, 0x0a, 0x09, 0x08, 0x09, 0x09, 0x0a, 0x0c, 0x0f, 0x0c, 0x0a, 0x0b, 0x0e, 0x0b,
+        0x09, 0x09, 0x0d, 0x11, 0x0d, 0x0e, 0x0f, 0x10, 0x10, 0x11, 0x10, 0x0a, 0x0c, 0x12, 0x13,
+        0x12, 0x10, 0x13, 0x0f, 0x10, 0x10, 0x10, 0xff, 0xC1, 0x00, 0x0b, 0x08, 0x00,
+        0x10, // width
+        0x00, 0x10, // height
+        0x01, // cmpc
+        0x01, // Jid
+        0x11, // sfv / sfh
+        0x00, 0xff, 0xda, // SOS
+        0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd2, 0xcf, 0x20, 0xff, 0xd9, // EOI
+    ];
+
+    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+    let mut lh = LeptonHeader::new();
+    lh.jpeg_file_size = 123;
+    lh.uncompressed_lepton_header_size = Some(140);
+
+    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
+        .unwrap();
+    lh.thread_handoff.push(ThreadHandoff {
+        luma_y_start: 0,
+        luma_y_end: 1,
+        segment_offset_in_file: 0,
+        segment_size: 1000,
+        overhang_byte: 0,
+        num_overhang_bits: 1,
+        last_dc: [1, 2, 3, 4],
+    });
+
+    lh
+}
+
+#[cfg(test)]
+fn verify_roundtrip(
+    header: &LeptonHeader,
+    enabled_features: &EnabledFeatures,
+) -> (LeptonHeader, EnabledFeatures) {
+    let mut output = Vec::new();
+    header
+        .write_lepton_header(&mut output, &enabled_features)
+        .unwrap();
+
+    let mut read_header = LeptonHeader::new();
+    let mut read_enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+    println!("output: {:?}", &output[0..FIXED_HEADER_SIZE]);
+
+    read_header
+        .read_lepton_fixed_header(
+            &output[..FIXED_HEADER_SIZE].try_into().unwrap(),
+            &mut read_enabled_features,
+        )
+        .unwrap();
+    read_header
+        .read_compressed_lepton_header(
+            &mut Cursor::new(&output[FIXED_HEADER_SIZE..]),
+            &mut read_enabled_features,
+            output.len() - FIXED_HEADER_SIZE,
+        )
+        .unwrap();
+
+    (read_header, read_enabled_features)
 }

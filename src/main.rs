@@ -75,7 +75,7 @@ fn main_with_result() -> anyhow::Result<()> {
                 all = true;
             } else if args[i] == "-version" {
                 println!(
-                    "lepton version {} {}",
+                    "compiled library Lepton version {}, git revision: {}",
                     env!("CARGO_PKG_VERSION"),
                     git_version::git_version!(
                         args = ["--abbrev=40", "--always", "--dirty=-modified"]
