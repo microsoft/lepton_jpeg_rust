@@ -260,16 +260,13 @@ impl ProbabilityTables {
             }
         }
 
-        // transpose so we can get the vertical rows as single vectors
-        let transposed = pixels_sans_dc.transpose();
-
         let a1 = pixels_sans_dc.as_i16x8(0);
         let a2 = pixels_sans_dc.as_i16x8(1);
         let v_pred =
             calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
 
-        let a1 = transposed.as_i16x8(0);
-        let a2 = transposed.as_i16x8(1);
+        let a1 = pixels_sans_dc.from_stride(0, 8);
+        let a2 = pixels_sans_dc.from_stride(1, 8);
         let h_pred =
             calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
 
@@ -277,8 +274,9 @@ impl ProbabilityTables {
         let a2 = pixels_sans_dc.as_i16x8(6);
         let next_edge_pixels_v = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
-        let a1 = transposed.as_i16x8(7);
-        let a2 = transposed.as_i16x8(6);
+        let a1 = pixels_sans_dc.from_stride(7, 8);
+        let a2 = pixels_sans_dc.from_stride(6, 8);
+
         let next_edge_pixels_h = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
         let min_dc;
