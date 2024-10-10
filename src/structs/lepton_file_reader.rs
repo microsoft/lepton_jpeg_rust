@@ -164,6 +164,13 @@ impl LeptonFileReader {
     ///
     /// Returns true if we are done processing the file
     /// and there is no more output available.
+    ///
+    /// # Arguments
+    /// - `in_buffer` - the input buffer to process
+    /// - `input_complete` - true if this is the last buffer of data. Once this is set to true, the decoder
+    ///  will return an error if more data is provided.
+    /// - `output` - the output buffer to write to
+    /// - `output_max_size` - the maximum number of bytes to write to the output buffer
     pub fn process_buffer(
         &mut self,
         in_buffer: &[u8],
@@ -288,10 +295,12 @@ impl LeptonFileReader {
             match self.state {
                 DecoderState::AppendTrailer(..)
                 | DecoderState::ReturnResults(..)
-                | DecoderState::EOI => {}
+                | DecoderState::EOI => {
+                    // all good, we don't need any more data to continue decoding
+                }
                 _ => {
                     return err_exit_code(ExitCode::SyntaxError,
-                    format!("ERROR: input was marked as complete, but the decoder {:?} is not in the EOI state",
+                    format!("ERROR: input was marked as complete, but the decoder in state {:?} still needs more data",
                     std::mem::discriminant(&self.state)).as_str());
                 }
             }
