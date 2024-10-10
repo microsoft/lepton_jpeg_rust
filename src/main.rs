@@ -266,7 +266,7 @@ fn main_with_result() -> anyhow::Result<()> {
         let workers = metrics.get_cpu_time_worker_time();
 
         info!(
-            "Main thread CPU: {}ms, Worker thread CPU: {}ms, walltime: {}ms",
+            "Main thread CPU: {}ms, Worker thread CPU: {} ms, walltime: {} ms",
             localthread.as_millis(),
             workers.as_millis(),
             walltime.elapsed().as_millis()
