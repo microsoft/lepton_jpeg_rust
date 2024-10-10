@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::Write;
+use std::mem;
 
 pub struct BitWriter {
     data_buffer: Vec<u8>,
@@ -14,11 +14,11 @@ pub struct BitWriter {
 
 // use to write varying sized bits for coding JPEG. Escapes 0xff -> [0xff,0]
 impl BitWriter {
-    pub fn new() -> Self {
+    pub fn new(capacity: usize) -> Self {
         return BitWriter {
             current_bit: 64,
             fill_register: 0,
-            data_buffer: Vec::<u8>::with_capacity(65536),
+            data_buffer: Vec::<u8>::with_capacity(capacity),
         };
     }
 
@@ -36,6 +36,12 @@ impl BitWriter {
             self.fill_register <<= 8;
             self.current_bit += 8;
         }
+    }
+
+    /// write data
+    pub fn write_byte_unescaped(&mut self, b: u8) {
+        assert!(self.current_bit == 64);
+        self.data_buffer.push(b);
     }
 
     #[inline(always)]
@@ -112,15 +118,11 @@ impl BitWriter {
     }
 
     // flushes the data buffer while escaping all 0xff characters
-    pub fn flush_with_escape<W: Write>(&mut self, w: &mut W) -> anyhow::Result<()> {
+    pub fn detach_buffer(&mut self) -> Vec<u8> {
         // flush any remaining whole bytes
         self.flush_whole_bytes();
 
-        w.write_all(&self.data_buffer[..])?;
-
-        self.data_buffer.drain(..);
-
-        Ok(())
+        mem::take(&mut self.data_buffer)
     }
 
     pub fn reset_from_overhang_byte_and_num_bits(&mut self, overhang_byte: u8, num_bits: u32) {
@@ -149,7 +151,7 @@ use std::io::Cursor;
 fn write_simple() {
     let arr = [0x12 as u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
 
-    let mut b = BitWriter::new();
+    let mut b = BitWriter::new(1024);
 
     b.write(1, 4);
     b.write(2, 4);
@@ -162,8 +164,7 @@ fn write_simple() {
     b.write(0xfe, 8);
     b.write(0xe, 4);
 
-    let mut w = Vec::new();
-    b.flush_with_escape(&mut Cursor::new(&mut w)).unwrap();
+    let w = b.detach_buffer();
 
     assert_eq!(w[..], arr);
 }
@@ -171,18 +172,16 @@ fn write_simple() {
 // verify the the bits roundtrip correctly in a fairly simple scenario
 #[test]
 fn roundtrip_bits() {
-    let mut buf = Vec::new();
-
+    let buf;
     {
-        let mut b = BitWriter::new();
+        let mut b = BitWriter::new(1024);
         for i in 1..2048 {
             b.write(i, u32_bit_length(i as u32) as u32);
         }
 
         b.pad(0xff);
 
-        let mut writer = Cursor::new(&mut buf);
-        b.flush_with_escape(&mut writer).unwrap();
+        buf = b.detach_buffer();
     }
 
     {
@@ -202,7 +201,7 @@ fn roundtrip_bits() {
 fn roundtrip_randombits() {
     use rand::Rng;
 
-    let mut buf = Vec::new();
+    let buf;
 
     const ITERATIONS: usize = 10000;
 
@@ -216,21 +215,14 @@ fn roundtrip_randombits() {
     }
 
     {
-        let mut writer = Cursor::new(&mut buf);
-
-        let mut b = BitWriter::new();
+        let mut b = BitWriter::new(1024);
         for i in &test_data {
             b.write(i.0 as u32, i.1 as u32);
-
-            // randomly flush the buffer
-            if rng.gen_range(0..50) == 0 {
-                b.flush_with_escape(&mut writer).unwrap();
-            }
         }
 
         b.pad(0xff);
 
-        b.flush_with_escape(&mut writer).unwrap();
+        buf = b.detach_buffer();
     }
 
     {

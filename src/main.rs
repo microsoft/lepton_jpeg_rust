@@ -19,10 +19,12 @@ use lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use log::info;
 use simple_logger::SimpleLogger;
-use structs::lepton_format::{decode_as_single_image, read_jpeg};
+use structs::lepton_file_reader::{decode_lepton_file, decode_lepton_file_image};
+use structs::lepton_file_writer::{encode_lepton_wrapper_verify, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
+use std::time::Instant;
 use std::{
     env,
     fs::{File, OpenOptions},
@@ -32,8 +34,6 @@ use std::{
 
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::here;
-use crate::structs::lepton_format::{decode_lepton_wrapper, encode_lepton_wrapper_verify};
-use crate::structs::lepton_header::LeptonHeader;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     if arg.starts_with(name) {
@@ -48,12 +48,12 @@ fn main_with_result() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
 
     let mut filenames = Vec::new();
-    let mut num_threads = 8;
     let mut iterations = 1;
     let mut dump = false;
     let mut all = false;
     let mut overwrite = false;
     let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    let mut corrupt = false;
 
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
     if stdout().is_terminal() {
@@ -63,7 +63,7 @@ fn main_with_result() -> anyhow::Result<()> {
     for i in 1..args.len() {
         if args[i].starts_with("-") {
             if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-threads:") {
-                num_threads = x;
+                enabled_features.max_threads = x as u32;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-iter:") {
                 iterations = x;
             } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-width:") {
@@ -74,6 +74,17 @@ fn main_with_result() -> anyhow::Result<()> {
                 dump = true;
             } else if args[i] == "-all" {
                 all = true;
+            } else if args[i] == "-corrupt" {
+                // randomly corrupt the files for testing
+                corrupt = true;
+            } else if args[i] == "-version" {
+                println!(
+                    "compiled library Lepton version {}, git revision: {}",
+                    env!("CARGO_PKG_VERSION"),
+                    git_version::git_version!(
+                        args = ["--abbrev=40", "--always", "--dirty=-modified"]
+                    )
+                );
             } else if args[i] == "-highpriority" {
                 // used to force to run on p-cores, make sure this and
                 // any threadpool threads are set to the high priority
@@ -137,7 +148,6 @@ fn main_with_result() -> anyhow::Result<()> {
 
     if dump {
         let file_in = File::open(filenames[0]).unwrap();
-        let filelen = file_in.metadata()?.len() as u64;
 
         let mut reader = BufReader::new(file_in);
 
@@ -145,27 +155,15 @@ fn main_with_result() -> anyhow::Result<()> {
         let block_image;
 
         if filenames[0].to_lowercase().ends_with(".jpg") {
-            (lh, block_image) =
-                read_jpeg(&mut reader, &enabled_features, num_threads as usize, |jh| {
-                    println!("parsed header:");
-                    let s = format!("{jh:?}");
-                    println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-                })
-                .context(here!())?;
-        } else {
-            lh = LeptonHeader::new();
-            lh.read_lepton_header(&mut reader, &mut enabled_features)
-                .context(here!())?;
-
-            let _metrics;
-
-            (block_image, _metrics) = decode_as_single_image(
-                &mut lh,
-                &mut reader.take(filelen - 4), // last 4 bytes are the length of the file
-                num_threads as usize,
-                &enabled_features,
-            )
+            (lh, block_image) = read_jpeg(&mut reader, &enabled_features, |jh| {
+                println!("parsed header:");
+                let s = format!("{jh:?}");
+                println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+            })
             .context(here!())?;
+        } else {
+            (lh, block_image) =
+                decode_lepton_file_image(&mut reader, &enabled_features).context(here!())?;
 
             loop {
                 println!("parsed header:");
@@ -237,17 +235,31 @@ fn main_with_result() -> anyhow::Result<()> {
     let mut overall_cpu = Duration::ZERO;
 
     let mut current_iteration = 0;
+
+    let mut seed = 0x123456789abcdef0;
+    fn simple_lcg(seed: &mut u64) -> u64 {
+        let r = seed.wrapping_mul(6364136223846793005) + 1;
+        *seed = r;
+        r
+    }
+
     loop {
         let thread_cpu = CpuTimeMeasure::new();
+        let walltime = Instant::now();
+
+        if corrupt {
+            let r = simple_lcg(&mut seed) as usize % input_data.len();
+
+            let bitnumber = simple_lcg(&mut seed) as usize % 8;
+
+            input_data[r] ^= 1 << bitnumber;
+        }
 
         if input_data[0] == 0xff && input_data[1] == 0xd8 {
             // the source is a JPEG file, so run the encoder and verify the results
-            (output_data, metrics) = encode_lepton_wrapper_verify(
-                &input_data[..],
-                num_threads as usize,
-                &enabled_features,
-            )
-            .context(here!())?;
+            (output_data, metrics) =
+                encode_lepton_wrapper_verify(&input_data[..], &enabled_features)
+                    .context(here!())?;
 
             info!(
                 "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
@@ -261,13 +273,8 @@ fn main_with_result() -> anyhow::Result<()> {
 
             output_data = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton_wrapper(
-                &mut reader,
-                &mut output_data,
-                num_threads as usize,
-                &enabled_features,
-            )
-            .context(here!())?;
+            metrics = decode_lepton_file(&mut reader, &mut output_data, &enabled_features)
+                .context(here!())?;
         } else {
             return err_exit_code(
                 ExitCode::BadLeptonFile,
@@ -275,11 +282,17 @@ fn main_with_result() -> anyhow::Result<()> {
             );
         }
 
-        let iter_duration = thread_cpu.elapsed() + metrics.get_cpu_time_worker_time();
+        let localthread = thread_cpu.elapsed();
+        let workers = metrics.get_cpu_time_worker_time();
 
-        info!("Total CPU time consumed:{0}ms", iter_duration.as_millis());
+        info!(
+            "Main thread CPU: {}ms, Worker thread CPU: {} ms, walltime: {} ms",
+            localthread.as_millis(),
+            workers.as_millis(),
+            walltime.elapsed().as_millis()
+        );
 
-        overall_cpu += iter_duration;
+        overall_cpu += localthread + workers;
 
         current_iteration += 1;
         if current_iteration >= iterations {

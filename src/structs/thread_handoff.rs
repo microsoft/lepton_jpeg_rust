@@ -10,7 +10,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::consts::COLOR_CHANNEL_NUM_BLOCK_TYPES;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThreadHandoff {
     pub luma_y_start: i32,
     pub luma_y_end: i32,
