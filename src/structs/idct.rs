@@ -133,7 +133,7 @@ use bytemuck::cast_ref;
 
 #[cfg(test)]
 #[inline(always)]
-pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
     use wide::u16x8;
 
     let rows: &[u16x8; 8] = cast_ref(q_transposed.get_block());
@@ -142,7 +142,7 @@ pub fn get_q(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
 
 #[cfg(test)]
 #[inline(always)]
-pub fn get_c(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
+fn get_c(offset: usize, q_transposed: &AlignedBlock) -> i32x8 {
     let rows: &[i16x8; 8] = cast_ref(q_transposed.get_block());
     i32x8::from_i16x8(rows[offset])
 }
