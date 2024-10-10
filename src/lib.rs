@@ -13,12 +13,12 @@ mod structs;
 pub mod enabled_features;
 pub mod lepton_error;
 
-pub use crate::enabled_features::EnabledFeatures;
-pub use crate::lepton_error::{ExitCode, LeptonError};
-use crate::structs::lepton_file_reader::decode_lepton_file;
+pub use enabled_features::EnabledFeatures;
+pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
-pub use structs::lepton_file_reader::LeptonFileReader;
-use structs::lepton_file_writer::{encode_lepton_wrapper, encode_lepton_wrapper_verify};
+
+use crate::structs::lepton_file_reader::decode_lepton_file;
+use crate::structs::lepton_file_writer::{encode_lepton_wrapper, encode_lepton_wrapper_verify};
 
 use core::result::Result;
 use std::panic::catch_unwind;
@@ -231,6 +231,53 @@ pub unsafe extern "C" fn get_version(
     *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
 }
 
+/// Holds context and buffers while decompressing a Lepton encoded file.
+///
+/// Dropping the object will abort any threads or decoding in progress.
+pub struct LeptonFileReaderContext {
+    reader: structs::lepton_file_reader::LeptonFileReader,
+}
+
+impl LeptonFileReaderContext {
+    /// Creates a new context for decompressing Lepton encoded files,
+    /// features parameter can be used to enable or disable certain behaviors.
+    pub fn new(features: EnabledFeatures) -> LeptonFileReaderContext {
+        LeptonFileReaderContext {
+            reader: structs::lepton_file_reader::LeptonFileReader::new(features),
+        }
+    }
+
+    /// Processes a buffer of data of the file, which can be a slice of 0 or more characters.
+    /// If the input is complete, then input_complete should be set to true.
+    ///
+    /// Any available output is written to the output buffer, which can be zero if the
+    /// input is not yet complete. Once the input has been marked as complete, then the
+    /// call will always return some data until the end of the file is reached, at which
+    /// it will return true.
+    ///
+    /// # Arguments
+    /// * `input` - The input buffer to process.
+    /// * `input_complete` - True if the input is complete and no more data will be provided.
+    /// * `writer` - The writer to write the output to.
+    /// * `output_buffer_size` - The maximum amount of output to write to the writer before returning.
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the end of the file has been reached, otherwise false. If an error occurs
+    /// then an error code is returned and no further calls should be made.
+    pub fn process_buffer(
+        &mut self,
+        input: &[u8],
+        input_complete: bool,
+        writer: &mut impl Write,
+        output_buffer_size: usize,
+    ) -> Result<bool, LeptonError> {
+        self.reader
+            .process_buffer(input, input_complete, writer, output_buffer_size)
+            .map_err(translate_error)
+    }
+}
+
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 
 #[no_mangle]
@@ -241,13 +288,13 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         EnabledFeatures::compat_lepton_scalar_read()
     };
 
-    let context = Box::new(LeptonFileReader::new(enabled_features));
+    let context = Box::new(LeptonFileReaderContext::new(enabled_features));
     Box::into_raw(context) as *mut std::ffi::c_void
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(context as *mut LeptonFileReader);
+    let _ = Box::from_raw(context as *mut LeptonFileReaderContext);
     // let Box destroy the object
 }
 
@@ -262,7 +309,7 @@ pub unsafe extern "C" fn decompress_image(
     result_size: *mut u64,
 ) -> i32 {
     match catch_unwind(|| {
-        let context = context as *mut LeptonFileReader;
+        let context = context as *mut LeptonFileReaderContext;
         let context = &mut *context;
 
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -281,7 +328,7 @@ pub unsafe extern "C" fn decompress_image(
                 return done as i32;
             }
             Err(e) => {
-                return translate_error(e).exit_code as i32;
+                return e.exit_code as i32;
             }
         }
     }) {

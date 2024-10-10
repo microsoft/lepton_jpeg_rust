@@ -143,6 +143,7 @@ pub struct LeptonFileReader {
     extra_buffer: Vec<u8>,
     metrics: Metrics,
     total_read_size: u64,
+    input_complete: bool,
 }
 
 impl LeptonFileReader {
@@ -154,6 +155,7 @@ impl LeptonFileReader {
             extra_buffer: Vec::new(),
             metrics: Metrics::default(),
             total_read_size: 0,
+            input_complete: false,
         }
     }
 
@@ -169,6 +171,13 @@ impl LeptonFileReader {
         output: &mut impl Write,
         mut output_max_size: usize,
     ) -> Result<bool> {
+        if self.input_complete && in_buffer.len() > 0 {
+            return err_exit_code(
+                ExitCode::SyntaxError,
+                "ERROR: input was marked as complete but more data was provided",
+            );
+        }
+
         self.total_read_size += in_buffer.len() as u64;
 
         let mut in_buffer = PartialBuffer::new(in_buffer, &mut self.extra_buffer);
@@ -270,6 +279,20 @@ impl LeptonFileReader {
                 }
                 DecoderState::EOI => {
                     break;
+                }
+            }
+        }
+
+        if input_complete {
+            self.input_complete = true;
+            match self.state {
+                DecoderState::AppendTrailer(..)
+                | DecoderState::ReturnResults(..)
+                | DecoderState::EOI => {}
+                _ => {
+                    return err_exit_code(ExitCode::SyntaxError,
+                    format!("ERROR: input was marked as complete, but the decoder {:?} is not in the EOI state",
+                    std::mem::discriminant(&self.state)).as_str());
                 }
             }
         }
