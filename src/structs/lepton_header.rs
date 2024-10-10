@@ -3,8 +3,8 @@ use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::helpers::{buffer_prefix_matches_marker, err_exit_code, here};
+use crate::EnabledFeatures;
 use crate::{consts::*, ExitCode};
-use crate::{enabled_features, EnabledFeatures};
 
 use super::{
     jpeg_header::JPegHeader, thread_handoff::ThreadHandoff, truncate_components::TruncateComponents,
@@ -635,7 +635,7 @@ fn test_roundtrip_fixed_header() {
         assert_eq!(other_enabled_features.use_16bit_adv_predict, adv_16_bit);
     }
 
-    // test all combinations of the flags
+    // test read/write all combinations of the flags
     for (dc_16_bit, adv_16_bit) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut header = make_minimal_lepton_header();
         header.git_revision_prefix = [0x12, 0x34, 0x56, 0x78];
@@ -680,6 +680,7 @@ fn parse_and_write_header() {
     let compressed_header_size = other
         .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
         .unwrap();
+
     other
         .read_compressed_lepton_header(
             &mut other_reader,
@@ -692,6 +693,13 @@ fn parse_and_write_header() {
         lh.uncompressed_lepton_header_size,
         other.uncompressed_lepton_header_size
     );
+
+    assert_eq!(lh.git_revision_prefix, other.git_revision_prefix);
+    assert_eq!(lh.encoder_version, other.encoder_version);
+
+    assert_eq!(lh.jpeg_file_size, other.jpeg_file_size);
+    assert_eq!(lh.raw_jpeg_header, other.raw_jpeg_header);
+    assert_eq!(lh.thread_handoff, other.thread_handoff);
 }
 
 #[cfg(test)]
@@ -719,18 +727,27 @@ fn make_minimal_lepton_header() -> LeptonHeader {
 
     let mut lh = LeptonHeader::new();
     lh.jpeg_file_size = 123;
-    lh.uncompressed_lepton_header_size = Some(140);
+    lh.uncompressed_lepton_header_size = Some(156);
 
     lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
         .unwrap();
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
         luma_y_end: 1,
-        segment_offset_in_file: 0,
-        segment_size: 1000,
+        segment_offset_in_file: 0, // not serialized (computed based on segment size)
+        segment_size: 500,
         overhang_byte: 0,
         num_overhang_bits: 1,
-        last_dc: [1, 2, 3, 4],
+        last_dc: [1, 2, 3, 0],
+    });
+    lh.thread_handoff.push(ThreadHandoff {
+        luma_y_start: 1,
+        luma_y_end: 2,
+        segment_offset_in_file: 0,
+        segment_size: 600,
+        overhang_byte: 1,
+        num_overhang_bits: 2,
+        last_dc: [2, 3, 4, 0],
     });
 
     lh
