@@ -8,8 +8,6 @@ use std::num::Wrapping;
 
 use wide::{i16x8, i32x8};
 
-use crate::consts::X_IDCT_SCALE;
-
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct NeighborSummary {
     edge_pixels_h: i16x8,
