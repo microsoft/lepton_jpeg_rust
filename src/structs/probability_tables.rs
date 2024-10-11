@@ -262,13 +262,11 @@ impl ProbabilityTables {
 
         let a1 = pixels_sans_dc.as_i16x8(0);
         let a2 = pixels_sans_dc.as_i16x8(1);
-        let v_pred =
-            calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
+        let v_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
         let a1 = pixels_sans_dc.from_stride(0, 8);
         let a2 = pixels_sans_dc.from_stride(1, 8);
-        let h_pred =
-            calc_pred(a1, a2, enabled_features.use_16bit_adv_predict) + 128 * X_IDCT_SCALE as i16;
+        let h_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
         let a1 = pixels_sans_dc.as_i16x8(7);
         let a2 = pixels_sans_dc.as_i16x8(6);

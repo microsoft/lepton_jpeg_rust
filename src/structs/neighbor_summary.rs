@@ -45,8 +45,8 @@ impl NeighborSummary {
         vert_pred: i32x8,
     ) -> Self {
         NeighborSummary {
-            edge_pixels_h: edge_pixels_h + (dc_deq + 128 * X_IDCT_SCALE) as i16,
-            edge_pixels_v: edge_pixels_v + (dc_deq + 128 * X_IDCT_SCALE) as i16,
+            edge_pixels_h: edge_pixels_h + (dc_deq as i16),
+            edge_pixels_v: edge_pixels_v + (dc_deq as i16),
             edge_coefs_h: horiz_pred,
             edge_coefs_v: vert_pred,
             num_non_zeros: num_non_zeros_7x7,
