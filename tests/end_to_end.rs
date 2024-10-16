@@ -10,7 +10,6 @@ use std::{io::Cursor, path::Path};
 use std::fs::File;
 use std::io::Read;
 
-use lepton_jpeg::metrics::Metrics;
 use lepton_jpeg::{
     create_decompression_context, decompress_image, free_decompression_context,
     WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx,
