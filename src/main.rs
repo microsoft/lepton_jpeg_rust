@@ -4,36 +4,25 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-mod consts;
-mod enabled_features;
-mod helpers;
-mod jpeg_code;
-mod lepton_error;
-mod metrics;
-mod structs;
-
 use anyhow;
-use anyhow::Context;
-use helpers::err_exit_code;
-use lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::metrics::CpuTimeMeasure;
-use log::info;
+use lepton_jpeg::{
+    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, EnabledFeatures, ExitCode,
+    LeptonError, Metrics,
+};
+use log::{error, info};
 use simple_logger::SimpleLogger;
-use structs::lepton_file_reader::{decode_lepton_file, decode_lepton_file_image};
-use structs::lepton_file_writer::{encode_lepton_wrapper_verify, read_jpeg};
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
+use std::fs::OpenOptions;
 use std::time::Instant;
 use std::{
     env,
-    fs::{File, OpenOptions},
-    io::{stdin, stdout, BufReader, Cursor, IsTerminal, Read, Seek, Write},
+    fs::File,
+    io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write},
     time::Duration,
 };
-
-use crate::enabled_features::EnabledFeatures;
-use crate::helpers::here;
 
 fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     if arg.starts_with(name) {
@@ -43,22 +32,25 @@ fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+enum FileType {
+    Jpeg,
+    Lepton,
+}
+
 // wrap main so that errors get printed nicely without a panic
-fn main_with_result() -> anyhow::Result<()> {
+fn main_with_result() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
 
     let mut filenames = Vec::new();
     let mut iterations = 1;
     let mut dump = false;
     let mut all = false;
+    let mut verify = true;
     let mut overwrite = false;
     let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
     let mut corrupt = false;
-
-    // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
-    if stdout().is_terminal() {
-        SimpleLogger::new().init().unwrap();
-    }
+    let mut filter_level = log::LevelFilter::Info;
 
     for i in 1..args.len() {
         if args[i].starts_with("-") {
@@ -77,6 +69,10 @@ fn main_with_result() -> anyhow::Result<()> {
             } else if args[i] == "-corrupt" {
                 // randomly corrupt the files for testing
                 corrupt = true;
+            } else if args[i] == "-noverify" {
+                verify = false;
+            } else if args[i] == "-quiet" {
+                filter_level = log::LevelFilter::Warn;
             } else if args[i] == "-version" {
                 println!(
                     "compiled library Lepton version {}, git revision: {}",
@@ -136,101 +132,61 @@ fn main_with_result() -> anyhow::Result<()> {
                 enabled_features.use_16bit_adv_predict = true;
                 enabled_features.use_16bit_dc_estimate = true;
             } else {
-                return err_exit_code(
+                return Err(LeptonError::new(
                     ExitCode::SyntaxError,
                     format!("unknown switch {0}", args[i]).as_str(),
-                );
+                )
+                .into());
             }
         } else {
             filenames.push(args[i].as_str());
         }
     }
 
+    // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
+    if stdout().is_terminal() {
+        SimpleLogger::new().with_level(filter_level).init().unwrap();
+    }
+
     if dump {
-        let file_in = File::open(filenames[0]).unwrap();
+        let mut file_in = File::open(filenames[0]).unwrap();
 
-        let mut reader = BufReader::new(file_in);
-
-        let mut lh;
-        let block_image;
-
-        if filenames[0].to_lowercase().ends_with(".jpg") {
-            (lh, block_image) = read_jpeg(&mut reader, &enabled_features, |jh| {
-                println!("parsed header:");
-                let s = format!("{jh:?}");
-                println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-            })
-            .context(here!())?;
-        } else {
-            (lh, block_image) =
-                decode_lepton_file_image(&mut reader, &enabled_features).context(here!())?;
-
-            loop {
-                println!("parsed header:");
-                let s = format!("{0:?}", lh.jpeg_header);
-                println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-
-                if !lh
-                    .advance_next_header_segment(&enabled_features)
-                    .context(here!())?
-                {
-                    break;
-                }
-            }
-        }
-
-        let s = format!("{lh:?}");
-        println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-
-        if all {
-            for i in 0..block_image.len() {
-                println!("Component {0}", i);
-                let image = &block_image[i];
-                for dpos in 0..image.get_block_width() * image.get_original_height() {
-                    print!("dpos={0} ", dpos);
-                    let block = image.get_block(dpos);
-
-                    print!("{0}", block.get_transposed_from_zigzag(0));
-                    for i in 1..64 {
-                        print!(",{0}", block.get_transposed_from_zigzag(i));
-                    }
-                    println!();
-                }
-            }
-        }
-
+        let mut contents = Vec::new();
+        file_in.read_to_end(&mut contents).unwrap();
+        dump_jpeg(&contents, all, &enabled_features).unwrap();
         return Ok(());
     }
 
     let mut input_data = Vec::new();
     if filenames.len() != 2 {
         if stdout().is_terminal() || stdin().is_terminal() {
-            return err_exit_code(
+            return Err(LeptonError::new(
                 ExitCode::SyntaxError,
                 "source and destination filename are needed or input needs to be redirected",
-            );
+            )
+            .into());
         }
 
-        std::io::stdin()
-            .read_to_end(&mut input_data)
-            .context(here!())?;
+        std::io::stdin().read_to_end(&mut input_data)?;
     } else {
         let mut file_in = File::open(filenames[0])
-            .map_err(|e| LeptonError {
-                exit_code: ExitCode::FileNotFound,
-                message: e.to_string(),
-            })
-            .context(here!())?;
+            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string().as_str()))?;
 
-        file_in.read_to_end(&mut input_data).context(here!())?;
+        file_in.read_to_end(&mut input_data)?;
     }
 
     if input_data.len() < 2 {
-        return err_exit_code(ExitCode::BadLeptonFile, "ERROR input file too small");
+        return Err(LeptonError::new(ExitCode::BadLeptonFile, "ERROR input file too small").into());
     }
 
     let mut metrics;
     let mut output_data;
+    let mut original_data = Vec::new();
+
+    // save the data if we are going to corrupt it
+    if corrupt {
+        original_data = input_data.clone();
+    }
 
     let mut overall_cpu = Duration::ZERO;
 
@@ -242,6 +198,19 @@ fn main_with_result() -> anyhow::Result<()> {
         *seed = r;
         r
     }
+
+    // see what file type we have
+    let file_type = if input_data[0] == 0xff && input_data[1] == 0xd8 {
+        FileType::Jpeg
+    } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
+        FileType::Lepton
+    } else {
+        return Err(LeptonError::new(
+            ExitCode::BadLeptonFile,
+            "ERROR input file is not a valid JPEG or Lepton file",
+        )
+        .into());
+    };
 
     loop {
         let thread_cpu = CpuTimeMeasure::new();
@@ -255,31 +224,27 @@ fn main_with_result() -> anyhow::Result<()> {
             input_data[r] ^= 1 << bitnumber;
         }
 
-        if input_data[0] == 0xff && input_data[1] == 0xd8 {
-            // the source is a JPEG file, so run the encoder and verify the results
-            (output_data, metrics) =
-                encode_lepton_wrapper_verify(&input_data[..], &enabled_features)
-                    .context(here!())?;
+        // do the encoding/decoding, if we got an error and were corrupting the file, then restore the
+        // original data and continue so we can try corrupting the file in different ways
+        // per iteration
+        match do_work(file_type, verify, &input_data, &enabled_features) {
+            Err(e) => {
+                error!("error {0}", e);
 
-            info!(
-                "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
-                input_data.len(),
-                output_data.len(),
-                ((input_data.len() as f64) / (output_data.len() as f64) - 1.0) * 100.0
-            );
-        } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
-            // the source is a lepton file, so run the decoder
-            let mut reader = Cursor::new(&input_data);
+                // if we corrupted the image, then restore and continue running
+                if corrupt {
+                    input_data = original_data.clone();
+                    output_data = Vec::new();
+                    metrics = Metrics::default();
+                } else {
+                    return Err(e.into());
+                }
+            }
 
-            output_data = Vec::with_capacity(input_data.len());
-
-            metrics = decode_lepton_file(&mut reader, &mut output_data, &enabled_features)
-                .context(here!())?;
-        } else {
-            return err_exit_code(
-                ExitCode::BadLeptonFile,
-                "ERROR input file is not a valid JPEG or Lepton file",
-            );
+            Ok((data, m)) => {
+                output_data = data;
+                metrics = m;
+            }
         }
 
         let localthread = thread_cpu.elapsed();
@@ -301,19 +266,16 @@ fn main_with_result() -> anyhow::Result<()> {
     }
 
     if filenames.len() != 2 {
-        std::io::stdout()
-            .write_all(&output_data[..])
-            .context(here!())?
+        std::io::stdout().write_all(&output_data[..])?
     } else {
         let output_file: String = filenames[1].to_owned();
         let mut fileout = OpenOptions::new()
             .write(true)
             .create(overwrite)
             .create_new(!overwrite)
-            .open(output_file.as_str())
-            .context(here!())?;
+            .open(output_file.as_str())?;
 
-        fileout.write_all(&output_data[..]).context(here!())?
+        fileout.write_all(&output_data[..])?
     }
 
     if iterations > 1 {
@@ -324,6 +286,47 @@ fn main_with_result() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// does the actual encoding/decoding work
+fn do_work(
+    file_type: FileType,
+    verify: bool,
+    input_data: &Vec<u8>,
+    enabled_features: &EnabledFeatures,
+) -> Result<(Vec<u8>, Metrics), LeptonError> {
+    let metrics;
+    let mut output;
+
+    match file_type {
+        FileType::Jpeg => {
+            if verify {
+                (output, metrics) = encode_lepton_verify(input_data, enabled_features)?;
+            } else {
+                let mut reader = Cursor::new(input_data);
+                output = Vec::with_capacity(input_data.len());
+                let mut writer = Cursor::new(&mut output);
+
+                metrics = encode_lepton(&mut reader, &mut writer, enabled_features)?
+            }
+
+            info!(
+                "compressed input {0}, output {1} bytes (compression = {2:.1}%)",
+                input_data.len(),
+                output.len(),
+                ((input_data.len() as f64) / (output.len() as f64) - 1.0) * 100.0
+            );
+        }
+        FileType::Lepton => {
+            let mut reader = Cursor::new(&input_data);
+
+            output = Vec::with_capacity(input_data.len());
+
+            metrics = decode_lepton(&mut reader, &mut output, &enabled_features)?;
+        }
+    }
+
+    Ok((output, metrics))
 }
 
 /// internal debug utility used to figure out where in the output the JPG diverged if there was a coding error writing out the JPG
@@ -386,9 +389,11 @@ fn main() {
             Some(x) => {
                 eprintln!(
                     "error code: {0} {1} {2}",
-                    x.exit_code, x.exit_code as i32, x.message
+                    x.exit_code(),
+                    x.exit_code() as i32,
+                    x.message()
                 );
-                std::process::exit(x.exit_code as i32);
+                std::process::exit(x.exit_code() as i32);
             }
             None => {
                 eprintln!("unknown error {0:?}", e);

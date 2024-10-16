@@ -10,7 +10,6 @@ use std::{io::Cursor, path::Path};
 use std::fs::File;
 use std::io::Read;
 
-use lepton_jpeg::metrics::Metrics;
 use lepton_jpeg::{
     create_decompression_context, decompress_image, free_decompression_context,
     WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx,
@@ -319,13 +318,23 @@ fn verify_encode_verify(#[values("slrcity")] file: &str) {
     encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()).unwrap();
 }
 
-fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
+fn assert_exception<T>(expected_error: ExitCode, result: Result<T, LeptonError>) {
     match result {
         Ok(_) => panic!("failure was expected"),
         Err(e) => {
-            assert_eq!(expected_error, e.exit_code, "unexpected error {0:?}", e);
+            assert_eq!(expected_error, e.exit_code(), "unexpected error {0:?}", e);
         }
     }
+}
+
+#[rstest]
+fn verify_encode_verify_fail(#[values("mismatch_encode")] file: &str) {
+    let input = read_file(file, ".jpg");
+
+    assert_exception(
+        ExitCode::VerificationContentMismatch,
+        encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()),
+    );
 }
 
 /// ensures we error out if we have the progressive flag disabled
@@ -371,7 +380,7 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
     let mut lepton = Vec::new();
 
     assert_exception(
-        ExitCode::UnsupportedJpeg,
+        ExitCode::UnsupportedJpegWithZeroIdct0,
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
@@ -473,9 +482,12 @@ fn extern_interface_decompress_chunked() {
 
 #[rstest]
 fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
-    #[values("zeros_in_dqt_tables", "nonoptimalprogressive")] file: &str,
+    #[values(
+        ("zeros_in_dqt_tables", ExitCode::UnsupportedJpegWithZeroIdct0), 
+        ("nonoptimalprogressive", ExitCode::UnsupportedJpeg))]
+    file: (&str, ExitCode),
 ) {
-    let input = read_file(file, ".jpg");
+    let input = read_file(file.0, ".jpg");
 
     let mut compressed = Vec::new();
     compressed.resize(input.len() + 10000, 0);
@@ -491,7 +503,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             (&mut result_size) as *mut u64,
         );
 
-        assert_eq!(retval, ExitCode::UnsupportedJpeg as i32);
+        assert_eq!(retval, file.1 as i32);
     }
 }
 
