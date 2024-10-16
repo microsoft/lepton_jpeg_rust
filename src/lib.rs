@@ -13,36 +13,16 @@ mod structs;
 pub mod enabled_features;
 pub mod lepton_error;
 
+use anyhow::Context;
 pub use enabled_features::EnabledFeatures;
+use helpers::here;
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
-
-use crate::structs::lepton_file_reader::decode_lepton_file;
-use crate::structs::lepton_file_writer::{encode_lepton_wrapper, encode_lepton_wrapper_verify};
 
 use core::result::Result;
 use std::panic::catch_unwind;
 
 use std::io::{BufRead, Cursor, Seek, Write};
-
-/// translates internal anyhow based exception into externally visible exception
-fn translate_error(e: anyhow::Error) -> LeptonError {
-    match e.root_cause().downcast_ref::<LeptonError>() {
-        // try to extract the exit code if it was a well known error
-        Some(x) => {
-            return LeptonError {
-                exit_code: x.exit_code,
-                message: x.message.to_owned(),
-            };
-        }
-        None => {
-            return LeptonError {
-                exit_code: ExitCode::GeneralFailure,
-                message: format!("unexpected error {0:?}", e),
-            };
-        }
-    }
-}
 
 /// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: BufRead, W: Write>(
@@ -50,7 +30,8 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    decode_lepton_file(reader, writer, enabled_features).map_err(translate_error)
+    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
+        .map_err(LeptonError::from)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -59,7 +40,8 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics, LeptonError> {
-    encode_lepton_wrapper(reader, writer, enabled_features).map_err(translate_error)
+    structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
+        .map_err(LeptonError::from)
 }
 
 /// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
@@ -67,7 +49,8 @@ pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
 ) -> Result<(Vec<u8>, Metrics), LeptonError> {
-    encode_lepton_wrapper_verify(input_data, enabled_features).map_err(translate_error)
+    structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
+        .map_err(LeptonError::from)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -94,18 +77,12 @@ pub unsafe extern "C" fn WrapperCompressImage(
             features.max_threads = number_of_threads as u32;
         }
 
-        match encode_lepton_wrapper(&mut reader, &mut writer, &features) {
-            Ok(_) => {}
-            Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
-                // try to extract the exit code if it was a well known error
-                Some(x) => {
-                    return x.exit_code as i32;
-                }
-                None => {
-                    return -1 as i32;
-                }
-            },
-        }
+        let _metrics = match encode_lepton(&mut reader, &mut writer, &features) {
+            Ok(m) => m,
+            Err(e) => {
+                return e.exit_code() as i32;
+            }
+        };
 
         *result_size = writer.position().into();
 
@@ -183,27 +160,25 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton_file(&mut reader, &mut writer, &mut enabled_features) {
+            match decode_lepton(&mut reader, &mut writer, &mut enabled_features) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return 0;
                 }
                 Err(e) => {
-                    let exit_code = translate_error(e).exit_code;
-
                     // The retry logic below runs if the caller did not pass use_16bit_dc_estimate=true, but the decompression
                     // encountered StreamInconsistent failure which is commonly caused by the the C++ 16 bit bug. In this case
                     // we retry the decompression with use_16bit_dc_estimate=true.
                     // Note that it's prefferable for the caller to pass use_16bit_dc_estimate properly and not to rely on this
                     // retry logic, that may miss some cases leading to bad (corrupted) decompression results.
-                    if exit_code == ExitCode::StreamInconsistent
+                    if e.exit_code() == ExitCode::StreamInconsistent
                         && !enabled_features.use_16bit_dc_estimate
                     {
                         enabled_features.use_16bit_dc_estimate = true;
                         continue;
                     }
 
-                    return exit_code as i32;
+                    return e.exit_code() as i32;
                 }
             }
         }
@@ -274,7 +249,7 @@ impl LeptonFileReaderContext {
     ) -> Result<bool, LeptonError> {
         self.reader
             .process_buffer(input, input_complete, writer, output_buffer_size)
-            .map_err(translate_error)
+            .map_err(LeptonError::from)
     }
 }
 
@@ -328,7 +303,7 @@ pub unsafe extern "C" fn decompress_image(
                 return done as i32;
             }
             Err(e) => {
-                return e.exit_code as i32;
+                return e.exit_code() as i32;
             }
         }
     }) {
@@ -339,4 +314,69 @@ pub unsafe extern "C" fn decompress_image(
             return -2;
         }
     };
+}
+
+/// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
+#[allow(dead_code)]
+pub fn dump_jpeg(
+    input_data: &[u8],
+    all: bool,
+    enabled_features: &EnabledFeatures,
+) -> Result<(), LeptonError> {
+    use structs::lepton_file_reader::decode_lepton_file_image;
+    use structs::lepton_file_writer::read_jpeg;
+
+    let mut lh;
+    let block_image;
+
+    if input_data[0] == 0xff && input_data[1] == 0xd8 {
+        let mut reader = Cursor::new(input_data);
+
+        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh| {
+            println!("parsed header:");
+            let s = format!("{jh:?}");
+            println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+        })
+        .map_err(LeptonError::from)?;
+    } else {
+        let mut reader = Cursor::new(input_data);
+
+        (lh, block_image) =
+            decode_lepton_file_image(&mut reader, enabled_features).context(here!())?;
+
+        loop {
+            println!("parsed header:");
+            let s = format!("{0:?}", lh.jpeg_header);
+            println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+
+            if !lh
+                .advance_next_header_segment(&enabled_features)
+                .context(here!())?
+            {
+                break;
+            }
+        }
+    }
+
+    let s = format!("{lh:?}");
+    println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
+
+    if all {
+        for i in 0..block_image.len() {
+            println!("Component {0}", i);
+            let image = &block_image[i];
+            for dpos in 0..image.get_block_width() * image.get_original_height() {
+                print!("dpos={0} ", dpos);
+                let block = image.get_block(dpos);
+
+                print!("{0}", block.get_transposed_from_zigzag(0));
+                for i in 1..64 {
+                    print!(",{0}", block.get_transposed_from_zigzag(i));
+                }
+                println!();
+            }
+        }
+    }
+
+    return Ok(());
 }
