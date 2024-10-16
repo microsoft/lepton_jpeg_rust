@@ -32,6 +32,12 @@ fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+enum FileType {
+    Jpeg,
+    Lepton,
+}
+
 // wrap main so that errors get printed nicely without a panic
 // wrap main so that errors get printed nicely without a panic
 fn main_with_result() -> Result<(), anyhow::Error> {
@@ -194,8 +200,18 @@ fn main_with_result() -> Result<(), anyhow::Error> {
         r
     }
 
-    let is_jpeg = input_data[0] == 0xff && input_data[1] == 0xd8;
-    let is_lepton = input_data[0] == 0xcf && input_data[1] == 0x84;
+    // see what file type we have
+    let file_type = if input_data[0] == 0xff && input_data[1] == 0xd8 {
+        FileType::Jpeg
+    } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
+        FileType::Lepton
+    } else {
+        return Err(LeptonError::new(
+            ExitCode::BadLeptonFile,
+            "ERROR input file is not a valid JPEG or Lepton file",
+        )
+        .into());
+    };
 
     loop {
         let thread_cpu = CpuTimeMeasure::new();
@@ -209,75 +225,27 @@ fn main_with_result() -> Result<(), anyhow::Error> {
             input_data[r] ^= 1 << bitnumber;
         }
 
-        if is_jpeg {
-            // the source is a JPEG file, so run the encoder and verify the results
+        // do the encoding/decoding, if we got an error and were corrupting the file, then restore the
+        // original data and continue so we can try corrupting the file in different ways
+        // per iteration
+        match do_work(file_type, verify, &input_data, &enabled_features) {
+            Err(e) => {
+                error!("error {0}", e);
 
-            let r = if verify {
-                encode_lepton_verify(&input_data, &enabled_features)
-            } else {
-                let mut reader = Cursor::new(&input_data);
-                output_data = Vec::with_capacity(input_data.len());
-                let mut writer = Cursor::new(&mut output_data);
-                match encode_lepton(&mut reader, &mut writer, &enabled_features) {
-                    Ok(m) => Ok((output_data, m)),
-                    Err(e) => Err(e),
-                }
-            };
-
-            match r {
-                Err(e) => {
-                    error!("error {0}", e);
-
-                    // if we corrupted the image, then restore and continue running
-                    if corrupt {
-                        input_data = original_data.clone();
-                        output_data = Vec::new();
-                        metrics = Metrics::default();
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-
-                Ok((data, m)) => {
-                    output_data = data;
-                    metrics = m;
-
-                    info!(
-                        "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
-                        input_data.len(),
-                        output_data.len(),
-                        ((input_data.len() as f64) / (output_data.len() as f64) - 1.0) * 100.0
-                    );
+                // if we corrupted the image, then restore and continue running
+                if corrupt {
+                    input_data = original_data.clone();
+                    output_data = Vec::new();
+                    metrics = Metrics::default();
+                } else {
+                    return Err(e.into());
                 }
             }
-        } else if is_lepton {
-            // the source is a lepton file, so run the decoder
-            let mut reader = Cursor::new(&input_data);
 
-            output_data = Vec::with_capacity(input_data.len());
-
-            match decode_lepton(&mut reader, &mut output_data, &enabled_features) {
-                Err(e) => {
-                    error!("error {0}", e);
-
-                    // if we corrupted the image, then restore and continue running
-                    if corrupt {
-                        input_data = original_data.clone();
-                        metrics = Metrics::default();
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-                Ok(m) => {
-                    metrics = m;
-                }
+            Ok((data, m)) => {
+                output_data = data;
+                metrics = m;
             }
-        } else {
-            return Err(LeptonError::new(
-                ExitCode::BadLeptonFile,
-                "ERROR input file is not a valid JPEG or Lepton file",
-            )
-            .into());
         }
 
         let localthread = thread_cpu.elapsed();
@@ -319,6 +287,48 @@ fn main_with_result() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+/// does the actual encoding/decoding work
+fn do_work(
+    file_type: FileType,
+    verify: bool,
+    input_data: &Vec<u8>,
+    enabled_features: &EnabledFeatures,
+) -> Result<(Vec<u8>, Metrics), LeptonError> {
+    let metrics;
+    let mut output;
+
+    match file_type {
+        FileType::Jpeg => {
+            if verify {
+                (output, metrics) = encode_lepton_verify(input_data, enabled_features)?;
+            } else {
+                let mut reader = Cursor::new(input_data);
+                output = Vec::with_capacity(input_data.len());
+                let mut writer = Cursor::new(&mut output);
+
+                metrics = encode_lepton(&mut reader, &mut writer, enabled_features)?
+            }
+            let output_len = output.len();
+
+            info!(
+                "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
+                output_len,
+                output.len(),
+                ((input_data.len() as f64) / (output_len as f64) - 1.0) * 100.0
+            );
+        }
+        FileType::Lepton => {
+            let mut reader = Cursor::new(&input_data);
+
+            output = Vec::with_capacity(input_data.len());
+
+            metrics = decode_lepton(&mut reader, &mut output, &enabled_features)?;
+        }
+    }
+
+    Ok((output, metrics))
 }
 
 /// internal debug utility used to figure out where in the output the JPG diverged if there was a coding error writing out the JPG

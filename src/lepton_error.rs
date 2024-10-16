@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::fmt::Display;
+use std::{fmt::Display, io::ErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
@@ -13,7 +13,7 @@ use std::fmt::Display;
 pub enum ExitCode {
     //AssertionFailure = 1,
     //CodingError = 2,
-    //ShortRead = 3,
+    ShortRead = 3,
     Unsupported4Colors = 4,
     CoefficientOutOfRange = 6,
     StreamInconsistent = 7,
@@ -111,7 +111,7 @@ impl From<anyhow::Error> for LeptonError {
                 }
                 Err(e) => {
                     return LeptonError {
-                        exit_code: ExitCode::OsError,
+                        exit_code: get_io_error_exit_code(&e),
                         message: format!("{} {}", e, original_string),
                     };
                 }
@@ -127,6 +127,14 @@ impl From<anyhow::Error> for LeptonError {
     }
 }
 
+fn get_io_error_exit_code(e: &std::io::Error) -> ExitCode {
+    if e.kind() == ErrorKind::UnexpectedEof {
+        ExitCode::ShortRead
+    } else {
+        ExitCode::OsError
+    }
+}
+
 /// translates std::io::Error into LeptonError
 impl From<std::io::Error> for LeptonError {
     #[track_caller]
@@ -138,7 +146,7 @@ impl From<std::io::Error> for LeptonError {
             Err(e) => {
                 let caller = std::panic::Location::caller();
                 return LeptonError {
-                    exit_code: ExitCode::OsError,
+                    exit_code: get_io_error_exit_code(&e),
                     message: format!("error {} at {}", e.to_string(), caller.to_string()),
                 };
             }
