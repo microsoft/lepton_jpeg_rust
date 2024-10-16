@@ -39,7 +39,6 @@ enum FileType {
 }
 
 // wrap main so that errors get printed nicely without a panic
-// wrap main so that errors get printed nicely without a panic
 fn main_with_result() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
 
@@ -310,13 +309,12 @@ fn do_work(
 
                 metrics = encode_lepton(&mut reader, &mut writer, enabled_features)?
             }
-            let output_len = output.len();
 
             info!(
-                "compressed input {0}, output {1} bytes (ratio = {2:.1}%)",
-                output_len,
+                "compressed input {0}, output {1} bytes (compression = {2:.1}%)",
+                input_data.len(),
                 output.len(),
-                ((input_data.len() as f64) / (output_len as f64) - 1.0) * 100.0
+                ((input_data.len() as f64) / (output.len() as f64) - 1.0) * 100.0
             );
         }
         FileType::Lepton => {
