@@ -8,7 +8,7 @@ use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
-
+#[non_exhaustive]
 /// Well-defined errors for bad things that are expected to happen as part of compression/decompression
 pub enum ExitCode {
     //AssertionFailure = 1,
