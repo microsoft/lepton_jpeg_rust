@@ -65,6 +65,52 @@ impl<R: Read> VPXBoolReader<R> {
         self.model_statistics.drain()
     }
 
+    #[inline(always)]
+    pub fn get_bit(&mut self,
+                   branch: &mut Branch,
+                   tmp_value: &mut u32,
+                   tmp_range: &mut u32,
+                   tmp_count: &mut i32) -> Result<bool> {
+        if *tmp_count < 0 {
+            Self::vpx_reader_fill(tmp_value, tmp_count, &mut self.upstream_reader)?;
+        }
+
+        let probability = branch.get_probability() as u32;
+
+        let split = ((((*tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
+            & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
+            + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE);
+
+        // So optimizer understands that 0 should never happen and uses a cold jump
+        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
+        // This is better since the branch prediction figures quickly this never happens and can run
+        // the code sequentially.
+        #[cfg(all(
+            not(target_feature = "lzcnt"),
+            any(target_arch = "x86", target_arch = "x86_64")
+        ))]
+        assert!(*tmp_range - split > 0);
+
+        let bit = *tmp_value >= split;
+
+        branch.record_and_update_bit(bit);
+
+        if bit {
+            *tmp_range -= split;
+            *tmp_value -= split;
+        } else {
+            *tmp_range = split;
+        }
+
+        let shift = (*tmp_range).leading_zeros() as i32;
+
+        *tmp_value <<= shift;
+        *tmp_range <<= shift;
+        *tmp_count -= shift;
+
+        Ok(bit)
+    }
+
     #[inline(never)]
     pub fn get_grid<const A: usize>(
         &mut self,
@@ -74,16 +120,24 @@ impl<R: Read> VPXBoolReader<R> {
         // check if A is a power of 2
         assert!((A & (A - 1)) == 0);
 
+        let mut tmp_value = self.value;
+        let mut tmp_range = self.range;
+        let mut tmp_count = self.count;
+
         let mut decoded_so_far = 1;
 
         for _index in 0..A.ilog2() {
-            let cur_bit = self.get(&mut branches[decoded_so_far], cmp)? as usize;
+            let cur_bit = self.get_bit(&mut branches[decoded_so_far], &mut tmp_value, &mut tmp_range, &mut tmp_count)? as usize;
             decoded_so_far <<= 1;
             decoded_so_far |= cur_bit;
         }
 
         // remove set leading bit
         let value = decoded_so_far ^ A;
+
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
 
         Ok(value)
     }
@@ -94,16 +148,24 @@ impl<R: Read> VPXBoolReader<R> {
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<usize> {
+        let mut tmp_value = self.value;
+        let mut tmp_range = self.range;
+        let mut tmp_count = self.count;
+
         let mut value = 0;
 
         while value != A {
-            let cur_bit = self.get(&mut branches[value], cmp)?;
+            let cur_bit = self.get_bit(&mut branches[value], &mut tmp_value, &mut tmp_range, &mut tmp_count)?;
             if !cur_bit {
                 break;
             }
 
             value += 1;
         }
+
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
 
         return Ok(value);
     }
@@ -117,10 +179,18 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> Result<usize> {
         assert!(n <= branches.len());
 
+        let mut tmp_value = self.value;
+        let mut tmp_range = self.range;
+        let mut tmp_count = self.count;
+
         let mut coef = 0;
         for i in (0..n).rev() {
-            coef |= (self.get(&mut branches[i], cmp)? as usize) << i;
+            coef |= (self.get_bit(&mut branches[i], &mut tmp_value, &mut tmp_range, &mut tmp_count)? as usize) << i;
         }
+
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
 
         return Ok(coef);
     }
