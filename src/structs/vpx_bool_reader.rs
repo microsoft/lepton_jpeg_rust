@@ -66,10 +66,12 @@ impl<R: Read> VPXBoolReader<R> {
     }
 
     #[inline(always)]
-    pub fn get_bit(branch: &mut Branch,
-                tmp_value: &mut u64,
-                tmp_range: &mut u64,
-                tmp_count: &mut i32) -> bool {
+    pub fn get_bit(
+        branch: &mut Branch,
+        tmp_value: &mut u64,
+        tmp_range: &mut u64,
+        tmp_count: &mut i32,
+    ) -> bool {
         let probability = branch.get_probability() as u64;
 
         let split = ((((*tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
@@ -103,6 +105,30 @@ impl<R: Read> VPXBoolReader<R> {
         *tmp_range <<= shift;
         *tmp_count -= shift;
 
+        #[cfg(feature = "compression_stats")]
+        {
+            self.model_statistics
+                .record_compression_stats(_cmp, 1, i64::from(shift));
+        }
+
+        #[cfg(feature = "detailed_tracing")]
+        {
+            self.hash.hash(branch.get_u64());
+            self.hash.hash(tmp_value);
+            self.hash.hash(tmp_count);
+            self.hash.hash(tmp_range);
+
+            //if hash == 0x88f9c945
+            {
+                let hash = self.hash.get();
+
+                print!("({0}:{1:x})", bit as u8, hash);
+                if hash % 8 == 0 {
+                    println!();
+                }
+            }
+        }
+
         bit
     }
 
@@ -128,7 +154,12 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get_bit(&mut branches[decoded_so_far], &mut tmp_value, &mut tmp_range, &mut tmp_count) as usize;
+            let cur_bit = Self::get_bit(
+                &mut branches[decoded_so_far],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+            ) as usize;
             decoded_so_far <<= 1;
             decoded_so_far |= cur_bit;
         }
@@ -160,7 +191,12 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get_bit(&mut branches[value], &mut tmp_value, &mut tmp_range, &mut tmp_count);
+            let cur_bit = Self::get_bit(
+                &mut branches[value],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+            );
             if !cur_bit {
                 break;
             }
@@ -195,7 +231,13 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            coef |= (Self::get_bit(&mut branches[i], &mut tmp_value, &mut tmp_range, &mut tmp_count) as usize) << i;
+            coef |= (Self::get_bit(
+                &mut branches[i],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+            ) as usize)
+                << i;
         }
 
         self.value = tmp_value;
@@ -236,62 +278,11 @@ impl<R: Read> VPXBoolReader<R> {
             Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
         }
 
-        let probability = branch.get_probability() as u64;
+        let bit = Self::get_bit(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count);
 
-        let split = ((((tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
-            & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
-            + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE);
-
-        // So optimizer understands that 0 should never happen and uses a cold jump
-        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-        // This is better since the branch prediction figures quickly this never happens and can run
-        // the code sequentially.
-        #[cfg(all(
-            not(target_feature = "lzcnt"),
-            any(target_arch = "x86", target_arch = "x86_64")
-        ))]
-        assert!(tmp_range - split > 0);
-
-        let bit = tmp_value >= split;
-
-        branch.record_and_update_bit(bit);
-
-        if bit {
-            tmp_range -= split;
-            tmp_value -= split;
-        } else {
-            tmp_range = split;
-        }
-
-        let shift = tmp_range.leading_zeros() as i32;
-
-        self.value = tmp_value << shift;
-        self.range = tmp_range << shift;
-        self.count = tmp_count - shift;
-
-        #[cfg(feature = "compression_stats")]
-        {
-            self.model_statistics
-                .record_compression_stats(_cmp, 1, i64::from(shift));
-        }
-
-        #[cfg(feature = "detailed_tracing")]
-        {
-            self.hash.hash(branch.get_u64());
-            self.hash.hash(self.value);
-            self.hash.hash(self.count);
-            self.hash.hash(self.range);
-
-            //if hash == 0x88f9c945
-            {
-                let hash = self.hash.get();
-
-                print!("({0}:{1:x})", bit as u8, hash);
-                if hash % 8 == 0 {
-                    println!();
-                }
-            }
-        }
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
 
         return Ok(bit);
     }
