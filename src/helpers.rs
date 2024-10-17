@@ -43,16 +43,18 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
     return true;
 }
 
+/// converts JPEG signed value into a signed integer
+/// JPEG encodes the sign
 #[inline(always)]
-pub  fn devli(s: u8, value: u32) -> i32 {
+pub fn devli(literal_bits: u8, value: u32) -> i32 {
+    if literal_bits == 0 {
+        return 0;
+    }
 
-    let mask1 = 1 << (s as u32);
-    let mask = mask1 - 1;
+    let mask = 1 << literal_bits;
 
-    if s == 0 {
-        value as i32
-    } else if value <= (mask >> 1)  {
-        value.wrapping_sub(mask) as i32
+    if (value & (mask >> 1)) == 0 {
+        (value as i32) - (mask as i32) + 1
     } else {
         value as i32
     }
