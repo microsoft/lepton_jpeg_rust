@@ -44,15 +44,17 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
 }
 
 #[inline(always)]
-pub fn devli(s: u8, value: u16) -> i16 {
-    let mask = (1 << (s as u16)) - 1;
+pub  fn devli(s: u8, value: u32) -> i32 {
+
+    let mask1 = 1 << (s as u32);
+    let mask = mask1 - 1;
 
     if s == 0 {
-        value as i16
-    } else if value < (mask >> 1) + 1 {
-        (value + !mask + 1) as i16
+        value as i32
+    } else if value <= (mask >> 1)  {
+        value.wrapping_sub(mask) as i32
     } else {
-        value as i16
+        value as i32
     }
 }
 
@@ -61,7 +63,7 @@ fn devli_test() {
     for s in 0u8..15 {
         for value in 0..(1 << s) {
             assert_eq!(
-                devli(s, value),
+                devli(s, value) as i16,
                 if s == 0 {
                     value as i16
                 } else if value < (1 << (s as u16 - 1)) {

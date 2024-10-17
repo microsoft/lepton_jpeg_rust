@@ -211,7 +211,7 @@ fn roundtrip_randombits() {
     for _ in 0..ITERATIONS {
         let bits = rng.gen_range(0..=16);
         let v = rng.gen_range(0..=65535) & ((1 << bits) - 1);
-        test_data.push((v as u16, bits as u8));
+        test_data.push((v as u32, bits as u8));
     }
 
     {

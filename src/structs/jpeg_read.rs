@@ -513,7 +513,7 @@ fn next_huff_code<R: Read>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> R
     let mut node: u16 = 0;
 
     while node < 256 {
-        node = ctree.node[usize::from(node)][usize::from(bit_reader.read(1)?)];
+        node = ctree.node[usize::from(node)][bit_reader.read(1)? as usize];
     }
 
     if node == 0xffff {
@@ -576,7 +576,7 @@ fn read_coef<R: Read>(
             Ok(Some((z, 0)))
         } else {
             let value = bit_reader.read(literal_bits)?;
-            Ok(Some((z, devli(literal_bits, value))))
+            Ok(Some((z, devli(literal_bits, value) as i16)))
         }
     } else {
         Ok(None)
@@ -619,7 +619,7 @@ fn decode_ac_prg_fs<R: Read>(
                 z -= 1;
                 bpos += 1;
             }
-            block[usize::from(bpos)] = devli(s, n); // decode cvli
+            block[usize::from(bpos)] = devli(s, n) as i16; // decode cvli
             bpos += 1;
         } else {
             // decode eobrun
