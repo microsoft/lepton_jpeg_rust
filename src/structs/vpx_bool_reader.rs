@@ -70,11 +70,7 @@ impl<R: Read> VPXBoolReader<R> {
                    branch: &mut Branch,
                    tmp_value: &mut u32,
                    tmp_range: &mut u32,
-                   tmp_count: &mut i32) -> Result<bool> {
-        if *tmp_count < 0 {
-            Self::vpx_reader_fill(tmp_value, tmp_count, &mut self.upstream_reader)?;
-        }
-
+                   tmp_count: &mut i32) -> bool {
         let probability = branch.get_probability() as u32;
 
         let split = ((((*tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
@@ -108,14 +104,14 @@ impl<R: Read> VPXBoolReader<R> {
         *tmp_range <<= shift;
         *tmp_count -= shift;
 
-        Ok(bit)
+        bit
     }
 
     #[inline(never)]
     pub fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
-        cmp: ModelComponent,
+        _cmp: ModelComponent,
     ) -> Result<usize> {
         // check if A is a power of 2
         assert!((A & (A - 1)) == 0);
@@ -123,11 +119,18 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
+        // if tmp_count < 0 {
+        //     Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+        // }
 
         let mut decoded_so_far = 1;
 
-        for _index in 0..A.ilog2() {
-            let cur_bit = self.get_bit(&mut branches[decoded_so_far], &mut tmp_value, &mut tmp_range, &mut tmp_count)? as usize;
+        for index in 0..A.ilog2() {
+            if index & 1 == 0 /*&& (tmp_count < 0)*/ {
+                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            }
+
+            let cur_bit = self.get_bit(&mut branches[decoded_so_far], &mut tmp_value, &mut tmp_range, &mut tmp_count) as usize;
             decoded_so_far <<= 1;
             decoded_so_far |= cur_bit;
         }
@@ -146,7 +149,7 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
-        cmp: ModelComponent,
+        _cmp: ModelComponent,
     ) -> Result<usize> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
@@ -155,7 +158,11 @@ impl<R: Read> VPXBoolReader<R> {
         let mut value = 0;
 
         while value != A {
-            let cur_bit = self.get_bit(&mut branches[value], &mut tmp_value, &mut tmp_range, &mut tmp_count)?;
+            if value & 1 == 0/*tmp_count < 0*/ {
+                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            }
+
+            let cur_bit = self.get_bit(&mut branches[value], &mut tmp_value, &mut tmp_range, &mut tmp_count);
             if !cur_bit {
                 break;
             }
@@ -175,17 +182,26 @@ impl<R: Read> VPXBoolReader<R> {
         &mut self,
         n: usize,
         branches: &mut [Branch; A],
-        cmp: ModelComponent,
+        _cmp: ModelComponent,
     ) -> Result<usize> {
         assert!(n <= branches.len());
 
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
+        // if tmp_count < 0 {
+        //     Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+        // }
 
         let mut coef = 0;
         for i in (0..n).rev() {
-            coef |= (self.get_bit(&mut branches[i], &mut tmp_value, &mut tmp_range, &mut tmp_count)? as usize) << i;
+            if /*(i ^ n) & 1 == 0*/ tmp_count < 0 {
+                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            }
+
+            coef |= (self.get_bit(&mut branches[i], &mut tmp_value, &mut tmp_range, &mut tmp_count) as usize) << i;
+            //coef <<= 1;
+            //coef |= self.get_bit(&mut branches[n - 1 - i], &mut tmp_value, &mut tmp_range, &mut tmp_count) as usize;
         }
 
         self.value = tmp_value;
