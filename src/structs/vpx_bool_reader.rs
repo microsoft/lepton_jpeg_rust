@@ -56,7 +56,7 @@ impl<R: Read> VPXBoolReader<R> {
         Self::vpx_reader_fill(&mut r.value, &mut r.count, &mut r.upstream_reader)?;
 
         let mut dummy_branch = Branch::new();
-        r.get(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
+        r.get_bit(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
 
         return Ok(r);
     }
@@ -65,12 +65,36 @@ impl<R: Read> VPXBoolReader<R> {
         self.model_statistics.drain()
     }
 
+    // Lepton uses VP8 adaptive arithmetic coding scheme, where bits are extracted from file stream
+    // by "division" of current 8-bit stream `value` by adaptive 8-bit `split`. Adaptation is achieved by
+    // combination of predicted probability to get false bit (`1 <= probability <= 255`, in 1/256 units),
+    // and `range` that represents maximum possible value of yet-not-decoded stream part (so that
+    // `range > value`, `128 <= range <= 256` in units of $2^{-n-8}$ for the `n` bits already consumed)
+    // by forming predictor `split = 1 + (((range - 1) * probability) >> BITS_IN_BYTE)`,
+    // `1 <= split <= range - 1`. Comparison of predictor with stream gives the next decoded bit:
+    // true for `value >= split` and false otherwise - this is effectively division step.
+    // After this we shrink `value` and `range` by `split` for true or shrink `range` to `split`
+    // for false and update `probability`. Now `range` can get out of allowable range and we restore it
+    // by shifting left both `range` and `value` with corresponding filling of `value` by further
+    // stream bits (it corresponds to bring down new digit in division, and since `range > value` is invariant
+    // of the operations, shifted out `value` bits are guaranteed to be 0). Repeat until stream ends.
+    //
+    // Reference: https://datatracker.ietf.org/doc/html/rfc6386#section-7.
+    //
+    // Here some improvements to the basic scheme are implemented. First, we store more stream bits
+    // in `value` to reduce refill rate, so that 8 MSBs of `value` represent `value` of the scheme
+    // (it was already implemented in DropBox version, however, with shorter 16-bit `value`).
+    // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
+    // and it allows to reduce number of operations to compute `split` - previously `big_split` -
+    // and to update `range` and `shift`). Third, we use local values for all stream state variables
+    // to reduce number of memory load/store operations in decoding of many-bit values.
     #[inline(always)]
-    pub fn get_bit(
+    pub fn get(
         branch: &mut Branch,
         tmp_value: &mut u64,
         tmp_range: &mut u64,
         tmp_count: &mut i32,
+        _cmp: ModelComponent,
     ) -> bool {
         let probability = branch.get_probability() as u64;
 
@@ -132,7 +156,7 @@ impl<R: Read> VPXBoolReader<R> {
         bit
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn get_grid<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -148,17 +172,18 @@ impl<R: Read> VPXBoolReader<R> {
         let mut decoded_so_far = 1;
 
         for index in 0..A.ilog2() {
-            // we can read only each 8-th iteration: minimum 56 bits are in value after vpx_reader_fill,
-            // and one get_bit consumes at most 7 bits (with range coming from >127 to 1)
+            // we can read only each 8-th iteration: minimum 57 bits are in `value` after `vpx_reader_fill`,
+            // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1)
             if index & 7 == 0 {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get_bit(
+            let cur_bit = Self::get(
                 &mut branches[decoded_so_far],
                 &mut tmp_value,
                 &mut tmp_range,
                 &mut tmp_count,
+                _cmp,
             ) as usize;
             decoded_so_far <<= 1;
             decoded_so_far |= cur_bit;
@@ -174,7 +199,7 @@ impl<R: Read> VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -191,11 +216,12 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get_bit(
+            let cur_bit = Self::get(
                 &mut branches[value],
                 &mut tmp_value,
                 &mut tmp_range,
                 &mut tmp_count,
+                _cmp,
             );
             if !cur_bit {
                 break;
@@ -211,7 +237,7 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(value);
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn get_n_bits<const A: usize>(
         &mut self,
         n: usize,
@@ -231,11 +257,12 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            coef |= (Self::get_bit(
+            coef |= (Self::get(
                 &mut branches[i],
                 &mut tmp_value,
                 &mut tmp_range,
                 &mut tmp_count,
+                _cmp,
             ) as usize)
                 << i;
         }
@@ -247,29 +274,8 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(coef);
     }
 
-    // Lepton uses VP8 adaptive arithmetic coding scheme, where bits are extracted from file stream
-    // by division of current 8-bit stream `value` by adaptive 8-bit `split`. Adaptation is achieved by
-    // combination of predicted probability to get false bit (`1 <= probability <= 255`, in 1/256 units),
-    // and `range` that represents maximum possible value of yet-not-decoded stream part (so that
-    // `range > value`, `128 <= range <= 256` in units of $2^{-n-8}$ for the `n` bits already decoded)
-    // by forming predictor `split = 1 + (((range - 1) * probability) >> BITS_IN_BYTE)`,
-    // `1 <= split <= range - 1`. Comparison of predictor with stream gives the next decoded bit:
-    // true for `value >= split` and false otherwise - this is effectively division step.
-    // After this we shrink `value` and `range` by `split` for true or shrink `range` to `split`
-    // for false and update `probability`. Now `range` can get out of allowable range and we restore it
-    // by shifting left both `range` and `value` with corresponding filling of `value` by further
-    // stream bits (it corresponds to bring down new digit in division). Repeat until stream ends.
-    //
-    // Reference: https://datatracker.ietf.org/doc/html/rfc6386#section-7.
-    //
-    // Here some imrovements to the basic scheme are implemented. First, we store more stream bits
-    // in `value` to reduce refill rate, so that 8 MSBs of `value` represent `value` of the scheme
-    // (it was already implemented in DropBox version, however, with shorter 16-bit `value`).
-    // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
-    // and it allows to reduce number of operations to compute `split` - previously `big_split` -
-    // and to update `range` and `shift`).
     #[inline(always)]
-    pub fn get(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
+    pub fn get_bit(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
@@ -278,7 +284,7 @@ impl<R: Read> VPXBoolReader<R> {
             Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
         }
 
-        let bit = Self::get_bit(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count);
+        let bit = Self::get(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count, _cmp);
 
         self.value = tmp_value;
         self.range = tmp_range;

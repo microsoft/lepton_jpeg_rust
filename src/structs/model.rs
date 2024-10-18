@@ -370,7 +370,7 @@ impl ModelPerColor {
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
             let neg = !bool_reader
-                .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
+                .get_bit(sign, ModelComponent::Edge(ModelSubComponent::Sign))
                 .context(here!())?;
 
             coef = 1;
@@ -388,7 +388,7 @@ impl ModelPerColor {
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
-                        let cur_bit = bool_reader.get(
+                        let cur_bit = bool_reader.get_bit(
                             &mut thresh_prob[decoded_so_far],
                             ModelComponent::Edge(ModelSubComponent::Residual),
                         )? as i16;
@@ -472,7 +472,7 @@ impl ModelPerColor {
             let sign =
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
-            bool_writer.put(
+            bool_writer.put_bit(
                 coef >= 0,
                 sign,
                 ModelComponent::Edge(ModelSubComponent::Sign),
@@ -492,7 +492,7 @@ impl ModelPerColor {
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
                         let cur_bit = (abs_coef & (1 << i)) != 0;
-                        bool_writer.put(
+                        bool_writer.put_bit(
                             cur_bit,
                             &mut thresh_prob[encoded_so_far],
                             ModelComponent::Edge(ModelSubComponent::Residual),
@@ -659,7 +659,7 @@ impl Model {
 
         let mut coef: i16 = 0;
         if length != 0 {
-            let neg = !bool_reader.get(sign_branch, sign_cmp)?;
+            let neg = !bool_reader.get_bit(sign_branch, sign_cmp)?;
             if length > 1 {
                 coef = bool_reader.get_n_bits(length - 1, bits_branch, bits_cmp)? as i16;
             }
@@ -704,7 +704,7 @@ impl Model {
 
         bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
         if coef != 0 {
-            bool_writer.put(coef > 0, sign_branch, sign_cmp)?;
+            bool_writer.put_bit(coef > 0, sign_branch, sign_cmp)?;
         }
 
         if coef_bit_len > 1 {
