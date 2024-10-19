@@ -90,6 +90,7 @@ impl<R: Read> VPXBoolReader<R> {
     // to reduce number of memory load/store operations in decoding of many-bit values.
     #[inline(always)]
     pub fn get(
+        &mut self,
         branch: &mut Branch,
         tmp_value: &mut u64,
         tmp_range: &mut u64,
@@ -138,14 +139,13 @@ impl<R: Read> VPXBoolReader<R> {
         #[cfg(feature = "detailed_tracing")]
         {
             self.hash.hash(branch.get_u64());
-            self.hash.hash(tmp_value);
-            self.hash.hash(tmp_count);
-            self.hash.hash(tmp_range);
+            self.hash.hash(*tmp_value);
+            self.hash.hash(*tmp_count);
+            self.hash.hash(*tmp_range);
 
+            let hash = self.hash.get();
             //if hash == 0x88f9c945
             {
-                let hash = self.hash.get();
-
                 print!("({0}:{1:x})", bit as u8, hash);
                 if hash % 8 == 0 {
                     println!();
@@ -180,7 +180,7 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get(
+            let cur_bit = self.get(
                 &mut branches[decoded_so_far],
                 &mut tmp_value,
                 &mut tmp_range,
@@ -220,7 +220,7 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = Self::get(
+            let cur_bit = self.get(
                 &mut branches[value],
                 &mut tmp_value,
                 &mut tmp_range,
@@ -264,7 +264,7 @@ impl<R: Read> VPXBoolReader<R> {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            coef |= (Self::get(
+            coef |= (self.get(
                 &mut branches[i],
                 &mut tmp_value,
                 &mut tmp_range,
@@ -291,7 +291,7 @@ impl<R: Read> VPXBoolReader<R> {
             Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
         }
 
-        let bit = Self::get(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count, _cmp);
+        let bit = self.get(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count, _cmp);
 
         self.value = tmp_value;
         self.range = tmp_range;
