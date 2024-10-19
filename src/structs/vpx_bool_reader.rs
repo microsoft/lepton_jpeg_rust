@@ -172,8 +172,10 @@ impl<R: Read> VPXBoolReader<R> {
         let mut decoded_so_far = 1;
 
         for index in 0..A.ilog2() {
-            // we can read only each 8-th iteration: minimum 57 bits are in `value` after `vpx_reader_fill`,
-            // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1)
+            // We can read only each 8-th iteration: minimum 57 bits are in `value` after `vpx_reader_fill`,
+            // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1).
+            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
+            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
             if index & 7 == 0 {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
@@ -212,6 +214,8 @@ impl<R: Read> VPXBoolReader<R> {
         let mut value = 0;
 
         while value != A {
+            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
+            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
             if value & 7 == 0 {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
@@ -252,7 +256,10 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut coef = 0;
         for i in (0..n).rev() {
-            // here the fastest way is to use this condition
+            // Here the fastest way is to use this old condition, presumably as
+            // this loop cannot be unrolled due to vaiable iterations number.
+            // Moreover, this condition holds very rarely as `value` is usually already filled
+            // by previous `get_bit` sign reading.
             if tmp_count < 0 {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
