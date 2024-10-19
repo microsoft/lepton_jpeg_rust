@@ -10,13 +10,15 @@ use std::{io::Cursor, path::Path};
 use std::fs::File;
 use std::io::Read;
 
-use lepton_jpeg::metrics::Metrics;
+use lepton_jpeg::{
+    create_decompression_context, decompress_image, free_decompression_context,
+    WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx,
+};
 use lepton_jpeg::{
     decode_lepton, encode_lepton, encode_lepton_verify,
     lepton_error::{ExitCode, LeptonError},
     EnabledFeatures,
 };
-use lepton_jpeg::{WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx};
 
 use rstest::rstest;
 
@@ -82,11 +84,17 @@ fn verify_decode(
     decode_lepton(
         &mut Cursor::new(input),
         &mut output,
-        8,
         &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
 
+    assert_eq!(
+        output.len(),
+        expected.len(),
+        "length mismatch {} {}",
+        output.len(),
+        expected.len()
+    );
     assert!(output[..] == expected[..]);
 }
 
@@ -105,7 +113,7 @@ fn verify_decode_scalar_overflow() {
 
     let features = EnabledFeatures::compat_lepton_scalar_read();
 
-    decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+    decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
     assert!(output[..] == expected[..]);
 }
@@ -227,7 +235,6 @@ fn verify_encode(
     encode_lepton(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
-        8,
         &EnabledFeatures::compat_lepton_vector_write(),
     )
     .unwrap();
@@ -235,7 +242,6 @@ fn verify_encode(
     decode_lepton(
         &mut Cursor::new(lepton),
         &mut output,
-        8,
         &EnabledFeatures::compat_lepton_vector_read(),
     )
     .unwrap();
@@ -254,7 +260,7 @@ fn verify_16bitmath() {
 
         let features = EnabledFeatures::compat_lepton_vector_read();
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -269,7 +275,7 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::compat_lepton_vector_read();
         features.use_16bit_dc_estimate = false;
 
-        decode_lepton(&mut Cursor::new(input), &mut output, 8, &features).unwrap();
+        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -309,21 +315,26 @@ fn verify_extern_16bit_math_retry() {
 fn verify_encode_verify(#[values("slrcity")] file: &str) {
     let input = read_file(file, ".jpg");
 
-    encode_lepton_verify(
-        &input[..],
-        8,
-        &EnabledFeatures::compat_lepton_vector_write(),
-    )
-    .unwrap();
+    encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()).unwrap();
 }
 
-fn assert_exception(expected_error: ExitCode, result: Result<Metrics, LeptonError>) {
+fn assert_exception<T>(expected_error: ExitCode, result: Result<T, LeptonError>) {
     match result {
         Ok(_) => panic!("failure was expected"),
         Err(e) => {
-            assert_eq!(expected_error, e.exit_code, "unexpected error {0:?}", e);
+            assert_eq!(expected_error, e.exit_code(), "unexpected error {0:?}", e);
         }
     }
+}
+
+#[rstest]
+fn verify_encode_verify_fail(#[values("mismatch_encode")] file: &str) {
+    let input = read_file(file, ".jpg");
+
+    assert_exception(
+        ExitCode::VerificationContentMismatch,
+        encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()),
+    );
 }
 
 /// ensures we error out if we have the progressive flag disabled
@@ -338,7 +349,6 @@ fn verify_encode_progressive_false(
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures {
                 progressive: false,
                 ..EnabledFeatures::compat_lepton_vector_write()
@@ -358,7 +368,6 @@ fn verify_nonoptimal() {
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
@@ -371,11 +380,10 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
     let mut lepton = Vec::new();
 
     assert_exception(
-        ExitCode::UnsupportedJpeg,
+        ExitCode::UnsupportedJpegWithZeroIdct0,
         encode_lepton(
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
-            8,
             &EnabledFeatures::compat_lepton_vector_write(),
         ),
     );
@@ -424,11 +432,62 @@ fn extern_interface() {
     assert_eq!(input[..], original[..(original_size as usize)]);
 }
 
+/// tests the chunked decompression interface
+#[test]
+fn extern_interface_decompress_chunked() {
+    let input = read_file("slrcity", ".lep");
+
+    let mut output = Vec::new();
+
+    unsafe {
+        let context = create_decompression_context(1);
+
+        let mut file_read = Cursor::new(input);
+        let mut input_buffer = [0u8; 7];
+        let mut output_buffer = [0u8; 13];
+
+        loop {
+            let amount_read = file_read.read(&mut input_buffer).unwrap();
+
+            let mut result_size = 0;
+            let result = decompress_image(
+                context,
+                input_buffer.as_ptr(),
+                amount_read as u64,
+                amount_read == 0,
+                output_buffer.as_mut_ptr(),
+                output_buffer.len() as u64,
+                &mut result_size,
+            );
+
+            output.extend_from_slice(&output_buffer[..result_size as usize]);
+
+            match result {
+                0 => {}
+                1 => {
+                    break;
+                }
+                _ => {
+                    panic!("unexpected error {0}", result);
+                }
+            }
+        }
+        free_decompression_context(context);
+    }
+
+    let test_result = read_file("slrcity", ".jpg");
+    assert_eq!(test_result.len(), output.len());
+    assert!(test_result[..] == output[..]);
+}
+
 #[rstest]
 fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
-    #[values("zeros_in_dqt_tables", "nonoptimalprogressive")] file: &str,
+    #[values(
+        ("zeros_in_dqt_tables", ExitCode::UnsupportedJpegWithZeroIdct0), 
+        ("nonoptimalprogressive", ExitCode::UnsupportedJpeg))]
+    file: (&str, ExitCode),
 ) {
-    let input = read_file(file, ".jpg");
+    let input = read_file(file.0, ".jpg");
 
     let mut compressed = Vec::new();
     compressed.resize(input.len() + 10000, 0);
@@ -444,7 +503,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             (&mut result_size) as *mut u64,
         );
 
-        assert_eq!(retval, ExitCode::UnsupportedJpeg as i32);
+        assert_eq!(retval, file.1 as i32);
     }
 }
 

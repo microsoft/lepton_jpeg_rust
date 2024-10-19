@@ -31,7 +31,8 @@ pub struct PredictDCResult {
     pub predicted_dc: i32,
     pub uncertainty: i16,
     pub uncertainty2: i16,
-    pub advanced_predict_dc_pixels_sans_dc: AlignedBlock,
+    pub next_edge_pixels_h: i16x8,
+    pub next_edge_pixels_v: i16x8,
 }
 
 impl ProbabilityTables {
@@ -240,40 +241,41 @@ impl ProbabilityTables {
         // here DC in raster_cols should be 0
         let pixels_sans_dc = run_idct(raster_cols);
 
-        // helper functions to avoid code duplication that calculate the left and above prediction values
-
-        let calc_pred = |init_pred: i16x8, a1: i16x8, a2: i16x8| {
-            if enabled_features.use_16bit_adv_predict {
+        // helper functions to avoid code duplication that calculate prediction values
+        #[inline]
+        fn calc_pred(a1: i16x8, a2: i16x8, is_16_bit: bool) -> i16x8 {
+            if is_16_bit {
                 let pixel_delta = a1 - a2;
                 let half_delta = (pixel_delta - (pixel_delta >> 15)) >> 1; /* divide pixel_delta by 2 rounding towards 0 */
 
-                init_pred - a1 - 128 * X_IDCT_SCALE as i16 - half_delta
+                a1 + half_delta
             } else {
                 let a1 = i32x8::from_i16x8(a1);
                 let a2 = i32x8::from_i16x8(a2);
                 let pixel_delta = a1 - a2;
                 let half_delta = (pixel_delta - (pixel_delta >> 31)) >> 1; /* divide pixel_delta by 2 rounding towards 0 */
-                let result = i32x8::from_i16x8(init_pred) - a1 - 128 * X_IDCT_SCALE - half_delta;
+                let result = a1 + half_delta;
 
                 i16x8::from_i32x8_truncate(result)
             }
-        };
+        }
 
-        let calc_left = || {
-            let left_pred = neighbor_data.neighbor_context_left.get_vertical_pix();
-            let a1 = pixels_sans_dc.from_stride(0, 8);
-            let a2 = pixels_sans_dc.from_stride(1, 8);
+        let a1 = pixels_sans_dc.as_i16x8(0);
+        let a2 = pixels_sans_dc.as_i16x8(1);
+        let v_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
-            calc_pred(left_pred, a1, a2)
-        };
+        let a1 = pixels_sans_dc.from_stride(0, 8);
+        let a2 = pixels_sans_dc.from_stride(1, 8);
+        let h_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
-        let calc_above = || {
-            let above_pred = neighbor_data.neighbor_context_above.get_horizontal_pix();
-            let a1 = pixels_sans_dc.from_stride(0, 1);
-            let a2 = pixels_sans_dc.from_stride(8, 1);
+        let a1 = pixels_sans_dc.as_i16x8(7);
+        let a2 = pixels_sans_dc.as_i16x8(6);
+        let next_edge_pixels_v = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
-            calc_pred(above_pred, a1, a2)
-        };
+        let a1 = pixels_sans_dc.from_stride(7, 8);
+        let a2 = pixels_sans_dc.from_stride(6, 8);
+
+        let next_edge_pixels_h = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
         let min_dc;
         let max_dc;
@@ -282,8 +284,8 @@ impl ProbabilityTables {
 
         if ALL_PRESENT {
             // most common case where we have both left and above
-            let horiz = calc_left();
-            let vert = calc_above();
+            let horiz = neighbor_data.neighbor_context_left.get_horizontal_pix() - h_pred;
+            let vert = neighbor_data.neighbor_context_above.get_vertical_pix() - v_pred;
 
             min_dc = horiz.min(vert).reduce_min();
             max_dc = horiz.max(vert).reduce_max();
@@ -291,14 +293,14 @@ impl ProbabilityTables {
             avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
             avg_vertical = i32x8::from_i16x8(vert).reduce_add();
         } else if self.left_present {
-            let horiz = calc_left();
+            let horiz = neighbor_data.neighbor_context_left.get_horizontal_pix() - h_pred;
             min_dc = horiz.reduce_min();
             max_dc = horiz.reduce_max();
 
             avg_horizontal = i32x8::from_i16x8(horiz).reduce_add();
             avg_vertical = avg_horizontal;
         } else if self.above_present {
-            let vert = calc_above();
+            let vert = neighbor_data.neighbor_context_above.get_vertical_pix() - v_pred;
             min_dc = vert.reduce_min();
             max_dc = vert.reduce_max();
 
@@ -309,7 +311,8 @@ impl ProbabilityTables {
                 predicted_dc: 0,
                 uncertainty: 0,
                 uncertainty2: 0,
-                advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+                next_edge_pixels_h,
+                next_edge_pixels_v,
             };
         }
 
@@ -329,7 +332,8 @@ impl ProbabilityTables {
             predicted_dc: (avgmed / q0 + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
-            advanced_predict_dc_pixels_sans_dc: pixels_sans_dc,
+            next_edge_pixels_h,
+            next_edge_pixels_v,
         };
     }
 }

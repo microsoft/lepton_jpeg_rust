@@ -6,6 +6,7 @@
 
 use std::io::BufRead;
 
+use crate::LeptonError;
 use crate::{helpers::err_exit_code, jpeg_code};
 
 use crate::lepton_error::ExitCode;
@@ -125,13 +126,15 @@ impl<R: BufRead> BitReader<R> {
                     } else {
                         // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
                         // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
+                        return Err(LeptonError::new(
+                            ExitCode::InvalidResetCode,
                             format!(
                                 "invalid reset {0:x} {1:x} code found in stream at offset {2}",
                                 0xff, buffer[0], self.offset
-                            ),
-                        ));
+                            )
+                            .as_str(),
+                        )
+                        .into());
                     }
                 } else {
                     self.prev_offset = self.offset;
@@ -193,7 +196,7 @@ impl<R: BufRead> BitReader<R> {
                         *pad_bit = Some(0xff);
                     } else {
                         return err_exit_code(
-                            ExitCode::UnsupportedJpeg,
+                            ExitCode::InvalidPadding,
                             format!(
                                 "inconsistent pad bits num_bits={0} pattern={1:b}",
                                 num_bits_to_read, actual
@@ -206,7 +209,7 @@ impl<R: BufRead> BitReader<R> {
                     // if we already saw a padding, then it should match
                     let expected = u16::from(x) & all_one;
                     if actual != expected {
-                        return err_exit_code(ExitCode::UnsupportedJpeg, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
+                        return err_exit_code(ExitCode::InvalidPadding, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
                     }
                 }
             }
@@ -224,7 +227,7 @@ impl<R: BufRead> BitReader<R> {
         self.inner.read_exact(&mut h)?;
         if h[0] != 0xff || h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
             return err_exit_code(
-                ExitCode::UnsupportedJpeg,
+                ExitCode::InvalidResetCode,
                 format!(
                     "invalid reset code {0:x} {1:x} found in stream at offset {2}",
                     h[0], h[1], self.offset

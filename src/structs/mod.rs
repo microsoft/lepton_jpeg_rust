@@ -10,7 +10,7 @@
 
 mod bit_reader;
 mod bit_writer;
-mod block_based_image;
+pub mod block_based_image;
 mod block_context;
 mod branch;
 mod component_info;
@@ -21,11 +21,13 @@ mod jpeg_read;
 mod jpeg_write;
 mod lepton_decoder;
 mod lepton_encoder;
-pub mod lepton_format;
+pub mod lepton_file_reader;
+pub mod lepton_file_writer;
 pub mod lepton_header;
 mod model;
 mod multiplexer;
 mod neighbor_summary;
+mod partial_buffer;
 mod probability_tables;
 mod quantization_tables;
 mod row_spec;

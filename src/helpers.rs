@@ -25,11 +25,8 @@ pub const fn u32_bit_length(v: u32) -> u8 {
 }
 
 #[cold]
-pub fn err_exit_code<T>(_error_code: ExitCode, message: &str) -> anyhow::Result<T> {
-    return Err(anyhow::Error::new(LeptonError {
-        exit_code: _error_code,
-        message: message.to_string(),
-    }));
+pub fn err_exit_code<T>(error_code: ExitCode, message: &str) -> anyhow::Result<T> {
+    return Err(anyhow::Error::new(LeptonError::new(error_code, message)));
 }
 
 pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(

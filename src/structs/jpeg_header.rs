@@ -44,6 +44,9 @@ use crate::lepton_error::ExitCode;
 use crate::consts::JPegType;
 
 use super::component_info::ComponentInfo;
+use super::lepton_header::LeptonHeader;
+use super::quantization_tables::QuantizationTables;
+use super::truncate_components::TruncateComponents;
 
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
@@ -257,16 +260,16 @@ impl HuffTree {
             if node == 0xffff || node < 256 {
                 // invalid code or code was too long to fit, so just say it requireds 256 bits
                 // so we will take the long path to decode it
-                ht.peek_code[peekbyte as usize] = (0, 0xff);
+                ht.peek_code[peekbyte] = (0, 0xff);
             } else {
-                ht.peek_code[peekbyte as usize] = ((node - 256) as u8, len);
+                ht.peek_code[peekbyte] = ((node - 256) as u8, len);
             }
         }
         Ok(ht)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JPegHeader {
     pub q_tables: [[u16; 64]; 4],     // quantization tables 4 x 64
     h_codes: [[HuffCodes; 4]; 2],     // huffman codes (access via get_huff_xx_codes)
@@ -295,24 +298,54 @@ pub struct JPegHeader {
     pub cs_sal: u8,  // successive approximation bit pos low
 }
 
+pub struct JPegEncodingInfo {
+    pub jpeg_header: JPegHeader,
+    pub truncate_components: TruncateComponents,
+
+    /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
+    /// within the corresponding scan segment.
+    pub rst_cnt: Vec<i32>,
+
+    /// the mask for padding out the bitstream when we get to the end of a reset block
+    pub pad_bit: Option<u8>,
+
+    pub rst_cnt_set: bool,
+
+    /// count of scans encountered so far
+    pub scnc: usize,
+}
+
+impl JPegEncodingInfo {
+    pub fn new(lh: &LeptonHeader) -> Self {
+        JPegEncodingInfo {
+            jpeg_header: lh.jpeg_header.clone(),
+            truncate_components: lh.truncate_components.clone(),
+            rst_cnt: lh.rst_cnt.clone(),
+            pad_bit: lh.pad_bit,
+            rst_cnt_set: lh.rst_cnt_set,
+            scnc: lh.scnc,
+        }
+    }
+}
+
 enum ParseSegmentResult {
     Continue,
     EOI,
     SOS,
 }
 
-impl JPegHeader {
-    pub fn new() -> Self {
+impl Default for JPegHeader {
+    fn default() -> Self {
         return JPegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
             ht_set: [[0; 4]; 2],
             cmp_info: [
-                ComponentInfo::new(),
-                ComponentInfo::new(),
-                ComponentInfo::new(),
-                ComponentInfo::new(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
+                ComponentInfo::default(),
             ],
             cmpc: 0,
             img_width: 0,
@@ -332,7 +365,9 @@ impl JPegHeader {
             cs_cmp: [0; 4],
         };
     }
+}
 
+impl JPegHeader {
     pub fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }
@@ -565,7 +600,7 @@ impl JPegHeader {
                             {
                                 if enabled_features.reject_dqts_with_zeros
                                 {
-                                    return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
+                                    return err_exit_code(ExitCode::UnsupportedJpegWithZeroIdct0,"DQT has zero value");
                                 }
                                 else {
                                     break;
@@ -587,7 +622,7 @@ impl JPegHeader {
                             {
                                 if enabled_features.reject_dqts_with_zeros
                                 {
-                                    return err_exit_code(ExitCode::UnsupportedJpeg,"DQT has zero value");
+                                    return err_exit_code(ExitCode::UnsupportedJpegWithZeroIdct0,"DQT has zero value");
                                 }
                                 else {
                                     break;
@@ -870,6 +905,27 @@ impl JPegHeader {
                 }
         }
         return Ok(ParseSegmentResult::Continue);
+    }
+
+    /// constructs the quantization table based on the jpeg header
+    pub fn construct_quantization_tables(&self) -> Result<Vec<QuantizationTables>> {
+        let mut quantization_tables = Vec::new();
+        for i in 0..self.cmpc {
+            let qtables = QuantizationTables::new(self, i);
+
+            // check to see if quantitization table was properly initialized
+            // (table contains divisors for edge coefficients so it never should have a zero)
+            for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
+                if qtables.get_quantization_table()[i] == 0 {
+                    return err_exit_code(
+                    ExitCode::UnsupportedJpegWithZeroIdct0,
+                    "Quantization table contains zero for edge which would cause a divide by zero",
+                );
+                }
+            }
+            quantization_tables.push(qtables);
+        }
+        Ok(quantization_tables)
     }
 }
 

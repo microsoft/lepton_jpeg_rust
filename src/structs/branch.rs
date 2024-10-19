@@ -243,7 +243,7 @@ fn test_all_probabilities() {
             counts: [(i >> 8) as u8, i as u8],
             probability: 0,
         };
-        let mut new_t = Branch { counts: i as u16 };
+        let mut new_t = Branch { counts: i };
 
         for _k in 0..10 {
             old_t.record_obs_and_update(true);
