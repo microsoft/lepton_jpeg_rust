@@ -75,9 +75,9 @@ impl<W: Write> VPXBoolWriter<W> {
         {
             // used to detect divergences between the C++ and rust versions
             self.hash.hash(branch.get_u64());
-            self.hash.hash(self.low_value);
-            self.hash.hash(self.count);
-            self.hash.hash(self.range);
+            self.hash.hash(*tmp_value);
+            self.hash.hash(*tmp_count);
+            self.hash.hash(*tmp_range);
 
             let hashed_value = self.hash.get();
             //if hashedValue == 0xe35c28fd
