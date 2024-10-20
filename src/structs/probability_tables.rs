@@ -6,6 +6,7 @@
 
 use crate::consts::*;
 use crate::enabled_features;
+use crate::structs::div::div;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
@@ -221,20 +222,30 @@ impl ProbabilityTables {
             return 0;
         }
 
-        let mut best_prior: i32 = pred[if HORIZONTAL {
+        let best_prior: i32 = pred[if HORIZONTAL {
             coefficient_tr >> 3
         } else {
             coefficient_tr
         }];
-        best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
+        //best_prior / ((qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13)
+        let recip = qt.get_recip(if HORIZONTAL {
+            coefficient_tr >> 3
+        } else {
+            coefficient_tr + 8
+        });
+        let prior = div((best_prior.unsigned_abs() >> 13) as i32, recip);
 
-        best_prior
+        if best_prior < 0 {
+            -prior
+        } else {
+            prior
+        }
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         raster_cols: &[i32x8; 8],
-        q0: i32,
+        qt: &QuantizationTables,//q0: i32,
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
@@ -328,8 +339,12 @@ impl ProbabilityTables {
 
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
+        //let q0 = qt.get_quantization_table()[0] as i32;
+        let q0 = qt.get_recip(0);
+        let div = div(avgmed, q0);
         return PredictDCResult {
-            predicted_dc: (avgmed / q0 + 4) >> 3,
+            //predicted_dc: (avgmed / q0 + 4) >> 3,
+            predicted_dc: (div + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             next_edge_pixels_h,

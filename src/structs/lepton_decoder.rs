@@ -336,8 +336,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     )?;
 
     // step 3, read the DC coefficient (0,0 of the block)
-    let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, qt, &neighbor_data, features);
 
     let coef = model.read_dc(
         bool_reader,
@@ -353,6 +352,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     ) as i16);
 
     // neighbor summary is used as a predictor for the next block
+    let q0 = qt.get_quantization_table()[0] as i32;
     let neighbor_summary = NeighborSummary::new(
         predicted_dc.next_edge_pixels_h,
         predicted_dc.next_edge_pixels_v,

@@ -14,6 +14,7 @@ pub mod block_based_image;
 mod block_context;
 mod branch;
 mod component_info;
+mod div;
 mod idct;
 mod jpeg_header;
 mod jpeg_position_state;

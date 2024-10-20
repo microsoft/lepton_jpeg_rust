@@ -358,9 +358,8 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     .context(here!())?;
 
     // finally the DC coefficient (at 0,0)
-    let q0 = qt.get_quantization_table()[0] as i32;
     let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
+        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, qt, &neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         here_tr.get_dc(),
@@ -389,6 +388,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         .context(here!())?;
 
     // neighbor summary is used as a predictor for the next block
+    let q0 = qt.get_quantization_table()[0] as i32;
     let neighbor_summary = NeighborSummary::new(
         predicted_val.next_edge_pixels_h,
         predicted_val.next_edge_pixels_v,
