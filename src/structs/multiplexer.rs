@@ -4,7 +4,7 @@
 /// ends up with an interleaved stream of blocks from each thread.
 ///
 /// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
-use crate::{helpers::*, structs::partial_buffer::PartialBuffer, ExitCode};
+use crate::{helpers::*, structs::partial_buffer::PartialBuffer, ExitCode, LeptonError};
 use anyhow::{Context, Result};
 use byteorder::WriteBytesExt;
 
@@ -153,7 +153,7 @@ where
 
             let processor_clone = arc_processor.clone();
 
-            let mut f = move || -> Result<RESULT> {
+            let f = move || -> Result<RESULT> {
                 let r = processor_clone(&mut thread_writer, thread_id)?;
 
                 thread_writer.flush().context(here!())?;
@@ -163,7 +163,7 @@ where
             };
 
             my_spawn(s, move || {
-                *result = Some(f());
+                *result = Some(catch_unwind_result(f));
             });
         }
 
@@ -208,7 +208,7 @@ where
             None => thread_not_run = true,
             Some(Ok(r)) => results.push(r),
             // if there was an error processing anything, return it
-            Some(Err(e)) => return Err(e),
+            Some(Err(e)) => return Err(e.into()),
         }
     }
 
@@ -297,7 +297,7 @@ impl MultiplexReader {
 /// of the results back to the caller.
 pub struct MultiplexReaderState<RESULT> {
     sender_channels: Vec<Sender<Message>>,
-    result_receiver: Receiver<(usize, Result<RESULT>)>,
+    result_receiver: Receiver<(usize, core::result::Result<RESULT, LeptonError>)>,
     retention_bytes: usize,
     current_state: State,
 }
@@ -319,7 +319,8 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
         RESULT: Send + 'static,
     {
-        let (result_sender, result_receiver) = channel::<(usize, Result<RESULT>)>();
+        let (result_sender, result_receiver) =
+            channel::<(usize, core::result::Result<RESULT, LeptonError>)>();
 
         let arc_processor = Arc::new(Box::new(processor));
 
@@ -338,20 +339,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             let cloned_processor = arc_processor.clone();
             let cloned_result_sender = result_sender.clone();
 
-            work.push_back(move || {
-                // get the appropriate receiver so we can read out data from it
-                let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id as u8,
-                    current_buffer: Cursor::new(Vec::new()),
-                    receiver: rx,
-                    end_of_file: false,
-                };
-
-                // nothing to do if we fail to return the results (since the caller
-                // died and we can't return the results)
-                _ = cloned_result_sender
-                    .send((thread_id, cloned_processor(thread_id, &mut proc_reader)));
-            });
+            work.push_back((thread_id, rx, cloned_processor, cloned_result_sender));
         }
 
         let shared_queue = Arc::new(Mutex::new(work));
@@ -362,8 +350,29 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             let q = shared_queue.clone();
 
             my_spawn_simple(move || {
-                while let Some(work) = q.lock().unwrap().pop_front() {
-                    work();
+                loop {
+                    // do this to make sure the lock gets
+                    let w = q.lock().unwrap().pop_front();
+
+                    if let Some((thread_id, rx, cloned_processor, cloned_result_sender)) = w {
+                        // get the appropriate receiver so we can read out data from it
+                        let mut proc_reader = MultiplexReader {
+                            thread_id: thread_id as u8,
+                            current_buffer: Cursor::new(Vec::new()),
+                            receiver: rx,
+                            end_of_file: false,
+                        };
+
+                        let result = catch_unwind_result(move || {
+                            cloned_processor(thread_id, &mut proc_reader)
+                        });
+
+                        // nothing to do if we fail to return the results (since the caller
+                        // died and we can't return the results)
+                        _ = cloned_result_sender.send((thread_id, result));
+                    } else {
+                        break;
+                    }
                 }
             });
         }

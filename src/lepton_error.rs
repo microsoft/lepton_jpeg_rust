@@ -11,7 +11,7 @@ use std::{fmt::Display, io::ErrorKind};
 #[non_exhaustive]
 /// Well-defined errors for bad things that are expected to happen as part of compression/decompression
 pub enum ExitCode {
-    //AssertionFailure = 1,
+    AssertionFailure = 1,
     //CodingError = 2,
     ShortRead = 3,
     Unsupported4Colors = 4,

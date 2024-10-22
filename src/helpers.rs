@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use crate::lepton_error::{ExitCode, LeptonError};
 
 macro_rules! here {
@@ -13,6 +15,29 @@ macro_rules! here {
 }
 
 pub(crate) use here;
+
+pub fn catch_unwind_result<R>(
+    f: impl FnOnce() -> Result<R, anyhow::Error>,
+) -> Result<R, LeptonError> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(r) => r.map_err(|e| e.into()),
+        Err(err) => {
+            if let Some(message) = err.downcast_ref::<&str>() {
+                Err(LeptonError::new(ExitCode::AssertionFailure, *message))
+            } else if let Some(message) = err.downcast_ref::<String>() {
+                Err(LeptonError::new(
+                    ExitCode::AssertionFailure,
+                    message.as_str(),
+                ))
+            } else {
+                Err(LeptonError::new(
+                    ExitCode::AssertionFailure,
+                    "unknown panic",
+                ))
+            }
+        }
+    }
+}
 
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {
