@@ -672,7 +672,7 @@ fn parse_and_write_header() {
 }
 
 #[cfg(test)]
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     use std::io::Read;
 
     let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

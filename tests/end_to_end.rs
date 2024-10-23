@@ -446,6 +446,8 @@ fn extern_interface_decompress_chunked() {
         let mut input_buffer = [0u8; 7];
         let mut output_buffer = [0u8; 13];
 
+        let mut error_string = [0u8; 1024];
+
         loop {
             let amount_read = file_read.read(&mut input_buffer).unwrap();
 
@@ -458,13 +460,17 @@ fn extern_interface_decompress_chunked() {
                 output_buffer.as_mut_ptr(),
                 output_buffer.len() as u64,
                 &mut result_size,
+                error_string.as_mut_ptr(),
+                error_string.len() as u64,
             );
 
             output.extend_from_slice(&output_buffer[..result_size as usize]);
 
             match result {
-                0 => {}
-                1 => {
+                -1 => {
+                    // need more data
+                }
+                0 => {
                     break;
                 }
                 _ => {
@@ -503,7 +509,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             (&mut result_size) as *mut u64,
         );
 
-        assert_eq!(retval, file.1 as i32);
+        assert_eq!(retval, file.1.as_integer_error_code());
     }
 }
 
