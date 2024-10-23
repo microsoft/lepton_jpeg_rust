@@ -534,8 +534,13 @@ fn test_multiplex_read_panic() {
 fn test_multiplex_write_error() {
     let mut output = Vec::new();
 
-    let e: LeptonError = multiplex_write(&mut output, 10, |_, _| -> Result<usize> {
-        Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+    let e: LeptonError = multiplex_write(&mut output, 10, |_, thread_id| -> Result<usize> {
+        if thread_id == 3 {
+            // have one thread fail
+            Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+        } else {
+            Ok(0)
+        }
     })
     .unwrap_err()
     .into();
@@ -549,8 +554,11 @@ fn test_multiplex_write_error() {
 fn test_multiplex_write_panic() {
     let mut output = Vec::new();
 
-    let e: LeptonError = multiplex_write(&mut output, 10, |_, _| -> Result<usize> {
-        panic!();
+    let e: LeptonError = multiplex_write(&mut output, 10, |_, thread_id| -> Result<usize> {
+        if thread_id == 5 {
+            panic!();
+        }
+        Ok(0)
     })
     .unwrap_err()
     .into();

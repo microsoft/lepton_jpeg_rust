@@ -41,6 +41,10 @@ pub fn catch_unwind_result<R>(
 }
 
 pub unsafe fn copy_string(str: &str, error_string_buffer_len: u64, error_string: *mut u8) {
+    if error_string_buffer_len == 0 {
+        return;
+    }
+
     // copy error string into the buffer as utf8
     let b = std::ffi::CString::new(str).unwrap();
     let b = b.as_bytes_with_nul();

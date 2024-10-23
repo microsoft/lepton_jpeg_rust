@@ -507,7 +507,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             (&mut result_size) as *mut u64,
         );
 
-        assert_eq!(retval, file.1 as i32);
+        assert_eq!(retval, file.1.as_integer_error_code());
     }
 }
 

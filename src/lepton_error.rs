@@ -50,6 +50,14 @@ impl Display for ExitCode {
     }
 }
 
+impl ExitCode {
+    /// Converts the error code into a negative integer for use as an error code when
+    /// returning from a C API.
+    pub fn as_integer_error_code(self) -> i32 {
+        -(self as i32)
+    }
+}
+
 /// Standard error returned by Lepton library
 #[derive(Debug, Clone)]
 pub struct LeptonError {

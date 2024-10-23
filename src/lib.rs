@@ -86,7 +86,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             return 0;
         }
         Err(e) => {
-            return e.exit_code() as i32;
+            return e.exit_code().as_integer_error_code();
         }
     }
 }
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             return 0;
         }
         Err(e) => {
-            return e.exit_code() as i32;
+            return e.exit_code().as_integer_error_code();
         }
     }
 }
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn decompress_image(
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
         let mut writer = Cursor::new(output);
-        context.process_buffer(
+        let done = context.process_buffer(
             input,
             input_complete,
             &mut writer,
@@ -295,18 +295,14 @@ pub unsafe extern "C" fn decompress_image(
         )?;
 
         *result_size = writer.position().into();
-        Ok(())
+        Ok(done)
     }) {
-        Ok(()) => {
-            return 0;
-        }
+        Ok(done) => done as i32,
         Err(e) => {
-            if error_string_buffer_len > 0 {
-                copy_string(e.message(), error_string_buffer_len, error_string);
-            }
-            return e.exit_code() as i32;
+            copy_string(e.message(), error_string_buffer_len, error_string);
+            e.exit_code().as_integer_error_code()
         }
-    };
+    }
 }
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
