@@ -15,7 +15,7 @@ pub mod lepton_error;
 
 use anyhow::Context;
 pub use enabled_features::EnabledFeatures;
-use helpers::{catch_unwind_result, here};
+use helpers::{catch_unwind_result, copy_string, here};
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
 
@@ -276,6 +276,8 @@ pub unsafe extern "C" fn decompress_image(
     output_buffer: *mut u8,
     output_buffer_size: u64,
     result_size: *mut u64,
+    error_string: *mut std::os::raw::c_uchar,
+    error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
         let context = context as *mut LeptonFileReaderContext;
@@ -299,6 +301,9 @@ pub unsafe extern "C" fn decompress_image(
             return 0;
         }
         Err(e) => {
+            if error_string_buffer_len > 0 {
+                copy_string(e.message(), error_string_buffer_len, error_string);
+            }
             return e.exit_code() as i32;
         }
     };

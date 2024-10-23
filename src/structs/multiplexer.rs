@@ -507,3 +507,53 @@ fn test_multiplex_end_to_end() {
 
     assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
+
+#[test]
+fn test_multiplex_read_error() {
+    let mut multiplex_state = MultiplexReaderState::new(10, 0, 8, |_, _| -> Result<usize> {
+        Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+    });
+
+    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
+    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+    assert_eq!(e.message(), "test error");
+}
+
+#[test]
+fn test_multiplex_read_panic() {
+    let mut multiplex_state = MultiplexReaderState::new(10, 0, 8, |_, _| -> Result<usize> {
+        panic!();
+    });
+
+    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
+    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+}
+
+// test catching errors in the multiplex_write function
+#[test]
+fn test_multiplex_write_error() {
+    let mut output = Vec::new();
+
+    let e: LeptonError = multiplex_write(&mut output, 10, |_, _| -> Result<usize> {
+        Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+    })
+    .unwrap_err()
+    .into();
+
+    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+    assert_eq!(e.message(), "test error");
+}
+
+// test catching errors in the multiplex_write function
+#[test]
+fn test_multiplex_write_panic() {
+    let mut output = Vec::new();
+
+    let e: LeptonError = multiplex_write(&mut output, 10, |_, _| -> Result<usize> {
+        panic!();
+    })
+    .unwrap_err()
+    .into();
+
+    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+}

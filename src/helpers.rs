@@ -16,6 +16,7 @@ macro_rules! here {
 
 pub(crate) use here;
 
+/// Helper function to catch panics and convert them into the appropriate LeptonError
 pub fn catch_unwind_result<R>(
     f: impl FnOnce() -> Result<R, anyhow::Error>,
 ) -> Result<R, LeptonError> {
@@ -37,6 +38,16 @@ pub fn catch_unwind_result<R>(
             }
         }
     }
+}
+
+pub unsafe fn copy_string(str: &str, error_string_buffer_len: u64, error_string: *mut u8) {
+    // copy error string into the buffer as utf8
+    let b = std::ffi::CString::new(str).unwrap();
+    let b = b.as_bytes_with_nul();
+
+    let copy_len = std::cmp::min(b.len(), error_string_buffer_len as usize);
+    let target_error_string = std::slice::from_raw_parts_mut(error_string, copy_len);
+    target_error_string.copy_from_slice(b);
 }
 
 #[inline(always)]
