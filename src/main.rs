@@ -48,7 +48,6 @@ fn main_with_result() -> Result<(), LeptonError> {
     for i in 1..args.len() {
         match *args[i].split(':').collect::<Vec<&str>>().as_slice() {
             ["-verifycpp", cpp] => verify_cpp = Some(cpp.to_string()),
-            ["-threads", threads] => enabled_features.max_threads = threads.parse::<u32>().unwrap(),
             ["-iter", iter] => iterations = iter.parse::<i32>().unwrap(),
             ["-max-width", width] => {
                 enabled_features.max_jpeg_width = width.parse::<i32>().unwrap()
@@ -56,18 +55,25 @@ fn main_with_result() -> Result<(), LeptonError> {
             ["-max-height", height] => {
                 enabled_features.max_jpeg_height = height.parse::<i32>().unwrap()
             }
+            ["-threads", threads] => enabled_features.max_threads = threads.parse::<u32>().unwrap(),
+            // default is the most permissive compatible with the C++ SIMD version
+            ["-rejectprogressive"] => enabled_features.progressive = false,
+            ["-rejectdqtswithzeros"] => enabled_features.reject_dqts_with_zeros = true,
+            ["-rejectinvalidhuffman"] => enabled_features.accept_invalid_dht = false,
+            // use both these options if you are trying to read a file that was encoded with the scalar version of the C++ encoder
+            // sadly one old version of the Rust encoder used use_16bit_dc_estimate=false, use_16bit_adv_predict=true
+            // the latest version of the encoder put these options in the header so we ignore this if the file specifies it
+            ["-use32bitdc"] => enabled_features.use_16bit_dc_estimate = false,
+            ["-use32bitadv"] => enabled_features.use_16bit_adv_predict = false,
+            ["-overwrite"] => overwrite = true,
             ["-dump"] => dump = true,
             ["-all"] => all = true,
             ["-corrupt"] => {
                 // randomly corrupt the files for testing
                 corrupt = true;
             }
-            ["-noverify"] => {
-                verify = false;
-            }
-            ["-quiet"] => {
-                filter_level = log::LevelFilter::Warn;
-            }
+            ["-noverify"] => verify = false,
+            ["-quiet"] => filter_level = log::LevelFilter::Warn,
             ["-version"] => {
                 println!(
                     "compiled library Lepton version {}, git revision: {}",
@@ -112,28 +118,6 @@ fn main_with_result() -> Result<(), LeptonError> {
                     .build_global()
                     .unwrap();
                 }
-            }
-            ["-overwrite"] => {
-                overwrite = true;
-            }
-            ["-noprogressive"] => {
-                enabled_features.progressive = false;
-            }
-            ["-acceptdqtswithzeros"] => {
-                enabled_features.reject_dqts_with_zeros = false;
-            }
-            ["-use16bitdc"] => {
-                enabled_features.use_16bit_dc_estimate = true;
-            }
-            ["-useleptonscalar"] => {
-                // lepton files that were encoded by the dropbox c++ version compiled in scalar mode
-                enabled_features.use_16bit_adv_predict = false;
-                enabled_features.use_16bit_dc_estimate = false;
-            }
-            ["-useleptonvector"] => {
-                // lepton files that were encoded by the dropbox c++ version compiled in AVX2/SSE2 mode
-                enabled_features.use_16bit_adv_predict = true;
-                enabled_features.use_16bit_dc_estimate = true;
             }
             _ => {
                 if args[i].starts_with("-") {

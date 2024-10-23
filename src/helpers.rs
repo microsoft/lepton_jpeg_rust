@@ -40,18 +40,39 @@ pub fn catch_unwind_result<R>(
     }
 }
 
-pub unsafe fn copy_string(str: &str, error_string_buffer_len: u64, error_string: *mut u8) {
-    if error_string_buffer_len == 0 {
+/// copies a string into a limited length zero terminated utf8 buffer
+pub fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
+    if target_error_string.len() == 0 {
         return;
     }
 
     // copy error string into the buffer as utf8
     let b = std::ffi::CString::new(str).unwrap();
-    let b = b.as_bytes_with_nul();
+    let b = b.as_bytes();
 
-    let copy_len = std::cmp::min(b.len(), error_string_buffer_len as usize);
-    let target_error_string = std::slice::from_raw_parts_mut(error_string, copy_len);
-    target_error_string.copy_from_slice(b);
+    let copy_len = std::cmp::min(b.len(), target_error_string.len() - 1);
+
+    // copy string into buffer as much as fits
+    target_error_string[0..copy_len].copy_from_slice(&b[0..copy_len]);
+
+    // always null terminated
+    target_error_string[copy_len] = 0;
+}
+
+#[test]
+fn test_copy_cstring_utf8_to_buffer() {
+    // test utf8
+    let mut buffer = [0u8; 10];
+    copy_cstring_utf8_to_buffer("h\u{00E1}llo", &mut buffer);
+    assert_eq!(buffer, [b'h', 0xc3, 0xa1, b'l', b'l', b'o', 0, 0, 0, 0]);
+
+    // test null termination
+    let mut buffer = [0u8; 10];
+    copy_cstring_utf8_to_buffer("helloeveryone", &mut buffer);
+    assert_eq!(
+        buffer,
+        [b'h', b'e', b'l', b'l', b'o', b'e', b'v', b'e', b'r', 0]
+    );
 }
 
 #[inline(always)]

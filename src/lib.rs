@@ -15,7 +15,7 @@ pub mod lepton_error;
 
 use anyhow::Context;
 pub use enabled_features::EnabledFeatures;
-use helpers::{catch_unwind_result, copy_string, here};
+use helpers::{catch_unwind_result, copy_cstring_utf8_to_buffer, here};
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
 
@@ -309,7 +309,10 @@ pub unsafe extern "C" fn decompress_image(
             }
         }
         Err(e) => {
-            copy_string(e.message(), error_string_buffer_len, error_string);
+            copy_cstring_utf8_to_buffer(
+                e.message(),
+                std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
+            );
             e.exit_code().as_integer_error_code()
         }
     }
