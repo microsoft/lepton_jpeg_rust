@@ -65,6 +65,11 @@ fn main_with_result() -> Result<(), LeptonError> {
             // the latest version of the encoder put these options in the header so we ignore this if the file specifies it
             ["-use32bitdc"] => enabled_features.use_16bit_dc_estimate = false,
             ["-use32bitadv"] => enabled_features.use_16bit_adv_predict = false,
+            ["-useleptonscalar"] => {
+                // default option is the vector version, since Lepton usually will get to compiled to at least SSE2
+                enabled_features.use_16bit_adv_predict = false;
+                enabled_features.use_16bit_dc_estimate = false;
+            }
             ["-overwrite"] => overwrite = true,
             ["-dump"] => dump = true,
             ["-all"] => all = true,
