@@ -42,6 +42,7 @@ pub enum ExitCode {
     VerificationContentMismatch = 1005,
     SyntaxError = 1006,
     FileNotFound = 1007,
+    ExternalVerificationFailed = 1008,
 }
 
 impl Display for ExitCode {
@@ -51,10 +52,10 @@ impl Display for ExitCode {
 }
 
 impl ExitCode {
-    /// Converts the error code into a negative integer for use as an error code when
+    /// Converts the error code into an integer for use as an error code when
     /// returning from a C API.
     pub fn as_integer_error_code(self) -> i32 {
-        -(self as i32)
+        self as i32
     }
 }
 

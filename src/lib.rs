@@ -267,6 +267,10 @@ pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_vo
     // let Box destroy the object
 }
 
+/// partially decompresses an image from a Lepton file.
+///
+/// Returns -1 if more data is needed or if there is more data available, or 0 if done successfully.
+/// Returns > 0 if there is an error
 #[no_mangle]
 pub unsafe extern "C" fn decompress_image(
     context: *mut std::ffi::c_void,
@@ -297,7 +301,13 @@ pub unsafe extern "C" fn decompress_image(
         *result_size = writer.position().into();
         Ok(done)
     }) {
-        Ok(done) => done as i32,
+        Ok(done) => {
+            if done {
+                0
+            } else {
+                -1
+            }
+        }
         Err(e) => {
             copy_string(e.message(), error_string_buffer_len, error_string);
             e.exit_code().as_integer_error_code()

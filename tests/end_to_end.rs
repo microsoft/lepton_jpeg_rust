@@ -467,8 +467,10 @@ fn extern_interface_decompress_chunked() {
             output.extend_from_slice(&output_buffer[..result_size as usize]);
 
             match result {
-                0 => {}
-                1 => {
+                -1 => {
+                    // need more data
+                }
+                0 => {
                     break;
                 }
                 _ => {
