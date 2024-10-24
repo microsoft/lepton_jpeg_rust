@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use crate::lepton_error::{ExitCode, LeptonError};
 
 macro_rules! here {
@@ -13,6 +15,65 @@ macro_rules! here {
 }
 
 pub(crate) use here;
+
+/// Helper function to catch panics and convert them into the appropriate LeptonError
+pub fn catch_unwind_result<R>(
+    f: impl FnOnce() -> Result<R, anyhow::Error>,
+) -> Result<R, LeptonError> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(r) => r.map_err(|e| e.into()),
+        Err(err) => {
+            if let Some(message) = err.downcast_ref::<&str>() {
+                Err(LeptonError::new(ExitCode::AssertionFailure, *message))
+            } else if let Some(message) = err.downcast_ref::<String>() {
+                Err(LeptonError::new(
+                    ExitCode::AssertionFailure,
+                    message.as_str(),
+                ))
+            } else {
+                Err(LeptonError::new(
+                    ExitCode::AssertionFailure,
+                    "unknown panic",
+                ))
+            }
+        }
+    }
+}
+
+/// copies a string into a limited length zero terminated utf8 buffer
+pub fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
+    if target_error_string.len() == 0 {
+        return;
+    }
+
+    // copy error string into the buffer as utf8
+    let b = std::ffi::CString::new(str).unwrap();
+    let b = b.as_bytes();
+
+    let copy_len = std::cmp::min(b.len(), target_error_string.len() - 1);
+
+    // copy string into buffer as much as fits
+    target_error_string[0..copy_len].copy_from_slice(&b[0..copy_len]);
+
+    // always null terminated
+    target_error_string[copy_len] = 0;
+}
+
+#[test]
+fn test_copy_cstring_utf8_to_buffer() {
+    // test utf8
+    let mut buffer = [0u8; 10];
+    copy_cstring_utf8_to_buffer("h\u{00E1}llo", &mut buffer);
+    assert_eq!(buffer, [b'h', 0xc3, 0xa1, b'l', b'l', b'o', 0, 0, 0, 0]);
+
+    // test null termination
+    let mut buffer = [0u8; 10];
+    copy_cstring_utf8_to_buffer("helloeveryone", &mut buffer);
+    assert_eq!(
+        buffer,
+        [b'h', b'e', b'l', b'l', b'o', b'e', b'v', b'e', b'r', 0]
+    );
+}
 
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {

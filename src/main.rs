@@ -4,7 +4,6 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use anyhow;
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use lepton_jpeg::{
     decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, EnabledFeatures, ExitCode,
@@ -16,6 +15,7 @@ use simple_logger::SimpleLogger;
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
 
 use std::fs::OpenOptions;
+use std::process::{Command, Stdio};
 use std::time::Instant;
 use std::{
     env,
@@ -24,14 +24,6 @@ use std::{
     time::Duration,
 };
 
-fn parse_numeric_parameter(arg: &str, name: &str) -> Option<i32> {
-    if arg.starts_with(name) {
-        Some(arg[name.len()..].parse::<i32>().unwrap())
-    } else {
-        None
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 enum FileType {
     Jpeg,
@@ -39,9 +31,10 @@ enum FileType {
 }
 
 // wrap main so that errors get printed nicely without a panic
-fn main_with_result() -> Result<(), anyhow::Error> {
+fn main_with_result() -> Result<(), LeptonError> {
     let args: Vec<String> = env::args().collect();
 
+    let mut verify_cpp = None;
     let mut filenames = Vec::new();
     let mut iterations = 1;
     let mut dump = false;
@@ -53,27 +46,40 @@ fn main_with_result() -> Result<(), anyhow::Error> {
     let mut filter_level = log::LevelFilter::Info;
 
     for i in 1..args.len() {
-        if args[i].starts_with("-") {
-            if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-threads:") {
-                enabled_features.max_threads = x as u32;
-            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-iter:") {
-                iterations = x;
-            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-width:") {
-                enabled_features.max_jpeg_width = x;
-            } else if let Some(x) = parse_numeric_parameter(args[i].as_str(), "-max-height:") {
-                enabled_features.max_jpeg_height = x;
-            } else if args[i] == "-dump" {
-                dump = true;
-            } else if args[i] == "-all" {
-                all = true;
-            } else if args[i] == "-corrupt" {
+        match *args[i].split(':').collect::<Vec<&str>>().as_slice() {
+            ["-verifycpp", cpp] => verify_cpp = Some(cpp.to_string()),
+            ["-iter", iter] => iterations = iter.parse::<i32>().unwrap(),
+            ["-max-width", width] => {
+                enabled_features.max_jpeg_width = width.parse::<i32>().unwrap()
+            }
+            ["-max-height", height] => {
+                enabled_features.max_jpeg_height = height.parse::<i32>().unwrap()
+            }
+            ["-threads", threads] => enabled_features.max_threads = threads.parse::<u32>().unwrap(),
+            // default is the most permissive compatible with the C++ SIMD version
+            ["-rejectprogressive"] => enabled_features.progressive = false,
+            ["-rejectdqtswithzeros"] => enabled_features.reject_dqts_with_zeros = true,
+            ["-rejectinvalidhuffman"] => enabled_features.accept_invalid_dht = false,
+            // use both these options if you are trying to read a file that was encoded with the scalar version of the C++ encoder
+            // sadly one old version of the Rust encoder used use_16bit_dc_estimate=false, use_16bit_adv_predict=true
+            // the latest version of the encoder put these options in the header so we ignore this if the file specifies it
+            ["-use32bitdc"] => enabled_features.use_16bit_dc_estimate = false,
+            ["-use32bitadv"] => enabled_features.use_16bit_adv_predict = false,
+            ["-useleptonscalar"] => {
+                // default option is the vector version, since Lepton usually will get to compiled to at least SSE2
+                enabled_features.use_16bit_adv_predict = false;
+                enabled_features.use_16bit_dc_estimate = false;
+            }
+            ["-overwrite"] => overwrite = true,
+            ["-dump"] => dump = true,
+            ["-all"] => all = true,
+            ["-corrupt"] => {
                 // randomly corrupt the files for testing
                 corrupt = true;
-            } else if args[i] == "-noverify" {
-                verify = false;
-            } else if args[i] == "-quiet" {
-                filter_level = log::LevelFilter::Warn;
-            } else if args[i] == "-version" {
+            }
+            ["-noverify"] => verify = false,
+            ["-quiet"] => filter_level = log::LevelFilter::Warn,
+            ["-version"] => {
                 println!(
                     "compiled library Lepton version {}, git revision: {}",
                     env!("CARGO_PKG_VERSION"),
@@ -81,7 +87,8 @@ fn main_with_result() -> Result<(), anyhow::Error> {
                         args = ["--abbrev=40", "--always", "--dirty=-modified"]
                     )
                 );
-            } else if args[i] == "-highpriority" {
+            }
+            ["-highpriority"] => {
                 // used to force to run on p-cores, make sure this and
                 // any threadpool threads are set to the high priority
 
@@ -98,7 +105,8 @@ fn main_with_result() -> Result<(), anyhow::Error> {
                     .build_global()
                     .unwrap();
                 }
-            } else if args[i] == "-lowpriority" {
+            }
+            ["-lowpriority"] => {
                 // used to force to run on e-cores, make sure this and
                 // any threadpool threads are set to the high priority
 
@@ -115,31 +123,18 @@ fn main_with_result() -> Result<(), anyhow::Error> {
                     .build_global()
                     .unwrap();
                 }
-            } else if args[i] == "-overwrite" {
-                overwrite = true;
-            } else if args[i] == "-noprogressive" {
-                enabled_features.progressive = false;
-            } else if args[i] == "-acceptdqtswithzeros" {
-                enabled_features.reject_dqts_with_zeros = false;
-            } else if args[i] == "-use16bitdc" {
-                enabled_features.use_16bit_dc_estimate = true;
-            } else if args[i] == "-useleptonscalar" {
-                // lepton files that were encoded by the dropbox c++ version compiled in scalar mode
-                enabled_features.use_16bit_adv_predict = false;
-                enabled_features.use_16bit_dc_estimate = false;
-            } else if args[i] == "-useleptonvector" {
-                // lepton files that were encoded by the dropbox c++ version compiled in AVX2/SSE2 mode
-                enabled_features.use_16bit_adv_predict = true;
-                enabled_features.use_16bit_dc_estimate = true;
-            } else {
-                return Err(LeptonError::new(
-                    ExitCode::SyntaxError,
-                    format!("unknown switch {0}", args[i]).as_str(),
-                )
-                .into());
             }
-        } else {
-            filenames.push(args[i].as_str());
+            _ => {
+                if args[i].starts_with("-") {
+                    return Err(LeptonError::new(
+                        ExitCode::SyntaxError,
+                        format!("unknown switch {0}", args[i]).as_str(),
+                    )
+                    .into());
+                } else {
+                    filenames.push(args[i].as_str());
+                }
+            }
         }
     }
 
@@ -269,13 +264,54 @@ fn main_with_result() -> Result<(), anyhow::Error> {
         std::io::stdout().write_all(&output_data[..])?
     } else {
         let output_file: String = filenames[1].to_owned();
+
+        let o = output_file.as_str();
         let mut fileout = OpenOptions::new()
             .write(true)
             .create(overwrite)
             .create_new(!overwrite)
-            .open(output_file.as_str())?;
+            .open(o)?;
 
-        fileout.write_all(&output_data[..])?
+        fileout.set_len(output_data.len() as u64)?;
+        fileout.write_all(&output_data[..])?;
+        drop(fileout);
+
+        // what we do is take the lepton output, and see if it recreates the input using the
+        // CPP version of the encoder/decoder
+        if let Some(v) = verify_cpp {
+            let (output, exit_code, stderr) = call_executable_with_input(v.as_str(), o)?;
+            if exit_code != 0 {
+                log::error!("cpp exit code: {}", exit_code);
+
+                return Err(LeptonError::new(
+                    ExitCode::ExternalVerificationFailed,
+                    format!(
+                        "verify failed with exit code {0} stderr: {1}",
+                        exit_code, stderr
+                    )
+                    .as_str(),
+                ))?;
+            }
+            if output[..].len() != input_data.len() {
+                return Err(LeptonError::new(
+                    ExitCode::ExternalVerificationFailed,
+                    format!(
+                        "verify failed with different length {0} != {1}",
+                        output[..].len(),
+                        input_data.len()
+                    )
+                    .as_str(),
+                ));
+            }
+            if output[..] != input_data[..] {
+                return Err(LeptonError::new(
+                    ExitCode::ExternalVerificationFailed,
+                    "verify failed with different data",
+                )
+                .into());
+            }
+            log::info!("verify succeeded with cpp version");
+        }
     }
 
     if iterations > 1 {
@@ -384,21 +420,57 @@ impl<W: Write + Seek> Write for VerifyWriter<W> {
 fn main() {
     match main_with_result() {
         Ok(_) => {}
-        Err(e) => match e.root_cause().downcast_ref::<LeptonError>() {
-            // try to extract the exit code if it was a well known error
-            Some(x) => {
-                eprintln!(
-                    "error code: {0} {1} {2}",
-                    x.exit_code(),
-                    x.exit_code() as i32,
-                    x.message()
-                );
-                std::process::exit(x.exit_code() as i32);
-            }
-            None => {
-                eprintln!("unknown error {0:?}", e);
-                std::process::exit(ExitCode::GeneralFailure as i32);
-            }
-        },
+        Err(e) => {
+            eprintln!(
+                "error code: {0} {1} {2}",
+                e.exit_code(),
+                e.exit_code().as_integer_error_code(),
+                e.message()
+            );
+            std::process::exit(e.exit_code().as_integer_error_code());
+        }
     }
+}
+
+pub fn call_executable_with_input(
+    executable: &str,
+    input_filename: &str,
+) -> Result<(Vec<u8>, i32, String), LeptonError> {
+    // temporary file to store the output of the cpp version so we can
+    // compare it with the rust version
+    let v = format!("{0}.verify", input_filename);
+    let verify_filename = v.as_str();
+
+    // delete if already exists
+    let _ = std::fs::remove_file(verify_filename);
+
+    log::info!(
+        "verifying input filename {} with {}",
+        input_filename,
+        executable
+    );
+
+    // Spawn the command
+    let child = Command::new(executable)
+        .arg(input_filename)
+        .arg(verify_filename)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Wait for the child process to exit and collect output
+    let output = child.wait_with_output()?;
+
+    let mut file_in = File::open(verify_filename).unwrap();
+    let mut contents = Vec::new();
+    file_in.read_to_end(&mut contents).unwrap();
+
+    // remove the temporary file
+    let _ = std::fs::remove_file(verify_filename);
+
+    // Extract the stdout, stderr, and exit status
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-10000); // Handle the case where exit code is None
+
+    Ok((contents, exit_code, stderr))
 }

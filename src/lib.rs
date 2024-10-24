@@ -15,12 +15,11 @@ pub mod lepton_error;
 
 use anyhow::Context;
 pub use enabled_features::EnabledFeatures;
-use helpers::here;
+use helpers::{catch_unwind_result, copy_cstring_utf8_to_buffer, here};
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
 
 use core::result::Result;
-use std::panic::catch_unwind;
 
 use std::io::{BufRead, Cursor, Seek, Write};
 
@@ -64,7 +63,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
-    match catch_unwind(|| {
+    match catch_unwind_result(|| {
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
 
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
@@ -77,22 +76,17 @@ pub unsafe extern "C" fn WrapperCompressImage(
             features.max_threads = number_of_threads as u32;
         }
 
-        let _metrics = match encode_lepton(&mut reader, &mut writer, &features) {
-            Ok(m) => m,
-            Err(e) => {
-                return e.exit_code() as i32;
-            }
-        };
+        let _metrics = encode_lepton(&mut reader, &mut writer, &features)?;
 
         *result_size = writer.position().into();
 
-        return 0;
+        Ok(())
     }) {
-        Ok(code) => {
-            return code;
+        Ok(()) => {
+            return 0;
         }
-        Err(_) => {
-            return -2;
+        Err(e) => {
+            return e.exit_code().as_integer_error_code();
         }
     }
 }
@@ -133,7 +127,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
-    match catch_unwind(|| {
+    match catch_unwind_result(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
 
         // C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
@@ -163,7 +157,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             match decode_lepton(&mut reader, &mut writer, &mut enabled_features) {
                 Ok(_) => {
                     *result_size = writer.position().into();
-                    return 0;
+                    return Ok(());
                 }
                 Err(e) => {
                     // The retry logic below runs if the caller did not pass use_16bit_dc_estimate=true, but the decompression
@@ -178,16 +172,16 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
                         continue;
                     }
 
-                    return e.exit_code() as i32;
+                    return Err(e.into());
                 }
             }
         }
     }) {
-        Ok(code) => {
-            return code;
+        Ok(()) => {
+            return 0;
         }
-        Err(_) => {
-            return -2;
+        Err(e) => {
+            return e.exit_code().as_integer_error_code();
         }
     }
 }
@@ -273,6 +267,10 @@ pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_vo
     // let Box destroy the object
 }
 
+/// partially decompresses an image from a Lepton file.
+///
+/// Returns -1 if more data is needed or if there is more data available, or 0 if done successfully.
+/// Returns > 0 if there is an error
 #[no_mangle]
 pub unsafe extern "C" fn decompress_image(
     context: *mut std::ffi::c_void,
@@ -282,8 +280,10 @@ pub unsafe extern "C" fn decompress_image(
     output_buffer: *mut u8,
     output_buffer_size: u64,
     result_size: *mut u64,
+    error_string: *mut std::os::raw::c_uchar,
+    error_string_buffer_len: u64,
 ) -> i32 {
-    match catch_unwind(|| {
+    match catch_unwind_result(|| {
         let context = context as *mut LeptonFileReaderContext;
         let context = &mut *context;
 
@@ -291,29 +291,31 @@ pub unsafe extern "C" fn decompress_image(
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
         let mut writer = Cursor::new(output);
-        let result = context.process_buffer(
+        let done = context.process_buffer(
             input,
             input_complete,
             &mut writer,
             output_buffer_size as usize,
-        );
-        match result {
-            Ok(done) => {
-                *result_size = writer.position().into();
-                return done as i32;
-            }
-            Err(e) => {
-                return e.exit_code() as i32;
-            }
-        }
+        )?;
+
+        *result_size = writer.position().into();
+        Ok(done)
     }) {
-        Ok(code) => {
-            return code;
+        Ok(done) => {
+            if done {
+                0
+            } else {
+                -1
+            }
         }
-        Err(_) => {
-            return -2;
+        Err(e) => {
+            copy_cstring_utf8_to_buffer(
+                e.message(),
+                std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
+            );
+            e.exit_code().as_integer_error_code()
         }
-    };
+    }
 }
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes

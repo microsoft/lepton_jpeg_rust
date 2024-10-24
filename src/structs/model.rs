@@ -34,7 +34,8 @@ const NUM_NON_ZERO_EDGE_BINS: usize = 7;
 type NumNonZerosCountsT = [[[Branch; 1 << NON_ZERO_EDGE_COUNT_BITS]; 8]; 8];
 
 const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
-const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR;
+// The array was used only on indices [2,7] of [0,7]
+const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR - 2;
 const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
 #[derive(DefaultBoxed)]
@@ -369,7 +370,7 @@ impl ModelPerColor {
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
             let neg = !bool_reader
-                .get(sign, ModelComponent::Edge(ModelSubComponent::Sign))
+                .get_bit(sign, ModelComponent::Edge(ModelSubComponent::Sign))
                 .context(here!())?;
 
             coef = 1;
@@ -387,7 +388,7 @@ impl ModelPerColor {
 
                     let mut decoded_so_far = 1;
                     while i >= min_threshold {
-                        let cur_bit = bool_reader.get(
+                        let cur_bit = bool_reader.get_bit(
                             &mut thresh_prob[decoded_so_far],
                             ModelComponent::Edge(ModelSubComponent::Residual),
                         )? as i16;
@@ -471,7 +472,7 @@ impl ModelPerColor {
             let sign =
                 &mut self.sign_counts[calc_sign_index(best_prior as i16)][best_prior_bit_len];
 
-            bool_writer.put(
+            bool_writer.put_bit(
                 coef >= 0,
                 sign,
                 ModelComponent::Edge(ModelSubComponent::Sign),
@@ -491,7 +492,7 @@ impl ModelPerColor {
                     let mut encoded_so_far = 1;
                     while i >= min_threshold {
                         let cur_bit = (abs_coef & (1 << i)) != 0;
-                        bool_writer.put(
+                        bool_writer.put_bit(
                             cur_bit,
                             &mut thresh_prob[encoded_so_far],
                             ModelComponent::Edge(ModelSubComponent::Residual),
@@ -535,16 +536,18 @@ impl ModelPerColor {
         min_threshold: i32,
         length: i32,
     ) -> &mut [Branch; RESIDUAL_THRESHOLD_COUNTS_D3] {
-        // need to & 0xffff since C++ version casts to a uint16_t in the array lookup
+        // Need to & 0xffff since C++ version casts to a uint16_t in the array lookup
         // and we need to match that behavior. It's unlikely that this will be a problem
         // since it would require an extremely large best_prior, which is difficult
         // due to the range limits of 2047 of the coefficients but still in the
         // interest of correctness we should match the C++ behavior.
+        // This function was invoked only with `length - 2 >= min_threshold`,
+        // then 2nd array index range can be shortened by 2.
         return &mut self.residual_threshold_counts[cmp::min(
             ((best_prior_abs & 0xffff) >> min_threshold) as usize,
             self.residual_threshold_counts.len() - 1,
         )][cmp::min(
-            (length - min_threshold) as usize,
+            (length - min_threshold - 2) as usize,
             self.residual_threshold_counts[0].len() - 1,
         )];
     }
@@ -656,7 +659,7 @@ impl Model {
 
         let mut coef: i16 = 0;
         if length != 0 {
-            let neg = !bool_reader.get(sign_branch, sign_cmp)?;
+            let neg = !bool_reader.get_bit(sign_branch, sign_cmp)?;
             if length > 1 {
                 coef = bool_reader.get_n_bits(length - 1, bits_branch, bits_cmp)? as i16;
             }
@@ -701,7 +704,7 @@ impl Model {
 
         bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
         if coef != 0 {
-            bool_writer.put(coef > 0, sign_branch, sign_cmp)?;
+            bool_writer.put_bit(coef > 0, sign_branch, sign_cmp)?;
         }
 
         if coef_bit_len > 1 {

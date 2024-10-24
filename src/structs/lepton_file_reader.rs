@@ -10,6 +10,9 @@ use std::cmp::min;
 use std::io::{BufRead, Cursor, Write};
 use std::mem;
 
+#[cfg(feature = "detailed_tracing")]
+use log::info;
+
 use anyhow::{Context, Result};
 
 use crate::consts::*;
@@ -455,12 +458,12 @@ impl LeptonFileReader {
                     #[cfg(feature = "detailed_tracing")]
                     info!(
                         "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
-                        combined_thread_handoff.luma_y_start,
-                        combined_thread_handoff.segment_size,
-                        cursor.position() - _start_size,
-                        combined_thread_handoff.segment_offset_in_file,
-                        combined_thread_handoff.overhang_byte,
-                        combined_thread_handoff.num_overhang_bits
+                        thread_handoff.luma_y_start,
+                        thread_handoff.segment_size,
+                        result_buffer.len(),
+                        thread_handoff.segment_offset_in_file,
+                        thread_handoff.overhang_byte,
+                        thread_handoff.num_overhang_bits
                     );
 
                     if result_buffer.len() > thread_handoff.segment_size as usize {
@@ -669,7 +672,7 @@ fn parse_and_write_header() {
 }
 
 #[cfg(test)]
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     use std::io::Read;
 
     let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

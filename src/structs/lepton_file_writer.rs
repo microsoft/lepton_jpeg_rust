@@ -487,3 +487,40 @@ fn test_get_git_revision() {
 
     println!("{:x?}", lh.git_revision_prefix);
 }
+
+#[test]
+fn test_slrcity() {
+    test_file("slrcity")
+}
+
+#[cfg(test)]
+fn test_file(filename: &str) {
+    use crate::structs::lepton_file_reader::read_file;
+
+    let original = read_file(filename, ".jpg");
+
+    let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
+    enabled_features.max_threads = 2;
+
+    let mut output = Vec::new();
+
+    let _ = encode_lepton_wrapper(
+        &mut Cursor::new(&original),
+        &mut Cursor::new(&mut output),
+        &enabled_features,
+    )
+    .unwrap();
+
+    println!(
+        "Original size: {0}, compressed size: {1}",
+        original.len(),
+        output.len()
+    );
+
+    let mut recreate = Vec::new();
+
+    decode_lepton_file(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
+
+    assert_eq!(original.len(), recreate.len());
+    assert!(original == recreate);
+}

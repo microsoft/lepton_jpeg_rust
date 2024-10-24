@@ -66,7 +66,7 @@ pub struct Metrics {
 
 impl Metrics {
     #[allow(dead_code)]
-    fn record_compression_stats(
+    pub fn record_compression_stats(
         &mut self,
         cmp: ModelComponent,
         total_bits: i64,

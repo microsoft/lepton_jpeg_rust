@@ -11,7 +11,7 @@ use std::{fmt::Display, io::ErrorKind};
 #[non_exhaustive]
 /// Well-defined errors for bad things that are expected to happen as part of compression/decompression
 pub enum ExitCode {
-    //AssertionFailure = 1,
+    AssertionFailure = 1,
     //CodingError = 2,
     ShortRead = 3,
     Unsupported4Colors = 4,
@@ -42,11 +42,20 @@ pub enum ExitCode {
     VerificationContentMismatch = 1005,
     SyntaxError = 1006,
     FileNotFound = 1007,
+    ExternalVerificationFailed = 1008,
 }
 
 impl Display for ExitCode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl ExitCode {
+    /// Converts the error code into an integer for use as an error code when
+    /// returning from a C API.
+    pub fn as_integer_error_code(self) -> i32 {
+        self as i32
     }
 }
 
