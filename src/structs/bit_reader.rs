@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::BufRead;
+use std::io::{BufRead, Seek};
 
 use crate::LeptonError;
 use crate::{helpers::err_exit_code, jpeg_code};
@@ -17,24 +17,44 @@ pub struct BitReader<R> {
     bits: u64,
     bits_left: u8,
     cpos: u32,
-    offset: i32, // offset of next bit that we will read in the file
     eof: bool,
-    prev_offset: i32, // position of last escape. used to adjust the current position.
+    start_offset: u64,
+    truncated_ff: bool,
 }
 
-impl<R: BufRead> BitReader<R> {
-    pub fn new(inner: R) -> Self {
+impl<R: BufRead + Seek> BitReader<R> {
+    pub fn get_stream_position(&mut self) -> i32 {
+        let pos = (self.inner.stream_position().unwrap() - self.start_offset)
+            .try_into()
+            .unwrap();
+
+        if self.bits_left > 0 && !self.eof {
+            if self.bits as u8 == 0xff && !self.truncated_ff {
+                return pos - 2;
+            } else {
+                return pos - 1;
+            }
+        } else {
+            return pos;
+        }
+    }
+
+    pub fn new(mut inner: R) -> Self {
+        let start_offset = inner.stream_position().unwrap();
+
         BitReader {
             inner: inner,
             bits: 0,
             bits_left: 0,
             cpos: 0,
-            offset: 0,
             eof: false,
-            prev_offset: 0,
+            start_offset,
+            truncated_ff: false,
         }
     }
+}
 
+impl<R: BufRead> BitReader<R> {
     #[inline(always)]
     pub fn read(&mut self, bits_to_read: u8) -> std::io::Result<u16> {
         if bits_to_read == 0 {
@@ -73,8 +93,6 @@ impl<R: BufRead> BitReader<R> {
             if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) == 0 {
                 let mut v = 0;
                 while self.bits_left < bits_to_read {
-                    self.prev_offset = self.offset;
-                    self.offset += 1;
                     self.bits = (self.bits << 8) | buffer[v] as u64;
                     self.bits_left += 8;
                     v += 1;
@@ -100,19 +118,16 @@ impl<R: BufRead> BitReader<R> {
                     let mut buffer = [0u8];
 
                     if self.inner.read(&mut buffer)? == 0 {
-                        // Handle case of truncation: Since we assume that everything passed the end
+                        // Handle case of truncation in the middle of an escape: Since we assume that everything passed the end
                         // is a 0, if the file ends with 0xFF, then we have to assume that this was
                         // an escaped 0xff. Don't mark as eof yet, since there are still the 8 bits to read.
-                        self.prev_offset = self.offset;
-                        self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
+                        self.truncated_ff = true;
 
                         // continue since we still might need to read more 0 bits
                     } else if buffer[0] == 0 {
                         // this was an escaped FF
-                        self.prev_offset = self.offset;
-                        self.offset += 2;
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                     } else {
@@ -121,16 +136,14 @@ impl<R: BufRead> BitReader<R> {
                         return Err(LeptonError::new(
                             ExitCode::InvalidResetCode,
                             format!(
-                                "invalid reset {0:x} {1:x} code found in stream at offset {2}",
-                                0xff, buffer[0], self.offset
+                                "invalid reset {0:x} {1:x} code found in stream",
+                                0xff, buffer[0]
                             )
                             .as_str(),
                         )
                         .into());
                     }
                 } else {
-                    self.prev_offset = self.offset;
-                    self.offset += 1;
                     self.bits = (self.bits << 8) | (b as u64);
                     self.bits_left += 8;
                 }
@@ -141,7 +154,6 @@ impl<R: BufRead> BitReader<R> {
                 self.eof = true;
                 self.bits_left += 8;
                 self.bits <<= 8;
-                self.prev_offset = self.offset;
 
                 // continue since we still might need to read more 0 bits
             }
@@ -151,16 +163,6 @@ impl<R: BufRead> BitReader<R> {
             }
         }
         Ok(())
-    }
-
-    pub fn get_stream_position(&self) -> i32 {
-        // if there are still bits left, then we should be referring to the previous offset
-        if self.bits_left > 0 {
-            // if we still have bits, we need to go back to the last offset
-            return self.prev_offset;
-        } else {
-            return self.offset;
-        }
     }
 
     pub fn is_eof(&mut self) -> bool {
@@ -218,18 +220,12 @@ impl<R: BufRead> BitReader<R> {
         if h[0] != 0xff || h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
             return err_exit_code(
                 ExitCode::InvalidResetCode,
-                format!(
-                    "invalid reset code {0:x} {1:x} found in stream at offset {2}",
-                    h[0], h[1], self.offset
-                )
-                .as_str(),
+                format!("invalid reset code {0:x} {1:x} found in stream", h[0], h[1]).as_str(),
             );
         }
 
         // start from scratch after RST
         self.cpos += 1;
-        self.offset += 2;
-        self.prev_offset = self.offset;
         self.bits = 0;
         self.bits_left = 0;
 

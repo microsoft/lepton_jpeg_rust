@@ -34,7 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 use anyhow::{Context, Result};
 use std::cmp::{self, max};
-use std::io::BufRead;
+use std::io::{BufRead, Seek};
 
 use crate::helpers::here;
 
@@ -50,7 +50,7 @@ use crate::helpers::*;
 
 use super::jpeg_header::HuffTree;
 
-pub fn read_scan<R: BufRead>(
+pub fn read_scan<R: BufRead + Seek>(
     lp: &mut LeptonHeader,
     reader: &mut R,
     thread_handoff: &mut Vec<ThreadHandoff>,
@@ -94,7 +94,13 @@ pub fn read_scan<R: BufRead>(
                 // won't mean much, but we do need to divide the scan into sections
 
                 if do_handoff {
-                    crystallize_thread_handoff(&state, lp, &bit_reader, thread_handoff, last_dc);
+                    crystallize_thread_handoff(
+                        &state,
+                        lp,
+                        &mut bit_reader,
+                        thread_handoff,
+                        last_dc,
+                    );
 
                     do_handoff = false;
                 }
@@ -145,10 +151,10 @@ pub fn read_scan<R: BufRead>(
 
 /// stores handoff information in vector for the current position. This should
 /// be enough information to independently restart encoding at this offset (at least for baseline images)
-fn crystallize_thread_handoff<R: BufRead>(
+fn crystallize_thread_handoff<R: BufRead + Seek>(
     state: &JpegPositionState,
     lp: &LeptonHeader,
-    bit_reader: &BitReader<R>,
+    bit_reader: &mut BitReader<R>,
     thread_handoff: &mut Vec<ThreadHandoff>,
     lastdc: [i16; 4],
 ) {
@@ -173,7 +179,7 @@ fn crystallize_thread_handoff<R: BufRead>(
 }
 
 // reads subsequent scans for progressive images
-pub fn read_progressive_scan<R: BufRead>(
+pub fn read_progressive_scan<R: BufRead + Seek>(
     lp: &mut LeptonHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
@@ -370,7 +376,7 @@ pub fn read_progressive_scan<R: BufRead>(
 }
 
 /// reads an entire interval until the RST code
-fn decode_baseline_rst<R: BufRead>(
+fn decode_baseline_rst<R: BufRead + Seek>(
     state: &mut JpegPositionState,
     lp: &mut LeptonHeader,
     thread_handoff: &mut Vec<ThreadHandoff>,
