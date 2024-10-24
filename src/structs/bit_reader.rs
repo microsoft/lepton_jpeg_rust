@@ -20,7 +20,6 @@ pub struct BitReader<R> {
     offset: i32, // offset of next bit that we will read in the file
     eof: bool,
     prev_offset: i32, // position of last escape. used to adjust the current position.
-    last_byte_read: u8,
 }
 
 impl<R: BufRead> BitReader<R> {
@@ -33,7 +32,6 @@ impl<R: BufRead> BitReader<R> {
             offset: 0,
             eof: false,
             prev_offset: 0,
-            last_byte_read: 0,
         }
     }
 
@@ -72,25 +70,21 @@ impl<R: BufRead> BitReader<R> {
         let buffer = self.inner.fill_buf()?;
         if buffer.len() > 8 {
             let fill = u64::from_be_bytes(buffer[..8].try_into().unwrap());
-            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) != 0 {
-                return self.fill_register_slow(bits_to_read);
-            }
+            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) == 0 {
+                let mut v = 0;
+                while self.bits_left < bits_to_read {
+                    self.prev_offset = self.offset;
+                    self.offset += 1;
+                    self.bits = (self.bits << 8) | buffer[v] as u64;
+                    self.bits_left += 8;
+                    v += 1;
+                }
+                self.inner.consume(v);
 
-            let mut v = 0;
-            while self.bits_left < bits_to_read {
-                self.prev_offset = self.offset;
-                self.offset += 1;
-                self.bits = (self.bits << 8) | buffer[v] as u64;
-                self.bits_left += 8;
-                self.last_byte_read = buffer[v];
-                v += 1;
+                return Ok(());
             }
-            self.inner.consume(v);
-
-            return Ok(());
-        } else {
-            return self.fill_register_slow(bits_to_read);
         }
+        return self.fill_register_slow(bits_to_read);
     }
 
     #[cold]
@@ -113,7 +107,6 @@ impl<R: BufRead> BitReader<R> {
                         self.offset += 1; // we only have 1 byte to advance in the stream and don't want to go past EOF.
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
-                        self.last_byte_read = 0xff;
 
                         // continue since we still might need to read more 0 bits
                     } else if buffer[0] == 0 {
@@ -122,7 +115,6 @@ impl<R: BufRead> BitReader<R> {
                         self.offset += 2;
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
-                        self.last_byte_read = 0xff;
                     } else {
                         // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
                         // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
@@ -141,7 +133,6 @@ impl<R: BufRead> BitReader<R> {
                     self.offset += 1;
                     self.bits = (self.bits << 8) | (b as u64);
                     self.bits_left += 8;
-                    self.last_byte_read = b;
                 }
             } else {
                 // in case of a truncated file, we treat the rest of the file as zeros, but the
@@ -151,7 +142,6 @@ impl<R: BufRead> BitReader<R> {
                 self.bits_left += 8;
                 self.bits <<= 8;
                 self.prev_offset = self.offset;
-                self.last_byte_read = 0;
 
                 // continue since we still might need to read more 0 bits
             }
@@ -257,7 +247,7 @@ impl<R: BufRead> BitReader<R> {
 
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 
-        return (bits_already_read, self.last_byte_read & mask);
+        return (bits_already_read, (self.bits as u8) & mask);
     }
 }
 
