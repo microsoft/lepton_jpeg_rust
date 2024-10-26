@@ -99,9 +99,7 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> bool {
         let probability = branch.get_probability() as u64;
 
-        let split = ((((*tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
-            & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
-            + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE);
+        let split = mul_prob(*tmp_range, probability);
 
         // So optimizer understands that 0 should never happen and uses a cold jump
         // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
@@ -201,7 +199,7 @@ impl<R: Read> VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -211,34 +209,49 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
 
-        let mut value = 0;
+        let mut probability = branches[0].get_probability() as u64;
 
-        while value != A {
+        for value in 0..A {
             // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
             // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
             if value & 7 == 0 {
                 Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
             }
 
-            let cur_bit = self.get(
-                &mut branches[value],
-                &mut tmp_value,
-                &mut tmp_range,
-                &mut tmp_count,
-                _cmp,
-            );
-            if !cur_bit {
-                break;
+            let split = mul_prob(tmp_range, probability);
+
+            let bit = tmp_value >= split;
+
+            branches[value].record_and_update_bit(bit);
+
+            if bit {
+                tmp_range -= split;
+                tmp_value -= split;
+                if value < A - 1 {
+                    probability = branches[value + 1].get_probability() as u64;
+                }
+            } else {
+                tmp_range = split;
             }
 
-            value += 1;
+            let shift = (tmp_range).leading_zeros() as i32;
+
+            tmp_value <<= shift;
+            tmp_range <<= shift;
+            tmp_count -= shift;
+
+            if !bit {
+                self.value = tmp_value;
+                self.range = tmp_range;
+                self.count = tmp_count;
+                return Ok(value);
+            }
         }
 
         self.value = tmp_value;
         self.range = tmp_range;
         self.count = tmp_count;
-
-        return Ok(value);
+        return Ok(A);
     }
 
     #[inline(always)]
@@ -324,4 +337,10 @@ impl<R: Read> VPXBoolReader<R> {
 
         return Ok(());
     }
+}
+
+fn mul_prob(tmp_range: u64, probability: u64) -> u64 {
+    ((((tmp_range - (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)) >> 8) * probability)
+        & (0xFF << BITS_IN_VALUE_MINUS_LAST_BYTE))
+        + (1 << BITS_IN_VALUE_MINUS_LAST_BYTE)
 }
