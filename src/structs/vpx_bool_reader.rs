@@ -209,38 +209,39 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_range = self.range;
         let mut tmp_count = self.count;
 
-        let mut probability = branches[0].get_probability() as u64;
+        let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
 
-        for value in 0..A {
-            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
-            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
-            if value & 7 == 0 {
-                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
-            }
+        assert!(A > 8);
 
-            let split = mul_prob(tmp_range, probability);
+        // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
+        // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
+        Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
 
-            let bit = tmp_value >= split;
+        for value in 0..8 {
+            if tmp_value >= split {
+                branches[value].record_and_update_bit(true);
 
-            branches[value].record_and_update_bit(bit);
-
-            if bit {
                 tmp_range -= split;
                 tmp_value -= split;
-                if value < A - 1 {
-                    probability = branches[value + 1].get_probability() as u64;
-                }
+
+                let shift = (tmp_range).leading_zeros() as i32;
+
+                tmp_value <<= shift;
+                tmp_range <<= shift;
+                tmp_count -= shift;
+
+                split = mul_prob(tmp_range, branches[value + 1].get_probability() as u64);
             } else {
+                branches[value].record_and_update_bit(false);
+
                 tmp_range = split;
-            }
 
-            let shift = (tmp_range).leading_zeros() as i32;
+                let shift = (tmp_range).leading_zeros() as i32;
 
-            tmp_value <<= shift;
-            tmp_range <<= shift;
-            tmp_count -= shift;
+                tmp_value <<= shift;
+                tmp_range <<= shift;
+                tmp_count -= shift;
 
-            if !bit {
                 self.value = tmp_value;
                 self.range = tmp_range;
                 self.count = tmp_count;
@@ -248,10 +249,32 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
+        let mut value = 8;
+        while value != A {
+            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
+            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
+            if value & 7 == 0 {
+                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            }
+
+            let cur_bit = self.get(
+                &mut branches[value],
+                &mut tmp_value,
+                &mut tmp_range,
+                &mut tmp_count,
+                _cmp,
+            );
+            if !cur_bit {
+                break;
+            }
+
+            value += 1;
+        }
+
         self.value = tmp_value;
         self.range = tmp_range;
         self.count = tmp_count;
-        return Ok(A);
+        return Ok(value);
     }
 
     #[inline(always)]
