@@ -199,7 +199,7 @@ impl<R: Read> VPXBoolReader<R> {
         Ok(value)
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn get_unary_encoded<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
@@ -211,10 +211,16 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
 
-        assert!(A > 8);
+        assert!(
+            A > 8,
+            "we need at least 8 branches for unary encoding in order to be efficient"
+        );
 
         // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
         // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
+        //
+        // We know that after this we will have at least 8 iterations, so we can read 8 bits at once.
+        // In the extremely rare case that we have more than 8 bits, we delegate to the cold version to avoid excessive inlining.
         Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
 
         for value in 0..8 {
@@ -249,6 +255,23 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
+        self.value = tmp_value;
+        self.range = tmp_range;
+        self.count = tmp_count;
+
+        self.get_unary_encoded_cold(branches, _cmp)
+    }
+
+    #[cold]
+    fn get_unary_encoded_cold<const A: usize>(
+        &mut self,
+        branches: &mut [Branch; A],
+        _cmp: ModelComponent,
+    ) -> Result<usize> {
+        let mut tmp_value = self.value;
+        let mut tmp_range = self.range;
+        let mut tmp_count = self.count;
+
         let mut value = 8;
         while value != A {
             // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
@@ -274,7 +297,8 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value;
         self.range = tmp_range;
         self.count = tmp_count;
-        return Ok(value);
+
+        Ok(value)
     }
 
     #[inline(always)]
