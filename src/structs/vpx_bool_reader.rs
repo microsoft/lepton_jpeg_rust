@@ -154,22 +154,19 @@ impl<R: Read> VPXBoolReader<R> {
         _cmp: ModelComponent,
     ) -> Result<usize> {
         // check if A is a power of 2
-        assert!((A & (A - 1)) == 0);
+        debug_assert!((A & (A - 1)) == 0);
 
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
 
         let mut decoded_so_far = 1;
+        // We can read only each 8-th iteration: minimum 56 bits are in `value` after `vpx_reader_fill`,
+        // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1).
+        // As Lepton uses only 3 and 6 iterations, we can read only once.
+        debug_assert!(A <= 256);
+        tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
-        for index in 0..A.ilog2() {
-            // We can read only each 8-th iteration: minimum 56 bits are in `value` after `vpx_reader_fill`,
-            // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1).
-            // Reading like this we got perfect branch prediction or no branching at all for unrolled loop,
-            // possible since number of iterations is known beforehand.
-            if index & 7 == 0 {
-                tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
-            }
-
+        for _index in 0..A.ilog2() {
             let cur_bit = self.get(
                 &mut branches[decoded_so_far],
                 &mut tmp_value,
@@ -261,12 +258,7 @@ impl<R: Read> VPXBoolReader<R> {
         tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
         while value != A {
-            let cur_bit = self.get(
-                &mut branches[value],
-                &mut tmp_value,
-                &mut tmp_range,
-                _cmp,
-            );
+            let cur_bit = self.get(&mut branches[value], &mut tmp_value, &mut tmp_range, _cmp);
             if !cur_bit {
                 break;
             }
@@ -302,13 +294,8 @@ impl<R: Read> VPXBoolReader<R> {
                 tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
             }
 
-            coef |= (self.get(
-                &mut branches[i],
-                &mut tmp_value,
-                &mut tmp_range,
-                _cmp,
-            ) as usize)
-                << i;
+            coef |=
+                (self.get(&mut branches[i], &mut tmp_value, &mut tmp_range, _cmp) as usize) << i;
         }
 
         self.value = tmp_value;
@@ -339,10 +326,7 @@ impl<R: Read> VPXBoolReader<R> {
 
     //#[cold]
     #[inline(always)]
-    fn vpx_reader_fill(
-        mut tmp_value: u64,
-        upstream_reader: &mut R,
-    ) -> Result<u64> {
+    fn vpx_reader_fill(mut tmp_value: u64, upstream_reader: &mut R) -> Result<u64> {
         let mut shift: i32 = tmp_value.trailing_zeros() as i32;
         // Unset the last guard bit and set a new one
         tmp_value &= tmp_value - 1;

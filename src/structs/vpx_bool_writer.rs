@@ -296,9 +296,9 @@ impl<W: Write> VPXBoolWriter<W> {
         }
 
         // Ensure there's no ambigous collision with any index marker bytes
-        if (self.buffer.last().unwrap() & 0xe0) == 0xc0 {
-            self.buffer.push(0);
-        }
+        // if (self.buffer.last().unwrap() & 0xe0) == 0xc0 {
+        //     self.buffer.push(0);
+        // }
 
         self.writer.write_all(&self.buffer[..])?;
         Ok(())
