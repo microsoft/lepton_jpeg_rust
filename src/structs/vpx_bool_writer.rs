@@ -364,7 +364,7 @@ fn test_roundtrip_vpxboolwriter_n_bits() {
 
 #[test]
 fn test_roundtrip_vpxboolwriter_unary() {
-    const MAX_UNARY: usize = 20;
+    const MAX_UNARY: usize = 14;
 
     #[derive(Default)]
     struct BranchData {

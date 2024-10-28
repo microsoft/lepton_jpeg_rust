@@ -28,14 +28,13 @@ use crate::metrics::{Metrics, ModelComponent};
 
 use super::{branch::Branch, simple_hash::SimpleHash};
 
-const BITS_IN_BYTE: i32 = 8;
-const BITS_IN_VALUE: i32 = 64;
-const BITS_IN_VALUE_MINUS_LAST_BYTE: i32 = BITS_IN_VALUE - BITS_IN_BYTE;
+const BITS_IN_BYTE: u32 = 8;
+const BITS_IN_VALUE: u32 = 64;
+const BITS_IN_VALUE_MINUS_LAST_BYTE: u32 = BITS_IN_VALUE - BITS_IN_BYTE;
 
 pub struct VPXBoolReader<R> {
     value: u64,
     range: u64, // 128 << BITS_IN_VALUE_MINUS_LAST_BYTE <= range <= 255 << BITS_IN_VALUE_MINUS_LAST_BYTE
-    count: i32,
     upstream_reader: R,
     model_statistics: Metrics,
     #[allow(dead_code)]
@@ -46,14 +45,11 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn new(reader: R) -> Result<Self> {
         let mut r = VPXBoolReader {
             upstream_reader: reader,
-            value: 0,
-            count: -8,
+            value: 1 << (BITS_IN_VALUE - 1),
             range: 255 << BITS_IN_VALUE_MINUS_LAST_BYTE,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
-
-        Self::vpx_reader_fill(&mut r.value, &mut r.count, &mut r.upstream_reader)?;
 
         let mut dummy_branch = Branch::new();
         r.get_bit(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
@@ -94,7 +90,6 @@ impl<R: Read> VPXBoolReader<R> {
         branch: &mut Branch,
         tmp_value: &mut u64,
         tmp_range: &mut u64,
-        tmp_count: &mut i32,
         _cmp: ModelComponent,
     ) -> bool {
         let probability = branch.get_probability() as u64;
@@ -126,7 +121,6 @@ impl<R: Read> VPXBoolReader<R> {
 
         *tmp_value <<= shift;
         *tmp_range <<= shift;
-        *tmp_count -= shift;
 
         #[cfg(feature = "compression_stats")]
         {
@@ -138,7 +132,6 @@ impl<R: Read> VPXBoolReader<R> {
         {
             self.hash.hash(branch.get_u64());
             self.hash.hash(*tmp_value);
-            self.hash.hash(*tmp_count);
             self.hash.hash(*tmp_range);
 
             let hash = self.hash.get();
@@ -165,24 +158,22 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
-        let mut tmp_count = self.count;
 
         let mut decoded_so_far = 1;
 
         for index in 0..A.ilog2() {
-            // We can read only each 8-th iteration: minimum 57 bits are in `value` after `vpx_reader_fill`,
+            // We can read only each 8-th iteration: minimum 56 bits are in `value` after `vpx_reader_fill`,
             // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1).
-            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
-            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
+            // Reading like this we got perfect branch prediction or no branching at all for unrolled loop,
+            // possible since number of iterations is known beforehand.
             if index & 7 == 0 {
-                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+                tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
             }
 
             let cur_bit = self.get(
                 &mut branches[decoded_so_far],
                 &mut tmp_value,
                 &mut tmp_range,
-                &mut tmp_count,
                 _cmp,
             ) as usize;
             decoded_so_far <<= 1;
@@ -194,7 +185,6 @@ impl<R: Read> VPXBoolReader<R> {
 
         self.value = tmp_value;
         self.range = tmp_range;
-        self.count = tmp_count;
 
         Ok(value)
     }
@@ -207,7 +197,6 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> Result<usize> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
-        let mut tmp_count = self.count;
 
         let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
 
@@ -216,12 +205,11 @@ impl<R: Read> VPXBoolReader<R> {
             "we need at least 8 branches for unary encoding in order to be efficient"
         );
 
-        // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
-        // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
-        //
-        // We know that after this we will have at least 8 iterations, so we can read 8 bits at once.
-        // In the extremely rare case that we have more than 8 bits, we delegate to the cold version to avoid excessive inlining.
-        Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+        // We know that after this we can have at least 8 iterations,
+        // so we can decode 8 bits at once.
+        // In the extremely rare case that we have more than 8 bits,
+        // we delegate to the cold version to avoid excessive inlining.
+        tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
         for value in 0..8 {
             if tmp_value >= split {
@@ -234,7 +222,6 @@ impl<R: Read> VPXBoolReader<R> {
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
-                tmp_count -= shift;
 
                 split = mul_prob(tmp_range, branches[value + 1].get_probability() as u64);
             } else {
@@ -246,45 +233,38 @@ impl<R: Read> VPXBoolReader<R> {
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
-                tmp_count -= shift;
 
                 self.value = tmp_value;
                 self.range = tmp_range;
-                self.count = tmp_count;
+
                 return Ok(value);
             }
         }
 
-        self.value = tmp_value;
-        self.range = tmp_range;
-        self.count = tmp_count;
-
-        self.get_unary_encoded_cold(branches, _cmp)
+        self.get_unary_encoded_cold(branches, tmp_value, tmp_range, _cmp)
     }
 
     #[cold]
     fn get_unary_encoded_cold<const A: usize>(
         &mut self,
         branches: &mut [Branch; A],
+        mut tmp_value: u64,
+        mut tmp_range: u64,
         _cmp: ModelComponent,
     ) -> Result<usize> {
-        let mut tmp_value = self.value;
-        let mut tmp_range = self.range;
-        let mut tmp_count = self.count;
-
         let mut value = 8;
-        while value != A {
-            // Reading like this instead of old `tmp_count < 0` condition we got perfect branch prediction
-            // or no branching at all for unrolled loop, possible since number of iterations is known beforehand.
-            if value & 7 == 0 {
-                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
-            }
+        // we can read once as in all use cases `A = 11` and we read maximum 3 bits more
+        assert!(
+            A <= 16,
+            "with one additional read we can decode at most 8 bits"
+        );
+        tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
+        while value != A {
             let cur_bit = self.get(
                 &mut branches[value],
                 &mut tmp_value,
                 &mut tmp_range,
-                &mut tmp_count,
                 _cmp,
             );
             if !cur_bit {
@@ -296,7 +276,6 @@ impl<R: Read> VPXBoolReader<R> {
 
         self.value = tmp_value;
         self.range = tmp_range;
-        self.count = tmp_count;
 
         Ok(value)
     }
@@ -312,23 +291,21 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
-        let mut tmp_count = self.count;
 
         let mut coef = 0;
         for i in (0..n).rev() {
-            // Here the fastest way is to use this old condition, presumably as
+            // Here the fastest way is to use condition of `get_bit`, presumably as
             // this loop cannot be unrolled due to vaiable iterations number.
             // Moreover, this condition holds very rarely as `value` is usually already filled
             // by previous `get_bit` sign reading.
-            if tmp_count < 0 {
-                Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+            if tmp_value.trailing_zeros() >= BITS_IN_VALUE_MINUS_LAST_BYTE {
+                tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
             }
 
             coef |= (self.get(
                 &mut branches[i],
                 &mut tmp_value,
                 &mut tmp_range,
-                &mut tmp_count,
                 _cmp,
             ) as usize)
                 << i;
@@ -336,7 +313,6 @@ impl<R: Read> VPXBoolReader<R> {
 
         self.value = tmp_value;
         self.range = tmp_range;
-        self.count = tmp_count;
 
         return Ok(coef);
     }
@@ -345,44 +321,48 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn get_bit(&mut self, branch: &mut Branch, _cmp: ModelComponent) -> Result<bool> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
-        let mut tmp_count = self.count;
 
-        if tmp_count < 0 {
-            Self::vpx_reader_fill(&mut tmp_value, &mut tmp_count, &mut self.upstream_reader)?;
+        // We use a set bit after the stream bits as a guard
+        // and ensure that it never comes into the first byte,
+        // thus not changing `get` comparison result `value >= split`.
+        if tmp_value.trailing_zeros() >= BITS_IN_VALUE_MINUS_LAST_BYTE {
+            tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
         }
 
-        let bit = self.get(branch, &mut tmp_value, &mut tmp_range, &mut tmp_count, _cmp);
+        let bit = self.get(branch, &mut tmp_value, &mut tmp_range, _cmp);
 
         self.value = tmp_value;
         self.range = tmp_range;
-        self.count = tmp_count;
 
         return Ok(bit);
     }
 
-    #[cold]
+    //#[cold]
     #[inline(always)]
     fn vpx_reader_fill(
-        tmp_value: &mut u64,
-        tmp_count: &mut i32,
+        mut tmp_value: u64,
         upstream_reader: &mut R,
-    ) -> Result<()> {
-        let mut shift = BITS_IN_VALUE_MINUS_LAST_BYTE - (*tmp_count + BITS_IN_BYTE);
+    ) -> Result<u64> {
+        let mut shift: i32 = tmp_value.trailing_zeros() as i32;
+        // Unset the last guard bit and set a new one
+        tmp_value &= tmp_value - 1;
+        tmp_value |= 1 << (shift & 7);
 
-        while shift >= 0 {
-            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
-            let mut v = [0u8; 1];
+        // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
+        let mut v = [0u8; 1];
+        shift -= 7;
+
+        while shift > 0 {
             let bytes_read = upstream_reader.read(&mut v)?;
             if bytes_read == 0 {
                 break;
             }
 
-            *tmp_value |= (v[0] as u64) << shift;
-            shift -= BITS_IN_BYTE;
-            *tmp_count += BITS_IN_BYTE;
+            tmp_value |= (v[0] as u64) << shift;
+            shift -= 8;
         }
 
-        return Ok(());
+        return Ok(tmp_value);
     }
 }
 
