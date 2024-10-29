@@ -295,11 +295,6 @@ impl<W: Write> VPXBoolWriter<W> {
             self.put_bit(false, &mut dummy_branch, ModelComponent::Dummy)?;
         }
 
-        // Ensure there's no ambigous collision with any index marker bytes
-        // if (self.buffer.last().unwrap() & 0xe0) == 0xc0 {
-        //     self.buffer.push(0);
-        // }
-
         self.writer.write_all(&self.buffer[..])?;
         Ok(())
     }

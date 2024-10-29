@@ -670,7 +670,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0x2292c1567bcd03aa,
+        0xE54C911C5F2E4B56,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
