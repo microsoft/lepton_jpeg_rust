@@ -85,8 +85,8 @@ impl<R: Read> VPXBoolReader<R> {
     // and it allows to reduce number of operations to compute `split` - previously `big_split` -
     // and to update `range` and `shift`). Third, we use local values for all stream state variables
     // to reduce number of memory load/store operations in decoding of many-bit values. Fourth,
-    // we use in `value` a set bit after the stream bits as a guard - completely get rid of bit counter
-    // and not changing comparison result `value >= split`.
+    // we use in `value` a set bit after the stream bits as a guard - completely getting rid
+    // of bit counter and not changing comparison result `value >= split`.
     #[inline(always)]
     pub fn get(
         &mut self,
@@ -374,23 +374,26 @@ impl<R: Read> VPXBoolReader<R> {
     // after this returned value has `56 | (63 - shift)` stream bits
     #[inline(always)]
     fn vpx_reader_fill(mut tmp_value: u64, upstream_reader: &mut R) -> Result<u64> {
-        let mut shift: i32 = tmp_value.trailing_zeros() as i32;
-        // Unset the last guard bit and set a new one
-        tmp_value &= tmp_value - 1;
-        tmp_value |= 1 << (shift & 7);
+        // This `if` does not change performance but drops down instructions count by 3 %
+        if tmp_value & 0xFF == 0 {
+            let mut shift: i32 = tmp_value.trailing_zeros() as i32;
+            // Unset the last guard bit and set a new one
+            tmp_value &= tmp_value - 1;
+            tmp_value |= 1 << (shift & 7);
 
-        // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
-        let mut v = [0u8; 1];
-        shift -= 7;
+            // BufReader is already pretty efficient handling small reads, so optimization doesn't help that much
+            let mut v = [0u8; 1];
+            shift -= 7;
 
-        while shift > 0 {
-            let bytes_read = upstream_reader.read(&mut v)?;
-            if bytes_read == 0 {
-                break;
+            while shift > 0 {
+                let bytes_read = upstream_reader.read(&mut v)?;
+                if bytes_read == 0 {
+                    break;
+                }
+
+                tmp_value |= (v[0] as u64) << shift;
+                shift -= 8;
             }
-
-            tmp_value |= (v[0] as u64) << shift;
-            shift -= 8;
         }
 
         return Ok(tmp_value);
