@@ -46,7 +46,7 @@ impl<R: Read> VPXBoolReader<R> {
     pub fn new(reader: R) -> Result<Self> {
         let mut r = VPXBoolReader {
             upstream_reader: reader,
-            value: 1 << (BITS_IN_VALUE - 1),
+            value: 1 << (BITS_IN_VALUE - 1), // guard bit
             range: 255 << BITS_IN_VALUE_MINUS_LAST_BYTE,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
@@ -84,7 +84,9 @@ impl<R: Read> VPXBoolReader<R> {
     // Second, `range` and `split` are also stored in 8 MSBs of the same size variables (it is new
     // and it allows to reduce number of operations to compute `split` - previously `big_split` -
     // and to update `range` and `shift`). Third, we use local values for all stream state variables
-    // to reduce number of memory load/store operations in decoding of many-bit values.
+    // to reduce number of memory load/store operations in decoding of many-bit values. Fourth,
+    // we use in `value` a set bit after the stream bits as a guard - completely get rid of bit counter
+    // and not changing comparison result `value >= split`.
     #[inline(always)]
     pub fn get(
         &mut self,
@@ -118,7 +120,7 @@ impl<R: Read> VPXBoolReader<R> {
             *tmp_range = split;
         }
 
-        let shift = (*tmp_range).leading_zeros() as i32;
+        let shift = (*tmp_range).leading_zeros();
 
         *tmp_value <<= shift;
         *tmp_range <<= shift;
@@ -198,7 +200,7 @@ impl<R: Read> VPXBoolReader<R> {
 
         let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
 
-        assert!(
+        debug_assert!(
             A > 8,
             "we need at least 8 branches for unary encoding in order to be efficient"
         );
@@ -216,10 +218,32 @@ impl<R: Read> VPXBoolReader<R> {
                 tmp_range -= split;
                 tmp_value -= split;
 
-                let shift = (tmp_range).leading_zeros() as i32;
+                let shift = (tmp_range).leading_zeros();
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
+
+                #[cfg(feature = "compression_stats")]
+                {
+                    self.model_statistics
+                        .record_compression_stats(_cmp, 1, i64::from(shift));
+                }
+        
+                #[cfg(feature = "detailed_tracing")]
+                {
+                    self.hash.hash(branches[value].get_u64());
+                    self.hash.hash(tmp_value);
+                    self.hash.hash(tmp_range);
+        
+                    let hash = self.hash.get();
+                    //if hash == 0x88f9c945
+                    {
+                        print!("({0}:{1:x})", true as u8, hash);
+                        if hash % 8 == 0 {
+                            println!();
+                        }
+                    }
+                }
 
                 split = mul_prob(tmp_range, branches[value + 1].get_probability() as u64);
             } else {
@@ -227,10 +251,32 @@ impl<R: Read> VPXBoolReader<R> {
 
                 tmp_range = split;
 
-                let shift = (tmp_range).leading_zeros() as i32;
+                let shift = (tmp_range).leading_zeros();
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
+
+                #[cfg(feature = "compression_stats")]
+                {
+                    self.model_statistics
+                        .record_compression_stats(_cmp, 1, i64::from(shift));
+                }
+        
+                #[cfg(feature = "detailed_tracing")]
+                {
+                    self.hash.hash(branches[value].get_u64());
+                    self.hash.hash(tmp_value);
+                    self.hash.hash(tmp_range);
+        
+                    let hash = self.hash.get();
+                    //if hash == 0x88f9c945
+                    {
+                        print!("({0}:{1:x})", false as u8, hash);
+                        if hash % 8 == 0 {
+                            println!();
+                        }
+                    }
+                }
 
                 self.value = tmp_value;
                 self.range = tmp_range;
@@ -252,7 +298,7 @@ impl<R: Read> VPXBoolReader<R> {
     ) -> Result<usize> {
         let mut value = 8;
         // we can read once as in all use cases `A = 11` and we read maximum 3 bits more
-        assert!(
+        debug_assert!(
             A <= 16,
             "with one additional read we can decode at most 8 bits"
         );
@@ -310,9 +356,8 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
 
-        // We use a set bit after the stream bits as a guard
-        // and ensure that it never comes into the first byte,
-        // thus not changing `get` comparison result `value >= split`.
+        // We ensure that the guard bit never comes into the first byte,
+        // thus having in `value` at least 8 stream bits.
         if tmp_value & VALUE_MASK == 0 {
             tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
         }
@@ -325,7 +370,8 @@ impl<R: Read> VPXBoolReader<R> {
         return Ok(bit);
     }
 
-    //#[cold]
+    // Fill `tmp_value` maximally still preserving space for the guard bit,
+    // after this returned value has `56 | shift` stream bits
     #[inline(always)]
     fn vpx_reader_fill(mut tmp_value: u64, upstream_reader: &mut R) -> Result<u64> {
         let mut shift: i32 = tmp_value.trailing_zeros() as i32;
