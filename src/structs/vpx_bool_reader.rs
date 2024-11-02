@@ -31,6 +31,7 @@ use super::{branch::Branch, simple_hash::SimpleHash};
 const BITS_IN_BYTE: u32 = 8;
 const BITS_IN_VALUE: u32 = 64;
 const BITS_IN_VALUE_MINUS_LAST_BYTE: u32 = BITS_IN_VALUE - BITS_IN_BYTE;
+const VALUE_MASK: u64 = (1 << BITS_IN_VALUE_MINUS_LAST_BYTE) - 1;
 
 pub struct VPXBoolReader<R> {
     value: u64,
@@ -290,7 +291,7 @@ impl<R: Read> VPXBoolReader<R> {
             // this loop cannot be unrolled due to vaiable iterations number.
             // Moreover, this condition holds very rarely as `value` is usually already filled
             // by previous `get_bit` sign reading.
-            if tmp_value.trailing_zeros() >= BITS_IN_VALUE_MINUS_LAST_BYTE {
+            if tmp_value & VALUE_MASK == 0 {
                 tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
             }
 
@@ -312,7 +313,7 @@ impl<R: Read> VPXBoolReader<R> {
         // We use a set bit after the stream bits as a guard
         // and ensure that it never comes into the first byte,
         // thus not changing `get` comparison result `value >= split`.
-        if tmp_value.trailing_zeros() >= BITS_IN_VALUE_MINUS_LAST_BYTE {
+        if tmp_value & VALUE_MASK == 0 {
             tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
         }
 

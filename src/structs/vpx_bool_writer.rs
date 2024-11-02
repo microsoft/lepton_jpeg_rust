@@ -290,6 +290,7 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     pub fn finish(&mut self) -> Result<()> {
+        // push real stream bits out of `value`
         for _i in 0..32 {
             let mut dummy_branch = Branch::new();
             self.put_bit(false, &mut dummy_branch, ModelComponent::Dummy)?;
@@ -359,7 +360,7 @@ fn test_roundtrip_vpxboolwriter_n_bits() {
 
 #[test]
 fn test_roundtrip_vpxboolwriter_unary() {
-    const MAX_UNARY: usize = 14;
+    const MAX_UNARY: usize = 11; // the size used in Lepton
 
     #[derive(Default)]
     struct BranchData {
