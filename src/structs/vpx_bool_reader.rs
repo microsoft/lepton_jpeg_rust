@@ -228,13 +228,13 @@ impl<R: Read> VPXBoolReader<R> {
                     self.model_statistics
                         .record_compression_stats(_cmp, 1, i64::from(shift));
                 }
-        
+
                 #[cfg(feature = "detailed_tracing")]
                 {
                     self.hash.hash(branches[value].get_u64());
                     self.hash.hash(tmp_value);
                     self.hash.hash(tmp_range);
-        
+
                     let hash = self.hash.get();
                     //if hash == 0x88f9c945
                     {
@@ -261,13 +261,13 @@ impl<R: Read> VPXBoolReader<R> {
                     self.model_statistics
                         .record_compression_stats(_cmp, 1, i64::from(shift));
                 }
-        
+
                 #[cfg(feature = "detailed_tracing")]
                 {
                     self.hash.hash(branches[value].get_u64());
                     self.hash.hash(tmp_value);
                     self.hash.hash(tmp_range);
-        
+
                     let hash = self.hash.get();
                     //if hash == 0x88f9c945
                     {
