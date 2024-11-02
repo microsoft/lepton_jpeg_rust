@@ -371,7 +371,7 @@ impl<R: Read> VPXBoolReader<R> {
     }
 
     // Fill `tmp_value` maximally still preserving space for the guard bit,
-    // after this returned value has `56 | shift` stream bits
+    // after this returned value has `56 | (63 - shift)` stream bits
     #[inline(always)]
     fn vpx_reader_fill(mut tmp_value: u64, upstream_reader: &mut R) -> Result<u64> {
         let mut shift: i32 = tmp_value.trailing_zeros() as i32;
