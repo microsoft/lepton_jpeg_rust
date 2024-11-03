@@ -118,25 +118,18 @@ impl<W: Write> VPXBoolWriter<W> {
         *tmp_count += shift;
 
         if *tmp_count >= 0 {
-            let offset = shift - *tmp_count;
+            let offset = shift - *tmp_count - 1;
 
-            if ((*tmp_value << (offset - 1)) & 0x80000000) != 0 {
-                let mut x = self.buffer.len() - 1;
-
-                while self.buffer[x] == 0xFF {
-                    self.buffer[x] = 0;
-
-                    assert!(x > 0);
-                    x -= 1;
-                }
-
-                self.buffer[x] += 1;
+            *tmp_value <<= offset;
+            if (*tmp_value & 0x80000000) != 0 {
+                self.carry();
             }
 
-            self.buffer.push((*tmp_value >> (24 - offset)) as u8);
-            *tmp_value <<= offset;
-            shift = *tmp_count;
+            *tmp_value <<= 1;
+            self.buffer.push((*tmp_value >> 24) as u8);
             *tmp_value &= 0xffffff;
+
+            shift = *tmp_count;
             *tmp_count -= 8;
         }
 
@@ -148,6 +141,20 @@ impl<W: Write> VPXBoolWriter<W> {
         }
 
         Ok(())
+    }
+
+    #[cold]
+    fn carry(&mut self) {
+        let mut x = self.buffer.len() - 1;
+
+        while self.buffer[x] == 0xFF {
+            self.buffer[x] = 0;
+
+            assert!(x > 0);
+            x -= 1;
+        }
+
+        self.buffer[x] += 1;
     }
 
     #[inline(always)]
