@@ -198,27 +198,24 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_value = self.value;
         let mut tmp_range = self.range;
 
-        let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
+        for value in 0..A {
+            let split = mul_prob(tmp_range, branches[value].get_probability() as u64);
 
-        debug_assert!(
-            A > 7,
-            "we need at least 8 branches for unary encoding in order to be efficient"
-        );
+            // We know that after this we have min 56 stream bits in `tmp_value`,
+            // and can have at least 7 iterations, so we can decode 7 bits at once.
+            // Each iteration needs at least 8 bits of stream in `tmp_value` and
+            // consumes max 7 of them.
+            if value == 0 || value == 7 {
+                tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
+            }
 
-        // We know that after this we have min 56 stream bits in `tmp_value`,
-        // and can have at least 7 iterations, so we can decode 7 bits at once.
-        // In the extremely rare case that we have more than 7 bits,
-        // we delegate to the cold version to avoid excessive inlining.
-        tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
-
-        for value in 0..7 {
             if tmp_value >= split {
                 branches[value].record_and_update_bit(true);
 
                 tmp_range -= split;
                 tmp_value -= split;
 
-                let shift = (tmp_range).leading_zeros();
+                let shift = tmp_range.leading_zeros();
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
@@ -244,14 +241,12 @@ impl<R: Read> VPXBoolReader<R> {
                         }
                     }
                 }
-
-                split = mul_prob(tmp_range, branches[value + 1].get_probability() as u64);
             } else {
                 branches[value].record_and_update_bit(false);
 
                 tmp_range = split;
 
-                let shift = (tmp_range).leading_zeros();
+                let shift = tmp_range.leading_zeros();
 
                 tmp_value <<= shift;
                 tmp_range <<= shift;
@@ -285,38 +280,10 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
-        self.get_unary_encoded_cold(branches, tmp_value, tmp_range, _cmp)
-    }
-
-    #[cold]
-    fn get_unary_encoded_cold<const A: usize>(
-        &mut self,
-        branches: &mut [Branch; A],
-        mut tmp_value: u64,
-        mut tmp_range: u64,
-        _cmp: ModelComponent,
-    ) -> Result<usize> {
-        let mut value = 7;
-        // we can read once as in all use cases `A = 11` and we read maximum 4 bits more
-        debug_assert!(
-            A <= 14,
-            "with one additional read we can decode at most 8 bits"
-        );
-        tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
-
-        while value != A {
-            let cur_bit = self.get(&mut branches[value], &mut tmp_value, &mut tmp_range, _cmp);
-            if !cur_bit {
-                break;
-            }
-
-            value += 1;
-        }
-
         self.value = tmp_value;
         self.range = tmp_range;
 
-        Ok(value)
+        Ok(A)
     }
 
     #[inline(always)]
