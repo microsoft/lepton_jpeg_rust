@@ -201,17 +201,17 @@ impl<R: Read> VPXBoolReader<R> {
         let mut split = mul_prob(tmp_range, branches[0].get_probability() as u64);
 
         debug_assert!(
-            A > 8,
+            A > 7,
             "we need at least 8 branches for unary encoding in order to be efficient"
         );
 
-        // We know that after this we can have at least 8 iterations,
-        // so we can decode 8 bits at once.
-        // In the extremely rare case that we have more than 8 bits,
+        // We know that after this we have min 56 stream bits in `tmp_value`,
+        // and can have at least 7 iterations, so we can decode 7 bits at once.
+        // In the extremely rare case that we have more than 7 bits,
         // we delegate to the cold version to avoid excessive inlining.
         tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
-        for value in 0..8 {
+        for value in 0..7 {
             if tmp_value >= split {
                 branches[value].record_and_update_bit(true);
 
@@ -296,10 +296,10 @@ impl<R: Read> VPXBoolReader<R> {
         mut tmp_range: u64,
         _cmp: ModelComponent,
     ) -> Result<usize> {
-        let mut value = 8;
-        // we can read once as in all use cases `A = 11` and we read maximum 3 bits more
+        let mut value = 7;
+        // we can read once as in all use cases `A = 11` and we read maximum 4 bits more
         debug_assert!(
-            A <= 16,
+            A <= 14,
             "with one additional read we can decode at most 8 bits"
         );
         tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
