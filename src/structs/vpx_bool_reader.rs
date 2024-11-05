@@ -163,10 +163,10 @@ impl<R: Read> VPXBoolReader<R> {
         let mut tmp_range = self.range;
 
         let mut decoded_so_far = 1;
-        // We can read only each 8-th iteration: minimum 56 bits are in `value` after `vpx_reader_fill`,
-        // and one `get` consumes at most 7 bits (with `range` coming from >127 to 1).
+        // We can read only each 7-th iteration: minimum 56 bits are in `value` after `vpx_reader_fill`,
+        // and one `get` needs 8 bits but consumes at most 7 bits (with `range` coming from >127 to 1).
         // As Lepton uses only 3 and 6 iterations, we can read only once.
-        debug_assert!(A <= 256);
+        debug_assert!(A <= 128);
         tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
 
         for _index in 0..A.ilog2() {
@@ -205,6 +205,7 @@ impl<R: Read> VPXBoolReader<R> {
             // and can have at least 7 iterations, so we can decode 7 bits at once.
             // Each iteration needs at least 8 bits of stream in `tmp_value` and
             // consumes max 7 of them.
+            debug_assert!(A <= 14);
             if value == 0 || value == 7 {
                 tmp_value = Self::vpx_reader_fill(tmp_value, &mut self.upstream_reader)?;
             }
