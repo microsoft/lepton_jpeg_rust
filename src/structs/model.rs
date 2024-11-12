@@ -4,20 +4,19 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use anyhow::{Context, Result};
 use std::cmp;
 use std::io::{Read, Write};
 
-use crate::consts::*;
-use crate::helpers::{calc_sign_index, err_exit_code, here, u16_bit_length, u32_bit_length};
-use crate::lepton_error::ExitCode;
-use crate::metrics::{ModelComponent, ModelSubComponent};
-use crate::structs::branch::Branch;
 use default_boxed::DefaultBoxed;
 
-use super::quantization_tables::QuantizationTables;
-use super::vpx_bool_reader::VPXBoolReader;
-use super::vpx_bool_writer::VPXBoolWriter;
+use crate::consts::*;
+use crate::helpers::{calc_sign_index, u16_bit_length, u32_bit_length};
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::metrics::{ModelComponent, ModelSubComponent};
+use crate::structs::branch::Branch;
+use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::vpx_bool_reader::VPXBoolReader;
+use crate::structs::vpx_bool_writer::VPXBoolWriter;
 
 const BLOCK_TYPES: usize = 2; // setting this to 3 gives us ~1% savings.. 2/3 from BLOCK_TYPES=2
 
@@ -126,8 +125,9 @@ impl Model {
     /// calculates a checksum of the model so we can compare two models for equality
     #[cfg(test)]
     pub fn model_checksum(&mut self) -> u64 {
-        use siphasher::sip::SipHasher13;
         use std::hash::Hasher;
+
+        use siphasher::sip::SipHasher13;
 
         let mut h = SipHasher13::new();
         self.walk(|x| {
@@ -227,7 +227,7 @@ impl ModelPerColor {
             ModelComponent::Coef(ModelSubComponent::Sign),
             ModelComponent::Coef(ModelSubComponent::Noise),
         )
-        .context(here!());
+        .context();
     }
 
     #[inline(always)]
@@ -278,7 +278,7 @@ impl ModelPerColor {
                 num_non_zeros_prob,
                 ModelComponent::NonZero7x7Count,
             )
-            .context(here!());
+            .context();
     }
 
     pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
@@ -297,7 +297,7 @@ impl ModelPerColor {
                 prob_edge_eob,
                 ModelComponent::NonZeroEdgeCount,
             )
-            .context(here!());
+            .context();
     }
 
     pub fn read_non_zero_7x7_count<R: Read>(
@@ -310,7 +310,7 @@ impl ModelPerColor {
 
         return Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
-            .context(here!())? as u8);
+            .context()? as u8);
     }
 
     pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
@@ -324,7 +324,7 @@ impl ModelPerColor {
 
         return Ok(bool_reader
             .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
-            .context(here!())? as u8);
+            .context()? as u8);
     }
 
     pub fn read_edge_coefficient<R: Read>(
@@ -360,7 +360,7 @@ impl ModelPerColor {
                 length_branches,
                 ModelComponent::Edge(ModelSubComponent::Exp),
             )
-            .context(here!())? as i32;
+            .context()? as i32;
 
         let mut coef = 0;
         if length != 0 {
@@ -371,7 +371,7 @@ impl ModelPerColor {
 
             let neg = !bool_reader
                 .get_bit(sign, ModelComponent::Edge(ModelSubComponent::Sign))
-                .context(here!())?;
+                .context()?;
 
             coef = 1;
 
@@ -522,7 +522,7 @@ impl ModelPerColor {
                             res_prob,
                             ModelComponent::Edge(ModelSubComponent::Noise),
                         )
-                        .context(here!())?;
+                        .context()?;
                 }
             }
         }
@@ -588,7 +588,7 @@ impl Model {
             ModelComponent::DC(ModelSubComponent::Sign),
             ModelComponent::DC(ModelSubComponent::Noise),
         )
-        .context(here!());
+        .context();
     }
 
     pub fn write_dc<W: Write>(
@@ -611,7 +611,7 @@ impl Model {
             ModelComponent::DC(ModelSubComponent::Sign),
             ModelComponent::DC(ModelSubComponent::Noise),
         )
-        .context(here!());
+        .context();
     }
 
     fn get_dc_branches(

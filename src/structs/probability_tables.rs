@@ -4,17 +4,15 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use wide::{i16x8, i32x8};
+
 use crate::consts::*;
 use crate::enabled_features;
+use crate::structs::block_based_image::AlignedBlock;
+use crate::structs::block_context::NeighborData;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
-
-use super::block_based_image::AlignedBlock;
-use super::block_context::NeighborData;
-
-use wide::i16x8;
-use wide::i32x8;
 
 pub struct ProbabilityTables {
     left_present: bool,

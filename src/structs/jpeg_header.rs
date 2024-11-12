@@ -32,21 +32,17 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use anyhow::{Context, Result};
-
 use std::io::Read;
 
+use crate::consts::JPegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
-use crate::lepton_error::ExitCode;
-
-use crate::consts::JPegType;
-
-use super::component_info::ComponentInfo;
-use super::lepton_header::LeptonHeader;
-use super::quantization_tables::QuantizationTables;
-use super::truncate_components::TruncateComponents;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::structs::component_info::ComponentInfo;
+use crate::structs::lepton_header::LeptonHeader;
+use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::truncate_components::TruncateComponents;
 
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
@@ -86,11 +82,11 @@ impl HuffCodes {
 
         // symbol-value of code is its position in the table
         for i in 0..16 {
-            ensure_space(segment, clen_offset, i + 1).context(here!())?;
+            ensure_space(segment, clen_offset, i + 1).context()?;
 
             let mut j = 0;
             while j < segment[clen_offset + (i & 0xff)] {
-                ensure_space(segment, cval_offset, k + 1).context(here!())?;
+                ensure_space(segment, cval_offset, k + 1).context()?;
 
                 let len = (1 + i) as u16;
 
@@ -394,7 +390,7 @@ impl JPegHeader {
         loop {
             match self
                 .parse_next_segment(reader, enabled_features)
-                .context(crate::helpers::here!())?
+                .context()?
             {
                 ParseSegmentResult::EOI => {
                     return Ok(false);
@@ -501,7 +497,7 @@ impl JPegHeader {
     ) -> Result<ParseSegmentResult> {
         let mut header = [0u8; 4];
 
-        if reader.read(&mut header[0..1]).context(here!())? == 0 {
+        if reader.read(&mut header[0..1]).context()? == 0 {
             // didn't get an EOI
             return Ok(ParseSegmentResult::EOI);
         }
@@ -510,13 +506,13 @@ impl JPegHeader {
             return err_exit_code(ExitCode::UnsupportedJpeg, "invalid header encountered");
         }
 
-        reader.read_exact(&mut header[1..2]).context(here!())?;
+        reader.read_exact(&mut header[1..2]).context()?;
         if header[1] == jpeg_code::EOI {
             return Ok(ParseSegmentResult::EOI);
         }
 
         // now read the second two bytes so we can get the size of the segment
-        reader.read_exact(&mut header[2..]).context(here!())?;
+        reader.read_exact(&mut header[2..]).context()?;
 
         let mut segment_data = Vec::new();
 
@@ -527,7 +523,7 @@ impl JPegHeader {
 
         segment_data.resize(usize::from(segment_size) - 2, 0);
 
-        reader.read_exact(&mut segment_data).context(here!())?;
+        reader.read_exact(&mut segment_data).context()?;
 
         let mut hpos = 0;
         let len = segment_data.len();
@@ -552,8 +548,8 @@ impl JPegHeader {
                     hpos+=1;
 
                     // build huffman codes & trees
-                    self.h_codes[lval][rval] = HuffCodes::construct_from_segment(&segment[hpos..]).context(here!())?;
-                    self.h_trees[lval][rval] = HuffTree::construct_hufftree(&self.h_codes[lval][rval], enabled_features.accept_invalid_dht).context(here!())?;
+                    self.h_codes[lval][rval] = HuffCodes::construct_from_segment(&segment[hpos..]).context()?;
+                    self.h_trees[lval][rval] = HuffTree::construct_hufftree(&self.h_codes[lval][rval], enabled_features.accept_invalid_dht).context()?;
                     self.ht_set[lval][rval] = 1;
 
                     let mut skip = 16;
@@ -590,7 +586,7 @@ impl JPegHeader {
                     hpos+=1;
                     if lval == 0
                     {
-                        ensure_space(segment,hpos, 64).context(here!())?;
+                        ensure_space(segment,hpos, 64).context()?;
 
                         // 8 bit precision
                         for i in 0..64
@@ -612,7 +608,7 @@ impl JPegHeader {
                     }
                     else
                     {
-                        ensure_space(segment,hpos, 128).context(here!())?;
+                        ensure_space(segment,hpos, 128).context()?;
 
                         // 16 bit precision
                         for i in 0..64
@@ -645,14 +641,14 @@ impl JPegHeader {
             jpeg_code::DRI =>
             {  // DRI segment
                 // define restart interval
-                ensure_space(segment,hpos, 2).context(here!())?;
+                ensure_space(segment,hpos, 2).context()?;
                 self.rsti = b_short(segment[hpos], segment[hpos + 1]) as i32;
             }
 
             jpeg_code::SOS => // SOS segment
             {
                 // prepare next scan
-                ensure_space(segment,hpos, 1).context(here!())?;
+                ensure_space(segment,hpos, 1).context()?;
 
                 self.cs_cmpc = usize::from(segment[hpos]);
 
@@ -669,7 +665,7 @@ impl JPegHeader {
                 hpos+=1;
                 for i in 0..self.cs_cmpc
                 {
-                    ensure_space(segment,hpos, 2).context(here!())?;
+                    ensure_space(segment,hpos, 2).context()?;
 
                     let mut cmp = 0;
                     while cmp < self.cmpc && segment[hpos] != self.cmp_info[cmp].jid
@@ -695,7 +691,7 @@ impl JPegHeader {
                     hpos += 2;
                 }
 
-                ensure_space(segment,hpos, 3).context(here!())?;
+                ensure_space(segment,hpos, 3).context()?;
 
                 self.cs_from = segment[hpos + 0];
                 self.cs_to = segment[hpos + 1];
@@ -735,7 +731,7 @@ impl JPegHeader {
                     self.jpeg_type = JPegType::Sequential;
                 }
 
-                ensure_space(segment,hpos, 6).context(here!())?;
+                ensure_space(segment,hpos, 6).context()?;
 
                 // check data precision, only 8 bit is allowed
                 let lval = segment[hpos];
@@ -770,7 +766,7 @@ impl JPegHeader {
                 // components contained in image
                 for cmp in  0..self.cmpc
                 {
-                    ensure_space(segment,hpos, 3).context(here!())?;
+                    ensure_space(segment,hpos, 3).context()?;
 
                     self.cmp_info[cmp].jid = segment[hpos];
                     self.cmp_info[cmp].sfv = lbits(segment[hpos + 1], 4) as i32;
@@ -940,8 +936,7 @@ fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
 /// constructs a huffman table for testing purposes from a given distribution
 #[cfg(test)]
 pub fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
-    use std::collections::BinaryHeap;
-    use std::collections::HashMap;
+    use std::collections::{BinaryHeap, HashMap};
 
     struct Node {
         symbol: Option<u8>,

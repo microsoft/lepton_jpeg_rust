@@ -13,22 +13,21 @@ mod structs;
 pub mod enabled_features;
 pub mod lepton_error;
 
-use anyhow::Context;
+use std::io::{BufRead, Cursor, Seek, Write};
+
 pub use enabled_features::EnabledFeatures;
-use helpers::{catch_unwind_result, copy_cstring_utf8_to_buffer, here};
+use helpers::{catch_unwind_result, copy_cstring_utf8_to_buffer};
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
 
-use core::result::Result;
-
-use std::io::{BufRead, Cursor, Seek, Write};
+use crate::lepton_error::{AddContext, Result};
 
 /// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-) -> Result<Metrics, LeptonError> {
+) -> Result<Metrics> {
     structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
         .map_err(LeptonError::from)
 }
@@ -38,7 +37,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-) -> Result<Metrics, LeptonError> {
+) -> Result<Metrics> {
     structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
         .map_err(LeptonError::from)
 }
@@ -47,7 +46,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-) -> Result<(Vec<u8>, Metrics), LeptonError> {
+) -> Result<(Vec<u8>, Metrics)> {
     structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
         .map_err(LeptonError::from)
 }
@@ -240,7 +239,7 @@ impl LeptonFileReaderContext {
         input_complete: bool,
         writer: &mut impl Write,
         output_buffer_size: usize,
-    ) -> Result<bool, LeptonError> {
+    ) -> Result<bool> {
         self.reader
             .process_buffer(input, input_complete, writer, output_buffer_size)
             .map_err(LeptonError::from)
@@ -320,11 +319,7 @@ pub unsafe extern "C" fn decompress_image(
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
 #[allow(dead_code)]
-pub fn dump_jpeg(
-    input_data: &[u8],
-    all: bool,
-    enabled_features: &EnabledFeatures,
-) -> Result<(), LeptonError> {
+pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeatures) -> Result<()> {
     use structs::lepton_file_reader::decode_lepton_file_image;
     use structs::lepton_file_writer::read_jpeg;
 
@@ -343,8 +338,7 @@ pub fn dump_jpeg(
     } else {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) =
-            decode_lepton_file_image(&mut reader, enabled_features).context(here!())?;
+        (lh, block_image) = decode_lepton_file_image(&mut reader, enabled_features).context()?;
 
         loop {
             println!("parsed header:");
@@ -353,7 +347,7 @@ pub fn dump_jpeg(
 
             if !lh
                 .advance_next_header_segment(&enabled_features)
-                .context(here!())?
+                .context()?
             {
                 break;
             }

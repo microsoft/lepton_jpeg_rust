@@ -5,21 +5,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
-use std::{io::Cursor, path::Path};
-
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read};
+use std::path::Path;
 
+use lepton_jpeg::lepton_error::{ExitCode, LeptonError};
 use lepton_jpeg::{
-    create_decompression_context, decompress_image, free_decompression_context,
-    WrapperCompressImage, WrapperDecompressImage, WrapperDecompressImageEx,
+    create_decompression_context, decode_lepton, decompress_image, encode_lepton,
+    encode_lepton_verify, free_decompression_context, EnabledFeatures, WrapperCompressImage,
+    WrapperDecompressImage, WrapperDecompressImageEx,
 };
-use lepton_jpeg::{
-    decode_lepton, encode_lepton, encode_lepton_verify,
-    lepton_error::{ExitCode, LeptonError},
-    EnabledFeatures,
-};
-
 use rstest::rstest;
 
 fn read_file(filename: &str, ext: &str) -> Vec<u8> {
