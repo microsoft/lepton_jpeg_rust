@@ -562,7 +562,7 @@ fn roundtrip_zeros() {
         &block,
         &block,
         [1; 64],
-        0xD35CE4F07BEEAA3B,
+        0x4154B63BDE6F2912,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -579,7 +579,7 @@ fn roundtrip_dc_only() {
         &block,
         &block,
         [1; 64],
-        0x3F8ED27DE13533D,
+        0x2556719DE605BB41,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -599,7 +599,7 @@ fn roundtrip_edges_only() {
         &block,
         &block,
         [1; 64],
-        0xCC68BE8F2B8638AE,
+        0x91061AE0FBE7C626,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -623,7 +623,7 @@ fn roundtrip_ac_only() {
         &block,
         &block,
         [1; 64],
-        0xD1656611371816F9,
+        0xC634E0F1A29033CA,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -638,7 +638,7 @@ fn roundtrip_ones() {
         &block,
         &block,
         [1; 64],
-        0x5204BE68761A40EB,
+        0x6B2A9E7E1DA9A4B3,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -656,7 +656,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x49A1AC82D7FF9DBE,
+        0x12050FD2C854F927,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -670,7 +670,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0x95AB6F40A8D52322,
+        0xE514715BD531D80E,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -700,7 +700,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0x2251A81E41EF0118,
+        0x146C568A90EB0F14,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -711,7 +711,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0x62FD1F1BE6787FFF,
+        0x12ECA3C71A29300C,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -737,7 +737,7 @@ fn roundtrip_unique() {
         &above_left,
         &here,
         [1; 64],
-        0x33705FECAA1DBEEA,
+        0x8FA72ED7E5961A1C,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -765,7 +765,7 @@ fn roundtrip_non_zeros_counts() {
         &block,
         &block,
         [1; 64],
-        0x4369094AE45044F4,
+        0x6C93F3EF5495440B,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -782,7 +782,7 @@ fn make_random_model() -> Box<Model> {
     let mut rng = crate::helpers::get_rand_from_seed([2u8; 32]);
 
     model.walk(|x| {
-        x.set_count(rng.gen_range(0x01..=0xfe) * 256 + rng.gen_range(0x01..=0xfe));
+        x.set_count(rng.gen_range(0x01..=0xff) * 256 + rng.gen_range(0x01..=0xff));
     });
     model
 }
