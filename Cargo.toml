@@ -32,7 +32,6 @@ bytemuck = "1"
 byteorder = "1.4"
 flate2 = "1.0"
 default-boxed = "0.2"
-anyhow = { version="1.0", features = ["backtrace"]}
 wide = "0.7"
 log = "0.4"
 simple_logger ="5.0"

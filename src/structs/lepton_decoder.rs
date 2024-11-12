@@ -27,7 +27,6 @@ use crate::structs::truncate_components::*;
 use crate::structs::vpx_bool_reader::VPXBoolReader;
 use crate::Result;
 
-
 // reads stream from reader and populates image_data with the decoded data
 
 #[inline(never)] // don't inline so that the profiler can get proper data

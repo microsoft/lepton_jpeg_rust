@@ -37,6 +37,7 @@ use std::io::Read;
 
 use crate::consts::*;
 use crate::helpers::*;
+use crate::lepton_error::Result;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::structs::bit_reader::BitReader;
 use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
@@ -44,8 +45,6 @@ use crate::structs::jpeg_header::HuffTree;
 use crate::structs::jpeg_position_state::JpegPositionState;
 use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::lepton_error::Result;
-
 
 pub fn read_scan<R: Read>(
     lp: &mut LeptonHeader,

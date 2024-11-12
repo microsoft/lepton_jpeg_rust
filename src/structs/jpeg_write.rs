@@ -45,7 +45,6 @@ use crate::structs::jpeg_position_state::JpegPositionState;
 use crate::structs::row_spec::RowSpec;
 use crate::{jpeg_code, Result};
 
-
 /// write a range of rows corresponding to the thread_handoff structure into the writer.
 /// Only works with baseline non-progressive images.
 pub fn jpeg_write_baseline_row_range(

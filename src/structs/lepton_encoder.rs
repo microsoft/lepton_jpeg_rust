@@ -27,7 +27,6 @@ use crate::structs::truncate_components::*;
 use crate::structs::vpx_bool_writer::VPXBoolWriter;
 use crate::Result;
 
-
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
     quantization_tables: &[QuantizationTables],

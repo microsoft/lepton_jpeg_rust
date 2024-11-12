@@ -34,6 +34,7 @@ pub enum ExitCode {
     InvalidPadding = 45,
     //WrapperOutputWriteFailed = 101,
     BadLeptonFile = 102,
+    ChannelFailure = 103,
 
     // Add new failures here
     GeneralFailure = 1000,
@@ -101,10 +102,12 @@ impl LeptonError {
     }
 
     #[cold]
+    #[inline(never)]
+    #[track_caller]
     pub fn add_context(&mut self) {
         self.i
             .message
-            .push_str(&format!(" at {}", std::panic::Location::caller()));
+            .push_str(&format!("\n at {}", std::panic::Location::caller()));
     }
 }
 
@@ -157,7 +160,7 @@ impl From<TryFromIntError> for LeptonError {
 impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
     #[track_caller]
     fn from(e: std::sync::mpsc::SendError<T>) -> Self {
-        let mut e = LeptonError::new(ExitCode::GeneralFailure, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
         e.add_context();
         e
     }
@@ -165,7 +168,7 @@ impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
 impl From<std::sync::mpsc::RecvError> for LeptonError {
     #[track_caller]
     fn from(e: std::sync::mpsc::RecvError) -> Self {
-        let mut e = LeptonError::new(ExitCode::GeneralFailure, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
         e.add_context();
         e
     }

@@ -279,29 +279,30 @@ fn verify_16bitmath() {
 #[test]
 fn verify_extern_16bit_math_retry() {
     // verify retry logic for 16 bit math encoded image
+    for i in 0..10 {
+        let compressed = read_file("mathoverflow_16", ".lep");
 
-    let compressed = read_file("mathoverflow_16", ".lep");
+        let input = read_file("mathoverflow", ".jpg");
 
-    let input = read_file("mathoverflow", ".jpg");
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
 
-    let mut original = Vec::new();
-    original.resize(input.len() + 10000, 0);
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImage(
+                compressed[..].as_ptr(),
+                compressed.len() as u64,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+            );
 
-    let mut original_size: u64 = 0;
-    unsafe {
-        let retval = WrapperDecompressImage(
-            compressed[..].as_ptr(),
-            compressed.len() as u64,
-            original[..].as_mut_ptr(),
-            original.len() as u64,
-            8,
-            (&mut original_size) as *mut u64,
-        );
-
-        assert_eq!(retval, 0);
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
     }
-    assert_eq!(input.len() as u64, original_size);
-    assert_eq!(input[..], original[..(original_size as usize)]);
 }
 
 /// encodes as LEP and codes back to JPG to mostly test the encoder. Can't check against

@@ -180,6 +180,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             return 0;
         }
         Err(e) => {
+            println!("Error: {:?}", e);
             return e.exit_code().as_integer_error_code();
         }
     }
