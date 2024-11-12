@@ -421,8 +421,11 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                 }
                 State::Block(thread_id, data_length) => {
                     if let Some(a) = source.take(data_length, self.retention_bytes) {
-                        self.sender_channels[usize::from(thread_id)]
-                            .send(Message::WriteBlock(thread_id, a))?;
+                        // ignore if we get error sending because channel died since we will collect
+                        // the error later. We don't want to interrupt the other threads that are processing
+                        // so we only get the error from the thread that actually errored out.
+                        let _ = self.sender_channels[usize::from(thread_id)]
+                            .send(Message::WriteBlock(thread_id, a));
                         self.current_state = State::StartBlock;
                     } else {
                         break;

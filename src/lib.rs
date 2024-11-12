@@ -29,7 +29,6 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
-        .map_err(LeptonError::from)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -39,7 +38,6 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
-        .map_err(LeptonError::from)
 }
 
 /// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
@@ -48,7 +46,6 @@ pub fn encode_lepton_verify(
     enabled_features: &EnabledFeatures,
 ) -> Result<(Vec<u8>, Metrics)> {
     structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
-        .map_err(LeptonError::from)
 }
 
 /// C ABI interface for compressing image, exposed from DLL
@@ -180,7 +177,6 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             return 0;
         }
         Err(e) => {
-            println!("Error: {:?}", e);
             return e.exit_code().as_integer_error_code();
         }
     }
@@ -243,7 +239,6 @@ impl LeptonFileReaderContext {
     ) -> Result<bool> {
         self.reader
             .process_buffer(input, input_complete, writer, output_buffer_size)
-            .map_err(LeptonError::from)
     }
 }
 
@@ -334,8 +329,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
             println!("parsed header:");
             let s = format!("{jh:?}");
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
-        })
-        .map_err(LeptonError::from)?;
+        })?;
     } else {
         let mut reader = Cursor::new(input_data);
 
