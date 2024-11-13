@@ -4,6 +4,12 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use std::env;
+use std::fs::{File, OpenOptions};
+use std::io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
 use lepton_jpeg::metrics::CpuTimeMeasure;
 use lepton_jpeg::{
     decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, EnabledFeatures, ExitCode,
@@ -13,16 +19,6 @@ use log::{error, info};
 use simple_logger::SimpleLogger;
 #[cfg(all(target_os = "windows", feature = "use_rayon"))]
 use thread_priority::{set_current_thread_priority, ThreadPriority, WinAPIThreadPriority};
-
-use std::fs::OpenOptions;
-use std::process::{Command, Stdio};
-use std::time::Instant;
-use std::{
-    env,
-    fs::File,
-    io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write},
-    time::Duration,
-};
 
 #[derive(Copy, Clone, Debug)]
 enum FileType {

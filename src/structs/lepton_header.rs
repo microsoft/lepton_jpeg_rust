@@ -2,20 +2,17 @@ use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use default_boxed::DefaultBoxed;
-
-use crate::helpers::{buffer_prefix_matches_marker, err_exit_code, here};
-use crate::EnabledFeatures;
-use crate::{consts::*, ExitCode};
-
-use super::{
-    jpeg_header::JPegHeader, thread_handoff::ThreadHandoff, truncate_components::TruncateComponents,
-};
-
-use anyhow::{Context, Result};
-
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+
+use crate::consts::*;
+use crate::helpers::buffer_prefix_matches_marker;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::structs::jpeg_header::JPegHeader;
+use crate::structs::thread_handoff::ThreadHandoff;
+use crate::structs::truncate_components::TruncateComponents;
+use crate::EnabledFeatures;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
 
@@ -161,7 +158,7 @@ impl LeptonHeader {
 
         self.raw_jpeg_header = self
             .read_lepton_compressed_header(&mut compressed_reader)
-            .context(here!())?;
+            .context()?;
 
         self.raw_jpeg_header_read_index = 0;
 
@@ -169,7 +166,7 @@ impl LeptonHeader {
             let mut header_data_cursor = Cursor::new(&self.raw_jpeg_header[..]);
             self.jpeg_header
                 .parse(&mut header_data_cursor, &enabled_features)
-                .context(here!())?;
+                .context()?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
 
@@ -221,7 +218,7 @@ impl LeptonHeader {
         let result = self
             .jpeg_header
             .parse(&mut header_cursor, enabled_features)
-            .context(here!())?;
+            .context()?;
 
         self.raw_jpeg_header_read_index += header_cursor.stream_position()? as usize;
 
@@ -263,7 +260,7 @@ impl LeptonHeader {
                     if e.kind() == ErrorKind::UnexpectedEof {
                         break;
                     } else {
-                        return Err(anyhow::Error::new(e));
+                        return Err(e.into());
                     }
                 }
             }
@@ -368,8 +365,8 @@ impl LeptonHeader {
             let mut c = Cursor::new(&mut compressed_header);
             let mut encoder = ZlibEncoder::new(&mut c, Compression::default());
 
-            encoder.write_all(&lepton_header[..]).context(here!())?;
-            encoder.finish().context(here!())?;
+            encoder.write_all(&lepton_header[..]).context()?;
+            encoder.finish().context()?;
         }
 
         writer.write_all(&LEPTON_FILE_HEADER)?;
@@ -541,7 +538,7 @@ impl LeptonHeader {
         if self
             .jpeg_header
             .parse(&mut mirror, enabled_features)
-            .context(here!())?
+            .context()?
         {
             // append the header if it was not the end of file marker
             self.raw_jpeg_header.append(&mut output);

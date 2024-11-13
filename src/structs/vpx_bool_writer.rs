@@ -25,8 +25,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 use std::io::{Result, Write};
 
 use crate::metrics::{Metrics, ModelComponent};
-
-use super::{branch::Branch, simple_hash::SimpleHash};
+use crate::structs::branch::Branch;
+use crate::structs::simple_hash::SimpleHash;
 
 pub struct VPXBoolWriter<W> {
     low_value: u32,
@@ -318,7 +318,7 @@ impl<W: Write> VPXBoolWriter<W> {
 }
 
 #[cfg(test)]
-use super::vpx_bool_reader::VPXBoolReader;
+use crate::structs::vpx_bool_reader::VPXBoolReader;
 
 #[test]
 fn test_roundtrip_vpxboolwriter_n_bits() {

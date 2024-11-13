@@ -1,23 +1,20 @@
+use std::cmp;
+use std::collections::VecDeque;
+use std::io::{Cursor, Read, Write};
+use std::mem::swap;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+
+use byteorder::WriteBytesExt;
+
+use crate::lepton_error::{AddContext, ExitCode, LeptonError, Result};
 /// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
 ///
 /// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
 /// ends up with an interleaved stream of blocks from each thread.
 ///
 /// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
-use crate::{helpers::*, structs::partial_buffer::PartialBuffer, ExitCode, LeptonError};
-use anyhow::{Context, Result};
-use byteorder::WriteBytesExt;
-
-use std::{
-    cmp,
-    collections::VecDeque,
-    io::{Cursor, Read, Write},
-    mem::swap,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
-    },
-};
+use crate::{helpers::*, lepton_error::err_exit_code, structs::partial_buffer::PartialBuffer};
 
 /// The message that is sent between the threads
 enum Message {
@@ -156,9 +153,9 @@ where
             let f = move || -> Result<RESULT> {
                 let r = processor_clone(&mut thread_writer, thread_id)?;
 
-                thread_writer.flush().context(here!())?;
+                thread_writer.flush().context()?;
 
-                thread_writer.sender.send(Message::Eof).context(here!())?;
+                thread_writer.sender.send(Message::Eof).context()?;
                 Ok(r)
             };
 
@@ -174,7 +171,7 @@ where
         let mut threads_left = num_threads;
 
         while threads_left > 0 {
-            let value = rx.recv().context(here!());
+            let value = rx.recv().context();
             match value {
                 Ok(Message::Eof) => {
                     threads_left -= 1;
@@ -182,10 +179,10 @@ where
                 Ok(Message::WriteBlock(thread_id, b)) => {
                     let l = b.len() - 1;
 
-                    writer.write_u8(thread_id).context(here!())?;
-                    writer.write_u8((l & 0xff) as u8).context(here!())?;
-                    writer.write_u8(((l >> 8) & 0xff) as u8).context(here!())?;
-                    writer.write_all(&b[..]).context(here!())?;
+                    writer.write_u8(thread_id).context()?;
+                    writer.write_u8((l & 0xff) as u8).context()?;
+                    writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
+                    writer.write_all(&b[..]).context()?;
                 }
                 Err(_) => {
                     // if we get a receiving error here, this means that one of the threads broke
@@ -198,7 +195,7 @@ where
         // in place scope will join all the threads before it exits
         return Ok(());
     })
-    .context(here!())?;
+    .context()?;
 
     let mut thread_not_run = false;
     let mut results = Vec::new();
@@ -277,7 +274,7 @@ impl MultiplexReader {
                     }
                 },
                 Err(e) => {
-                    return Result::Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+                    return std::io::Result::Err(std::io::Error::new(std::io::ErrorKind::Other, e));
                 }
             }
         }
@@ -424,8 +421,11 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                 }
                 State::Block(thread_id, data_length) => {
                     if let Some(a) = source.take(data_length, self.retention_bytes) {
-                        self.sender_channels[usize::from(thread_id)]
-                            .send(Message::WriteBlock(thread_id, a))?;
+                        // ignore if we get error sending because channel died since we will collect
+                        // the error later. We don't want to interrupt the other threads that are processing
+                        // so we only get the error from the thread that actually errored out.
+                        let _ = self.sender_channels[usize::from(thread_id)]
+                            .send(Message::WriteBlock(thread_id, a));
                         self.current_state = State::StartBlock;
                     } else {
                         break;
@@ -449,7 +449,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
         let mut error = None;
         for _i in 0..self.sender_channels.len() {
-            match self.result_receiver.recv().context(here!())? {
+            match self.result_receiver.recv().context()? {
                 (thread_id, Ok(r)) => {
                     results[thread_id] = Some(r);
                 }
@@ -460,7 +460,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         }
 
         if let Some(e) = error {
-            Err(e).context(here!())
+            Err(e).context()
         } else {
             let results: Vec<RESULT> = results.into_iter().map(|x| x.unwrap()).collect();
             Ok(results)
@@ -516,7 +516,7 @@ fn test_multiplex_read_error() {
 
     let e: LeptonError = multiplex_state.complete().unwrap_err().into();
     assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert_eq!(e.message(), "test error");
+    assert!(e.message().starts_with("test error"));
 }
 
 #[test]
@@ -546,7 +546,7 @@ fn test_multiplex_write_error() {
     .into();
 
     assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert_eq!(e.message(), "test error");
+    assert!(e.message().starts_with("test error"));
 }
 
 // test catching errors in the multiplex_write function

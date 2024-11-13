@@ -4,30 +4,28 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use anyhow::{Context, Result};
-
-use bytemuck::cast_mut;
-use wide::i32x8;
-
-use default_boxed::DefaultBoxed;
-
 use std::cmp;
 use std::io::Read;
 
+use bytemuck::cast_mut;
+use default_boxed::DefaultBoxed;
+use wide::i32x8;
+
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
-use crate::helpers::{err_exit_code, here, u16_bit_length};
-use crate::lepton_error::ExitCode;
-
+use crate::helpers::u16_bit_length;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::metrics::Metrics;
-use crate::structs::{
-    block_based_image::AlignedBlock, block_based_image::BlockBasedImage, model::Model,
-    model::ModelPerColor, neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
-    vpx_bool_reader::VPXBoolReader,
-};
-
-use super::block_context::{BlockContext, NeighborData};
+use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::structs::block_context::{BlockContext, NeighborData};
+use crate::structs::model::{Model, ModelPerColor};
+use crate::structs::neighbor_summary::NeighborSummary;
+use crate::structs::probability_tables::ProbabilityTables;
+use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::row_spec::RowSpec;
+use crate::structs::truncate_components::*;
+use crate::structs::vpx_bool_reader::VPXBoolReader;
+use crate::Result;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -118,7 +116,7 @@ pub fn lepton_decode_row_range<R: Read>(
             component_size_in_blocks[component],
             features,
         )
-        .context(here!())?;
+        .context()?;
     }
     Ok(bool_reader.drain_stats())
 }
@@ -160,7 +158,7 @@ fn decode_row_wrapper<R: Read>(
                 color_index,
                 features,
             )
-            .context(here!())?;
+            .context()?;
         } else {
             parse_token::<R, false>(
                 model,
@@ -173,7 +171,7 @@ fn decode_row_wrapper<R: Read>(
                 color_index,
                 features,
             )
-            .context(here!())?;
+            .context()?;
         }
 
         let offset = block_context.next();
@@ -426,7 +424,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 ) -> Result<()> {
     let mut num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
-        .context(here!())?;
+        .context()?;
 
     let delta;
     let mut zig15offset;

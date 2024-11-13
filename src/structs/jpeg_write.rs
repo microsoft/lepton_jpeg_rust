@@ -32,25 +32,18 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use anyhow::{Context, Result};
 use bytemuck::{cast, cast_ref};
 use wide::{i16x16, CmpEq};
 
-use crate::{
-    consts::{JPegDecodeStatus, JPegType},
-    helpers::{err_exit_code, here, u16_bit_length},
-    jpeg_code,
-    lepton_error::ExitCode,
-    structs::block_based_image::AlignedBlock,
-};
-
-use super::{
-    bit_writer::BitWriter,
-    block_based_image::BlockBasedImage,
-    jpeg_header::{HuffCodes, JPegEncodingInfo},
-    jpeg_position_state::JpegPositionState,
-    row_spec::RowSpec,
-};
+use crate::consts::{JPegDecodeStatus, JPegType};
+use crate::helpers::u16_bit_length;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::structs::bit_writer::BitWriter;
+use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::structs::jpeg_header::{HuffCodes, JPegEncodingInfo};
+use crate::structs::jpeg_position_state::JpegPositionState;
+use crate::structs::row_spec::RowSpec;
+use crate::{jpeg_code, Result};
 
 /// write a range of rows corresponding to the thread_handoff structure into the writer.
 /// Only works with baseline non-progressive images.
@@ -104,7 +97,7 @@ pub fn jpeg_write_baseline_row_range(
                 image_data,
                 jenc,
             )
-            .context(here!())?;
+            .context()?;
         }
     }
 
@@ -150,7 +143,7 @@ pub fn jpeg_write_entire_scan(
                 image_data,
                 jenc,
             )
-            .context(here!())?;
+            .context()?;
 
             if r {
                 break;
@@ -260,7 +253,7 @@ fn recode_one_mcu_row(
                         jf.cs_from,
                         jf.cs_to,
                     )
-                    .context(here!())?;
+                    .context()?;
 
                     sta = state.next_mcu_pos(jf);
 
@@ -281,7 +274,7 @@ fn recode_one_mcu_row(
                         jf.cs_to,
                         &mut correction_bits,
                     )
-                    .context(here!())?;
+                    .context()?;
 
                     sta = state.next_mcu_pos(jf);
 
@@ -484,7 +477,7 @@ fn encode_ac_prg_fs(
                 ExitCode::UnsupportedJpeg,
                 "there must be at least one EOB symbol run in the huffman table to encode EOBs",
             )
-            .context(here!());
+            .context();
         }
 
         state.eobrun += 1;
@@ -576,7 +569,7 @@ fn encode_ac_prg_sa(
                 ExitCode::UnsupportedJpeg,
                 "there must be at least one EOB symbol run in the huffman table to encode EOBs",
             )
-            .context(here!());
+            .context();
         }
 
         state.eobrun += 1;
@@ -632,11 +625,11 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 /// roundtrips a block through the encoder and decoder and checks that the output matches the input
 #[cfg(test)]
 fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
-    use crate::structs::jpeg_header::generate_huff_table_from_distribution;
-    use crate::structs::{
-        bit_reader::BitReader, jpeg_header::HuffTree, jpeg_read::decode_block_seq,
-    };
     use std::io::Cursor;
+
+    use crate::structs::bit_reader::BitReader;
+    use crate::structs::jpeg_header::{generate_huff_table_from_distribution, HuffTree};
+    use crate::structs::jpeg_read::decode_block_seq;
 
     let mut bitwriter = BitWriter::new(1024);
 
