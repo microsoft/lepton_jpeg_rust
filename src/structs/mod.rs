@@ -32,6 +32,7 @@ mod probability_tables;
 mod quantization_tables;
 mod row_spec;
 mod simple_hash;
+mod simple_threadpool;
 mod thread_handoff;
 mod truncate_components;
 mod vpx_bool_reader;

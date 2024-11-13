@@ -105,7 +105,9 @@ fn my_spawn_simple<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    std::thread::spawn(f);
+    use super::simple_threadpool;
+
+    simple_threadpool::execute(f);
 }
 
 #[cfg(feature = "use_rayon")]

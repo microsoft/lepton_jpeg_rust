@@ -7,6 +7,7 @@
 use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
 use crate::structs::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use crate::structs::probability_tables::ProbabilityTables;
+
 pub struct BlockContext {
     cur_block_index: i32,
     above_block_index: i32,
