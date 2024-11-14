@@ -169,6 +169,8 @@ where
 
         // wait to collect work and done messages from all the threads
         let mut threads_left = num_threads;
+        let mut packets = vec![];
+        packets.resize(num_threads, VecDeque::<Vec<u8>>::new());
 
         while threads_left > 0 {
             let value = rx.recv().context();
@@ -177,24 +179,44 @@ where
                     threads_left -= 1;
                 }
                 Ok(Message::WriteBlock(thread_id, b)) => {
-                    // block length and thread header
-                    let l = b.len() - 1;
-                    if l == 4095 || l == 16383 || l == 65535 {
-                        // length is a special power of 2 - standard block length is 2^16
-                        writer
-                            .write_u8(thread_id | ((b.len().ilog2() as u8 >> 1) - 5) << 4)
-                            .context()?;
-                    } else {
-                        writer.write_u8(thread_id).context()?;
-                        writer.write_u8((l & 0xff) as u8).context()?;
-                        writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
-                    }
-                    writer.write_all(&b[..]).context()?;
+                    packets[thread_id as usize].push_back(b);
                 }
                 Err(_) => {
                     // if we get a receiving error here, this means that one of the threads broke
                     // with an error, and this error will be collected when we join the threads
                     break;
+                }
+            }
+        }
+
+        // carousseling to write data packets from all threads
+        if threads_left == 0 {
+            for i in &packets {
+                threads_left += if i.len() > 0 { 1 } else { 0 };
+            }
+
+            let mut curr_write_thread: usize = 0;
+            while threads_left > 0 {
+                curr_write_thread = (curr_write_thread + 1) % num_threads;
+                if packets[curr_write_thread].len() > 0 {
+                    let a = packets[curr_write_thread].pop_front().unwrap();
+                    let mut c = curr_write_thread as u8;
+                    // block length and thread header
+                    let l = a.len() - 1;
+                    if l == 4095 || l == 16383 || l == 65535 {
+                        // length is a special power of 2 - standard block length is 2^16
+                        c |= ((l.ilog2() as u8 >> 1) - 4) << 4;
+                        writer.write_u8(c).context()?;
+                    } else {
+                        writer.write_u8(c).context()?;
+                        writer.write_u8((l & 0xff) as u8).context()?;
+                        writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
+                    }
+                    writer.write_all(&a[..]).context()?;
+
+                    if packets[curr_write_thread].len() == 0 {
+                        threads_left -= 1;
+                    }
                 }
             }
         }
