@@ -177,11 +177,18 @@ where
                     threads_left -= 1;
                 }
                 Ok(Message::WriteBlock(thread_id, b)) => {
+                    // block length and thread header
                     let l = b.len() - 1;
-
-                    writer.write_u8(thread_id).context()?;
-                    writer.write_u8((l & 0xff) as u8).context()?;
-                    writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
+                    if l == 4095 || l == 16383 || l == 65535 {
+                        // length is a special power of 2 - standard block length is 2^16
+                        writer
+                            .write_u8(thread_id | ((b.len().ilog2() as u8 >> 1) - 5) << 4)
+                            .context()?;
+                    } else {
+                        writer.write_u8(thread_id).context()?;
+                        writer.write_u8((l & 0xff) as u8).context()?;
+                        writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
+                    }
                     writer.write_all(&b[..]).context()?;
                 }
                 Err(_) => {
