@@ -189,7 +189,7 @@ where
             }
         }
 
-        // carousseling to write data packets from all threads
+        // carouseling to write data packets from all threads
         if threads_left == 0 {
             for i in &packets {
                 threads_left += if i.len() > 0 { 1 } else { 0 };
@@ -197,7 +197,6 @@ where
 
             let mut curr_write_thread: usize = 0;
             while threads_left > 0 {
-                curr_write_thread = (curr_write_thread + 1) % num_threads;
                 if packets[curr_write_thread].len() > 0 {
                     let a = packets[curr_write_thread].pop_front().unwrap();
                     let mut c = curr_write_thread as u8;
@@ -218,6 +217,7 @@ where
                         threads_left -= 1;
                     }
                 }
+                curr_write_thread = (curr_write_thread + 1) % num_threads;
             }
         }
 
