@@ -179,6 +179,7 @@ where
                     threads_left -= 1;
                 }
                 Ok(Message::WriteBlock(thread_id, b)) => {
+                    debug_assert!(b.len() <= WRITE_BUFFER_SIZE);
                     packets[thread_id as usize].push_back(b);
                 }
                 Err(_) => {
@@ -199,8 +200,8 @@ where
             while threads_left > 0 {
                 if packets[curr_write_thread].len() > 0 {
                     let a = packets[curr_write_thread].pop_front().unwrap();
-                    let mut c = curr_write_thread as u8;
                     // block length and thread header
+                    let mut c = curr_write_thread as u8;
                     let l = a.len() - 1;
                     if l == 4095 || l == 16383 || l == 65535 {
                         // length is a special power of 2 - standard block length is 2^16
@@ -211,6 +212,7 @@ where
                         writer.write_u8((l & 0xff) as u8).context()?;
                         writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
                     }
+                    // block itself
                     writer.write_all(&a[..]).context()?;
 
                     if packets[curr_write_thread].len() == 0 {
