@@ -305,6 +305,25 @@ impl<W: Write> VPXBoolWriter<W> {
         self.writer.write_all(&self.buffer[..])?;
         Ok(())
     }
+
+    /// When buffer is full and is going to be sent to output, preserve buffer data that
+    /// is not final and should be carried over to the next buffer.
+    pub fn flush_non_final_data(&mut self) -> Result<()> {
+        // carry over buffer data that might be not final
+        let mut i = self.buffer.len();
+        if i >= 65536 {
+            i -= 1;
+            while self.buffer[i] == 0xFF {
+                assert!(i > 0);
+                i -= 1;
+            }
+
+            self.writer.write_all(&self.buffer[..i])?;
+            self.buffer.drain(..i);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

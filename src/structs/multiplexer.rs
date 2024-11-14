@@ -18,12 +18,12 @@ use crate::{helpers::*, lepton_error::err_exit_code, structs::partial_buffer::Pa
 
 /// The message that is sent between the threads
 enum Message {
-    Eof,
-    WriteBlock(u8, Vec<u8>),
+    Eof(usize),
+    WriteBlock(usize, Vec<u8>),
 }
 
 pub struct MultiplexWriter {
-    thread_id: u8,
+    thread_id: usize,
     sender: Sender<Message>,
     buffer: Vec<u8>,
 }
@@ -143,7 +143,7 @@ where
             let cloned_sender = tx.clone();
 
             let mut thread_writer = MultiplexWriter {
-                thread_id: thread_id as u8,
+                thread_id: thread_id,
                 sender: cloned_sender,
                 buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
             };
@@ -155,7 +155,10 @@ where
 
                 thread_writer.flush().context()?;
 
-                thread_writer.sender.send(Message::Eof).context()?;
+                thread_writer
+                    .sender
+                    .send(Message::Eof(thread_id))
+                    .context()?;
                 Ok(r)
             };
 
@@ -169,57 +172,103 @@ where
 
         // wait to collect work and done messages from all the threads
         let mut threads_left = num_threads;
+        // carouseling to write data packets from all threads
         let mut packets = vec![];
         packets.resize(num_threads, VecDeque::<Vec<u8>>::new());
+        let mut eot = vec![false; num_threads]; // end of threads's packets
+        let mut curr_write_thread: usize = 0; // invariant is `packets[curr_write_thread].len() == 0`
+
+        let mut write_block = |thread_id: usize, a: Vec<u8>| -> Result<()> {
+            // block length and thread header
+            let tid = thread_id as u8;
+            let l = a.len() - 1;
+            if l == 4095 || l == 16383 || l == 65535 {
+                // length is a special power of 2 - standard block length is 2^16
+                writer.write_u8(tid | ((l.ilog2() as u8 >> 1) - 4) << 4)?;
+            } else {
+                writer.write_u8(tid)?;
+                writer.write_u8((l & 0xff) as u8)?;
+                writer.write_u8(((l >> 8) & 0xff) as u8)?;
+            }
+            // block itself
+            writer.write_all(&a[..])?;
+
+            Ok(())
+        };
 
         while threads_left > 0 {
             let value = rx.recv().context();
             match value {
-                Ok(Message::Eof) => {
+                Ok(Message::Eof(thread_id)) => {
                     threads_left -= 1;
+                    eot[thread_id] = true;
+
+                    if threads_left == 0 {
+                        // last phase - write down all remaining packets
+                        let mut packets_left = 0;
+                        for a in &packets {
+                            packets_left += a.len();
+                        }
+
+                        while packets_left > 0 {
+                            curr_write_thread = (curr_write_thread + 1) % num_threads;
+
+                            if packets[curr_write_thread].len() > 0 {
+                                write_block(
+                                    curr_write_thread,
+                                    packets[curr_write_thread].pop_front().unwrap(),
+                                )
+                                .context()?;
+
+                                packets_left -= 1;
+                            }
+                        }
+                    } else if thread_id == curr_write_thread {
+                        // no more this thread's packets - continue to other threads
+                        debug_assert_eq!(packets[curr_write_thread].len(), 0);
+                        loop {
+                            curr_write_thread = (curr_write_thread + 1) % num_threads;
+
+                            if packets[curr_write_thread].len() > 0 {
+                                write_block(
+                                    curr_write_thread,
+                                    packets[curr_write_thread].pop_front().unwrap(),
+                                )
+                                .context()?;
+                            } else if !eot[curr_write_thread] {
+                                break;
+                            }
+                        }
+                    }
                 }
                 Ok(Message::WriteBlock(thread_id, b)) => {
                     debug_assert!(b.len() <= WRITE_BUFFER_SIZE);
-                    packets[thread_id as usize].push_back(b);
+                    if thread_id == curr_write_thread {
+                        debug_assert_eq!(packets[curr_write_thread].len(), 0);
+                        write_block(thread_id, b).context()?;
+                        // this thread's packet written - continue to other threads
+                        loop {
+                            curr_write_thread = (curr_write_thread + 1) % num_threads;
+
+                            if packets[curr_write_thread].len() > 0 {
+                                write_block(
+                                    curr_write_thread,
+                                    packets[curr_write_thread].pop_front().unwrap(),
+                                )
+                                .context()?;
+                            } else if !eot[curr_write_thread] {
+                                break;
+                            }
+                        }
+                    } else {
+                        packets[thread_id].push_back(b);
+                    }
                 }
                 Err(_) => {
                     // if we get a receiving error here, this means that one of the threads broke
                     // with an error, and this error will be collected when we join the threads
                     break;
                 }
-            }
-        }
-
-        // carouseling to write data packets from all threads
-        if threads_left == 0 {
-            for i in &packets {
-                threads_left += if i.len() > 0 { 1 } else { 0 };
-            }
-
-            let mut curr_write_thread: usize = 0;
-            while threads_left > 0 {
-                if packets[curr_write_thread].len() > 0 {
-                    let a = packets[curr_write_thread].pop_front().unwrap();
-                    // block length and thread header
-                    let mut c = curr_write_thread as u8;
-                    let l = a.len() - 1;
-                    if l == 4095 || l == 16383 || l == 65535 {
-                        // length is a special power of 2 - standard block length is 2^16
-                        c |= ((l.ilog2() as u8 >> 1) - 4) << 4;
-                        writer.write_u8(c).context()?;
-                    } else {
-                        writer.write_u8(c).context()?;
-                        writer.write_u8((l & 0xff) as u8).context()?;
-                        writer.write_u8(((l >> 8) & 0xff) as u8).context()?;
-                    }
-                    // block itself
-                    writer.write_all(&a[..]).context()?;
-
-                    if packets[curr_write_thread].len() == 0 {
-                        threads_left -= 1;
-                    }
-                }
-                curr_write_thread = (curr_write_thread + 1) % num_threads;
             }
         }
 
@@ -252,7 +301,7 @@ where
 /// getting the data that we are expecting.
 pub struct MultiplexReader {
     /// the multiplexed thread stream we are processing
-    thread_id: u8,
+    thread_id: usize,
 
     /// the receiver part of the channel to get more buffers
     receiver: Receiver<Message>,
@@ -293,7 +342,7 @@ impl MultiplexReader {
 
             match self.receiver.recv() {
                 Ok(r) => match r {
-                    Message::Eof => {
+                    Message::Eof(_tid) => {
                         self.end_of_file = true;
                     }
                     Message::WriteBlock(tid, block) => {
@@ -385,7 +434,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     if let Some((thread_id, rx, cloned_processor, cloned_result_sender)) = w {
                         // get the appropriate receiver so we can read out data from it
                         let mut proc_reader = MultiplexReader {
-                            thread_id: thread_id as u8,
+                            thread_id: thread_id,
                             current_buffer: Cursor::new(Vec::new()),
                             receiver: rx,
                             end_of_file: false,
@@ -455,8 +504,8 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         // ignore if we get error sending because channel died since we will collect
                         // the error later. We don't want to interrupt the other threads that are processing
                         // so we only get the error from the thread that actually errored out.
-                        let _ = self.sender_channels[usize::from(thread_id)]
-                            .send(Message::WriteBlock(thread_id, a));
+                        let tid = usize::from(thread_id);
+                        let _ = self.sender_channels[tid].send(Message::WriteBlock(tid, a));
                         self.current_state = State::StartBlock;
                     } else {
                         break;
@@ -474,7 +523,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         let mut results = Vec::new();
         for thread_id in 0..self.sender_channels.len() {
             // send eof to all threads (ignore results since they might be dead already)
-            _ = self.sender_channels[thread_id].send(Message::Eof);
+            _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
             results.push(None);
         }
 
