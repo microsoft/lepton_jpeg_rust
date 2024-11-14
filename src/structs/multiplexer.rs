@@ -213,12 +213,8 @@ where
                         while packets_left > 0 {
                             curr_write_thread = (curr_write_thread + 1) % num_threads;
 
-                            if packets[curr_write_thread].len() > 0 {
-                                write_block(
-                                    curr_write_thread,
-                                    packets[curr_write_thread].pop_front().unwrap(),
-                                )
-                                .context()?;
+                            if let Some(packet) = packets[curr_write_thread].pop_front() {
+                                write_block(curr_write_thread, packet).context()?;
 
                                 packets_left -= 1;
                             }
@@ -229,12 +225,8 @@ where
                         loop {
                             curr_write_thread = (curr_write_thread + 1) % num_threads;
 
-                            if packets[curr_write_thread].len() > 0 {
-                                write_block(
-                                    curr_write_thread,
-                                    packets[curr_write_thread].pop_front().unwrap(),
-                                )
-                                .context()?;
+                            if let Some(packet) = packets[curr_write_thread].pop_front() {
+                                write_block(curr_write_thread, packet).context()?;
                             } else if !eot[curr_write_thread] {
                                 break;
                             }
@@ -250,12 +242,8 @@ where
                         loop {
                             curr_write_thread = (curr_write_thread + 1) % num_threads;
 
-                            if packets[curr_write_thread].len() > 0 {
-                                write_block(
-                                    curr_write_thread,
-                                    packets[curr_write_thread].pop_front().unwrap(),
-                                )
-                                .context()?;
+                            if let Some(packet) = packets[curr_write_thread].pop_front() {
+                                write_block(curr_write_thread, packet).context()?;
                             } else if !eot[curr_write_thread] {
                                 break;
                             }
