@@ -299,14 +299,17 @@ impl<W: Write> VPXBoolWriter<W> {
     /// is not final and should carried over to the next buffer.
     pub fn flush_non_final_data(&mut self) -> Result<()> {
         // carry over buffer data that might be not final
-        let mut i = self.buffer.len() - 1;
-        while self.buffer[i] == 0xFF {
-            assert!(i > 0);
+        let mut i = self.buffer.len();
+        if i > 0 {
             i -= 1;
-        }
+            while self.buffer[i] == 0xFF {
+                assert!(i > 0);
+                i -= 1;
+            }
 
-        self.writer.write_all(&self.buffer[..i])?;
-        self.buffer.drain(..i);
+            self.writer.write_all(&self.buffer[..i])?;
+            self.buffer.drain(..i);
+        }
 
         Ok(())
     }
