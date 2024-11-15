@@ -142,11 +142,6 @@ impl<W: Write> VPXBoolWriter<W> {
 
         *tmp_value <<= shift;
 
-        // check if we're out of buffer space, if yes - send the buffer to output
-        if self.buffer.len() > 65536 - 128 {
-            self.flush_non_final_data()?;
-        }
-
         Ok(())
     }
 
