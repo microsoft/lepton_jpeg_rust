@@ -13,13 +13,45 @@
 /// No unsafe code is used.
 use std::{
     sync::{
-        mpsc::{channel, Sender},
-        LazyLock, Mutex,
+        Arc, Condvar, LazyLock, Mutex,
     },
     thread::{self, spawn},
 };
 
-static IDLE_THREADS: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>> =
+type BoxedTrait = Box<dyn FnOnce() + Send + 'static>;
+
+struct ThreadInPool {
+    m: Mutex<Option<BoxedTrait>>,
+    cond: Condvar,
+}
+
+impl ThreadInPool {
+    fn new() -> Self {
+        ThreadInPool {
+            m: Mutex::new(None),
+            cond: Condvar::new(),
+        }
+    }
+
+    fn put(&self, f: BoxedTrait) {
+        if let Ok(mut m) = self.m.lock() {
+            assert!(m.is_none());
+            *m = Some(f);
+            self.cond.notify_one();
+        }
+    }
+
+    fn take(&self) -> Option<BoxedTrait> {
+        if let Ok(m) = self.m.lock() {
+            if let Ok(mut c) = self.cond.wait(m) {
+                return c.take();
+            }
+        }
+        None
+    }
+}
+
+static IDLE_THREADS: LazyLock<Mutex<Vec<Arc<ThreadInPool>>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
 
@@ -33,35 +65,33 @@ pub fn execute<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    if let Some(sender) = IDLE_THREADS.lock().unwrap().pop() {
-        sender.send(Box::new(f)).unwrap();
+    let i = IDLE_THREADS.lock().unwrap().pop();
+
+    if let Some(t) = i {
+        t.put(Box::new(f));
         return;
     }
 
-    let (tx, rx) = channel();
+    let t = Arc::new(ThreadInPool::new());
 
     spawn(move || {
         f();
 
         loop {
             if let Ok(mut i) = IDLE_THREADS.lock() {
-                // stick back into list of idle threads if there aren't more than
-                // the number of cpus already there.
-                if i.len() > *NUM_CPUS {
-                    // just exits the thread
-                    break;
+                // if we don't have more idle threads than CPUs, we can add this thread to the pool
+                if i.len() < *NUM_CPUS {
+                    i.push(t.clone());
+                    drop(i);
+
+                    if let Some(w) = t.take() {
+                        w();
+                        continue;
+                    }
                 }
-                i.push(tx.clone());
-            } else {
-                break;
             }
 
-            if let Ok(f) = rx.recv() {
-                f();
-            } else {
-                // channel broken, exit thread
-                break;
-            }
+            break;
         }
     });
 }
