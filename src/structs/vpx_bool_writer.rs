@@ -142,11 +142,6 @@ impl<W: Write> VPXBoolWriter<W> {
 
         *tmp_value <<= shift;
 
-        // check if we're out of buffer space, if yes - send the buffer to output
-        if self.buffer.len() > 65536 - 128 {
-            self.flush_non_final_data()?;
-        }
-
         Ok(())
     }
 
@@ -302,16 +297,19 @@ impl<W: Write> VPXBoolWriter<W> {
 
     /// When buffer is full and is going to be sent to output, preserve buffer data that
     /// is not final and should carried over to the next buffer.
-    fn flush_non_final_data(&mut self) -> Result<()> {
+    pub fn flush_non_final_data(&mut self) -> Result<()> {
         // carry over buffer data that might be not final
-        let mut i = self.buffer.len() - 1;
-        while self.buffer[i] == 0xFF {
-            assert!(i > 0);
+        let mut i = self.buffer.len();
+        if i > 0 {
             i -= 1;
-        }
+            while self.buffer[i] == 0xFF {
+                assert!(i > 0);
+                i -= 1;
+            }
 
-        self.writer.write_all(&self.buffer[..i])?;
-        self.buffer.drain(..i);
+            self.writer.write_all(&self.buffer[..i])?;
+            self.buffer.drain(..i);
+        }
 
         Ok(())
     }

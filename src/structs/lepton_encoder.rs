@@ -117,6 +117,8 @@ pub fn lepton_encode_row_range<W: Write>(
             features,
         )
         .context()?;
+
+        bool_writer.flush_non_final_data().context()?;
     }
 
     if is_last_thread && full_file_compression {
