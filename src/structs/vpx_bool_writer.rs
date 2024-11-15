@@ -52,7 +52,6 @@ impl<W: Write> VPXBoolWriter<W> {
         };
 
         let mut dummy_branch = Branch::new();
-        // initial false bit is put to not get carry out of stream bits
         retval.put_bit(false, &mut dummy_branch, ModelComponent::Dummy)?;
 
         Ok(retval)
@@ -100,11 +99,14 @@ impl<W: Write> VPXBoolWriter<W> {
         if value {
             *tmp_value += split;
             *tmp_range -= split;
+
+            shift = (*tmp_range as u8).leading_zeros() as i32;
         } else {
             *tmp_range = split;
-        }
 
-        shift = (*tmp_range as u8).leading_zeros() as i32;
+            // optimizer understands that split > 0, so it can optimize this
+            shift = (split as u8).leading_zeros() as i32;
+        }
 
         #[cfg(feature = "compression_stats")]
         {
@@ -116,38 +118,36 @@ impl<W: Write> VPXBoolWriter<W> {
         *tmp_count += shift;
 
         if *tmp_count >= 0 {
-            let offset = shift - *tmp_count - 1;
+            let offset = shift - *tmp_count;
 
-            *tmp_value <<= offset;
-            if (*tmp_value & 0x80000000) != 0 {
-                self.carry();
+            if ((*tmp_value << (offset - 1)) & 0x80000000) != 0 {
+                let mut x = self.buffer.len() - 1;
+
+                while self.buffer[x] == 0xFF {
+                    self.buffer[x] = 0;
+
+                    assert!(x > 0);
+                    x -= 1;
+                }
+
+                self.buffer[x] += 1;
             }
 
-            *tmp_value <<= 1;
-            self.buffer.push((*tmp_value >> 24) as u8);
-            *tmp_value &= 0xffffff;
-
+            self.buffer.push((*tmp_value >> (24 - offset)) as u8);
+            *tmp_value <<= offset;
             shift = *tmp_count;
+            *tmp_value &= 0xffffff;
             *tmp_count -= 8;
         }
 
         *tmp_value <<= shift;
 
-        Ok(())
-    }
-
-    #[inline(always)] //#[cold]
-    fn carry(&mut self) {
-        let mut x = self.buffer.len() - 1;
-
-        while self.buffer[x] == 0xFF {
-            self.buffer[x] = 0;
-
-            assert!(x > 0);
-            x -= 1;
+        // check if we're out of buffer space, if yes - send the buffer to output
+        if self.buffer.len() > 65536 - 128 {
+            self.flush_non_final_data()?;
         }
 
-        self.buffer[x] += 1;
+        Ok(())
     }
 
     #[inline(always)]
@@ -290,37 +290,28 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     pub fn finish(&mut self) -> Result<()> {
-        // typically all bytes of `low_value` will have stream bits,
-        // so just write them all
-        let tmp_value = self.low_value << (-self.count - 1);
-
-        if (tmp_value & 0x80000000) != 0 {
-            self.carry();
+        // push real stream bits out of `value`
+        for _i in 0..32 {
+            let mut dummy_branch = Branch::new();
+            self.put_bit(false, &mut dummy_branch, ModelComponent::Dummy)?;
         }
-        self.buffer.push((tmp_value >> 23) as u8);
-        self.buffer.push((tmp_value >> 15) as u8);
-        self.buffer.push((tmp_value >> 7) as u8);
-        self.buffer.push((tmp_value << 1) as u8);
 
         self.writer.write_all(&self.buffer[..])?;
         Ok(())
     }
 
     /// When buffer is full and is going to be sent to output, preserve buffer data that
-    /// is not final and should be carried over to the next buffer.
+    /// is not final and should carried over to the next buffer.
     pub fn flush_non_final_data(&mut self) -> Result<()> {
         // carry over buffer data that might be not final
-        let mut i = self.buffer.len();
-        if i >= 65536 {
+        let mut i = self.buffer.len() - 1;
+        while self.buffer[i] == 0xFF {
+            assert!(i > 0);
             i -= 1;
-            while self.buffer[i] == 0xFF {
-                assert!(i > 0);
-                i -= 1;
-            }
-
-            self.writer.write_all(&self.buffer[..i])?;
-            self.buffer.drain(..i);
         }
+
+        self.writer.write_all(&self.buffer[..i])?;
+        self.buffer.drain(..i);
 
         Ok(())
     }
