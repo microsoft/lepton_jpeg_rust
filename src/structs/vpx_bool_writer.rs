@@ -22,6 +22,7 @@ Neither the name of Google nor the names of its contributors may be used to endo
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+use byteorder::WriteBytesExt;
 use std::io::{Result, Write};
 
 use crate::metrics::{Metrics, ModelComponent};
@@ -33,7 +34,8 @@ pub struct VPXBoolWriter<W> {
     range: u32,
     count: i32,
     writer: W,
-    buffer: Vec<u8>,
+    num_buffered_bytes: u32,
+    buffered_byte: u8,
     model_statistics: Metrics,
     #[allow(dead_code)]
     pub hash: SimpleHash,
@@ -45,8 +47,9 @@ impl<W: Write> VPXBoolWriter<W> {
             low_value: 0,
             range: 255,
             count: -24,
-            buffer: Vec::new(),
             writer: writer,
+            num_buffered_bytes: 0,
+            buffered_byte: 0,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
@@ -118,26 +121,7 @@ impl<W: Write> VPXBoolWriter<W> {
         *tmp_count += shift;
 
         if *tmp_count >= 0 {
-            let offset = shift - *tmp_count;
-
-            if ((*tmp_value << (offset - 1)) & 0x80000000) != 0 {
-                let mut x = self.buffer.len() - 1;
-
-                while self.buffer[x] == 0xFF {
-                    self.buffer[x] = 0;
-
-                    assert!(x > 0);
-                    x -= 1;
-                }
-
-                self.buffer[x] += 1;
-            }
-
-            self.buffer.push((*tmp_value >> (24 - offset)) as u8);
-            *tmp_value <<= offset;
-            shift = *tmp_count;
-            *tmp_value &= 0xffffff;
-            *tmp_count -= 8;
+            self.send_to_output(&mut shift, tmp_count, tmp_value)?;
         }
 
         *tmp_value <<= shift;
@@ -291,26 +275,57 @@ impl<W: Write> VPXBoolWriter<W> {
             self.put_bit(false, &mut dummy_branch, ModelComponent::Dummy)?;
         }
 
-        self.writer.write_all(&self.buffer[..])?;
+        self.flush_buffered_bytes(0)?;
+
         Ok(())
     }
 
-    /// When buffer is full and is going to be sent to output, preserve buffer data that
-    /// is not final and should carried over to the next buffer.
-    pub fn flush_non_final_data(&mut self) -> Result<()> {
-        // carry over buffer data that might be not final
-        let mut i = self.buffer.len();
-        if i > 0 {
-            i -= 1;
-            while self.buffer[i] == 0xFF {
-                assert!(i > 0);
-                i -= 1;
-            }
+    #[inline]
+    fn send_to_output(
+        &mut self,
+        shift: &mut i32,
+        tmp_count: &mut i32,
+        tmp_low_value: &mut u32,
+    ) -> Result<()> {
+        let offset = *shift - *tmp_count;
 
-            self.writer.write_all(&self.buffer[..i])?;
-            self.buffer.drain(..i);
+        let last_byte = *tmp_low_value >> (24 - offset);
+
+        if (last_byte & 0x100) != 0 {
+            self.flush_buffered_bytes(1)?;
         }
 
+        let last_byte = last_byte as u8;
+
+        if last_byte == 0xff {
+            self.num_buffered_bytes += 1;
+        } else {
+            self.flush_buffered_bytes(0)?;
+
+            self.buffered_byte = last_byte;
+            self.num_buffered_bytes = 1;
+        }
+
+        *tmp_low_value <<= offset;
+        *shift = *tmp_count;
+        *tmp_low_value &= 0xffffff;
+        *tmp_count -= 8;
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
+        if self.num_buffered_bytes > 0 {
+            self.writer
+                .write_u8(self.buffered_byte.wrapping_add(carry))?;
+            self.num_buffered_bytes -= 1;
+
+            while self.num_buffered_bytes > 0 {
+                self.writer.write_u8(0xffu8.wrapping_add(carry))?;
+                self.num_buffered_bytes -= 1;
+            }
+        }
         Ok(())
     }
 }
