@@ -31,7 +31,32 @@ pub struct MultiplexWriter {
 const WRITE_BUFFER_SIZE: usize = 65536;
 
 impl Write for MultiplexWriter {
+    #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() <= WRITE_BUFFER_SIZE - self.buffer.len() {
+            self.buffer.extend_from_slice(buf);
+            return Ok(buf.len());
+        } else {
+            self.write_slow(buf)
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.buffer.len() > 0 {
+            let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
+            swap(&mut new_buffer, &mut self.buffer);
+
+            self.sender
+                .send(Message::WriteBlock(self.thread_id, new_buffer))
+                .unwrap();
+        }
+        Ok(())
+    }
+}
+
+impl MultiplexWriter {
+    #[cold]
+    fn write_slow(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut copy_start = 0;
         while copy_start < buf.len() {
             let amount_to_copy = cmp::min(
@@ -49,18 +74,6 @@ impl Write for MultiplexWriter {
         }
 
         Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if self.buffer.len() > 0 {
-            let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
-            swap(&mut new_buffer, &mut self.buffer);
-
-            self.sender
-                .send(Message::WriteBlock(self.thread_id, new_buffer))
-                .unwrap();
-        }
-        Ok(())
     }
 }
 

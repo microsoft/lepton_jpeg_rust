@@ -126,6 +126,7 @@ pub trait AddContext<T> {
 
 impl<T, E: Into<LeptonError>> AddContext<T> for core::result::Result<T, E> {
     #[track_caller]
+    #[inline(always)]
     fn context(self) -> Result<T> {
         match self {
             Ok(x) => Ok(x),

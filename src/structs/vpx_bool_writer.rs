@@ -22,7 +22,6 @@ Neither the name of Google nor the names of its contributors may be used to endo
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use byteorder::WriteBytesExt;
 use std::io::{Result, Write};
 
 use crate::metrics::{Metrics, ModelComponent};
@@ -280,7 +279,7 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     fn send_to_output(
         &mut self,
         shift: &mut i32,
@@ -318,11 +317,11 @@ impl<W: Write> VPXBoolWriter<W> {
     fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
         if self.num_buffered_bytes > 0 {
             self.writer
-                .write_u8(self.buffered_byte.wrapping_add(carry))?;
+                .write(&[self.buffered_byte.wrapping_add(carry)])?;
             self.num_buffered_bytes -= 1;
 
             while self.num_buffered_bytes > 0 {
-                self.writer.write_u8(0xffu8.wrapping_add(carry))?;
+                self.writer.write(&[0xffu8.wrapping_add(carry)])?;
                 self.num_buffered_bytes -= 1;
             }
         }
