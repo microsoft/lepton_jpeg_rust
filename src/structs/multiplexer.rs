@@ -1,4 +1,3 @@
-use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
@@ -6,6 +5,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
+use fixed_capacity_vec::FixedCapacityVec;
 
 use crate::lepton_error::{AddContext, ExitCode, LeptonError, Result};
 /// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
@@ -22,33 +22,30 @@ enum Message {
     WriteBlock(usize, Vec<u8>),
 }
 
+const WRITE_BUFFER_SIZE: usize = 65536;
+
 pub struct MultiplexWriter {
     thread_id: usize,
     sender: Sender<Message>,
-    buffer: Vec<u8>,
+    buffer: FixedCapacityVec<u8, WRITE_BUFFER_SIZE>,
 }
-
-const WRITE_BUFFER_SIZE: usize = 65536;
 
 impl Write for MultiplexWriter {
     #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if buf.len() <= WRITE_BUFFER_SIZE - self.buffer.len() {
-            self.buffer.extend_from_slice(buf);
-            return Ok(buf.len());
-        } else {
-            self.write_slow(buf)
+        // the caller writes one byte at time so there's no need to optimize here
+        for &b in buf {
+            if self.buffer.try_push_or_discard(b).is_err() {
+                // send buffer if we are full and include this byte in it
+                self.send_buffer::<true>(b);
+            }
         }
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         if self.buffer.len() > 0 {
-            let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
-            swap(&mut new_buffer, &mut self.buffer);
-
-            self.sender
-                .send(Message::WriteBlock(self.thread_id, new_buffer))
-                .unwrap();
+            self.send_buffer::<false>(0);
         }
         Ok(())
     }
@@ -56,24 +53,20 @@ impl Write for MultiplexWriter {
 
 impl MultiplexWriter {
     #[cold]
-    fn write_slow(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut copy_start = 0;
-        while copy_start < buf.len() {
-            let amount_to_copy = cmp::min(
-                WRITE_BUFFER_SIZE - self.buffer.len(),
-                buf.len() - copy_start,
-            );
-            self.buffer
-                .extend_from_slice(&buf[copy_start..copy_start + amount_to_copy]);
-
-            if self.buffer.len() == WRITE_BUFFER_SIZE {
-                self.flush()?;
-            }
-
-            copy_start += amount_to_copy;
+    fn send_buffer<const PUSH_NEXT: bool>(&mut self, next_byte: u8) {
+        let mut new_buffer = FixedCapacityVec::new();
+        if PUSH_NEXT {
+            new_buffer.push(next_byte);
         }
 
-        Ok(buf.len())
+        swap(&mut new_buffer, &mut self.buffer);
+
+        // ignore errors here since there's really no need to interrupt our work
+        // since errors are not expected and this will slow down the processing
+        // by requiring the callers up the chain to check for errors
+        let _ = self
+            .sender
+            .send(Message::WriteBlock(self.thread_id, new_buffer.into()));
     }
 }
 
@@ -158,7 +151,7 @@ where
             let mut thread_writer = MultiplexWriter {
                 thread_id: thread_id,
                 sender: cloned_sender,
-                buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
+                buffer: FixedCapacityVec::new(),
             };
 
             let processor_clone = arc_processor.clone();

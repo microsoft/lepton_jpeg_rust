@@ -315,15 +315,17 @@ impl<W: Write> VPXBoolWriter<W> {
 
     #[inline(always)]
     fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
-        if self.num_buffered_bytes > 0 {
+        let mut b = self.num_buffered_bytes;
+        if b > 0 {
             self.writer
                 .write(&[self.buffered_byte.wrapping_add(carry)])?;
-            self.num_buffered_bytes -= 1;
+            b -= 1;
 
-            while self.num_buffered_bytes > 0 {
+            while b > 0 {
                 self.writer.write(&[0xffu8.wrapping_add(carry)])?;
-                self.num_buffered_bytes -= 1;
+                b -= 1;
             }
+            self.num_buffered_bytes = 0;
         }
         Ok(())
     }
