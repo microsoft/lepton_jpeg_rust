@@ -35,35 +35,35 @@ where
 {
     if let Some(sender) = IDLE_THREADS.lock().unwrap().pop() {
         sender.send(Box::new(f)).unwrap();
-        return;
-    }
+    } else {
+        // channel for receiving future work on this thread
+        let (tx_schedule, rx_schedule) = channel();
 
-    let (tx, rx) = channel();
+        spawn(move || {
+            f();
 
-    spawn(move || {
-        f();
-
-        loop {
-            if let Ok(mut i) = IDLE_THREADS.lock() {
-                // stick back into list of idle threads if there aren't more than
-                // the number of cpus already there.
-                if i.len() > *NUM_CPUS {
-                    // just exits the thread
+            loop {
+                if let Ok(mut i) = IDLE_THREADS.lock() {
+                    // stick back into list of idle threads if there aren't more than
+                    // the number of cpus already there.
+                    if i.len() > *NUM_CPUS {
+                        // just exits the thread
+                        break;
+                    }
+                    i.push(tx_schedule.clone());
+                } else {
                     break;
                 }
-                i.push(tx.clone());
-            } else {
-                break;
-            }
 
-            if let Ok(f) = rx.recv() {
-                f();
-            } else {
-                // channel broken, exit thread
-                break;
+                if let Ok(f) = rx_schedule.recv() {
+                    f();
+                } else {
+                    // channel broken, exit thread
+                    break;
+                }
             }
-        }
-    });
+        });
+    }
 }
 
 #[test]
