@@ -144,6 +144,8 @@ where
     }
 
     // now we have all the threads running, we can write the data to the writer
+    // carusel through the threads and write the data to the writer so that they
+    // get written in a deterministic order.
     let mut current_thread_writer = 0;
     loop {
         match packet_receivers[current_thread_writer].recv() {
@@ -161,12 +163,16 @@ where
                 }
                 // block itself
                 writer.write_all(&b[..])?;
+
+                // go to next thread
+                current_thread_writer = (current_thread_writer + 1) % packet_receivers.len();
             }
             Ok(Message::Eof(_)) | Err(_) => {
                 packet_receivers.remove(current_thread_writer);
                 if packet_receivers.len() == 0 {
                     break;
                 }
+
                 current_thread_writer = current_thread_writer % packet_receivers.len();
             }
         }
