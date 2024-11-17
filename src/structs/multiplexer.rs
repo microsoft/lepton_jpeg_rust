@@ -181,18 +181,27 @@ fn extract_execute_results<RESULT>(
 ) -> Result<Vec<RESULT>> {
     let mut final_results = Vec::new();
 
+    let mut error_found = None;
     for r in results.drain(..) {
         match r.recv() {
             Ok(Ok(r)) => final_results.push(r),
             Ok(Err(e)) => {
-                return Err(e);
+                error_found = Some(e);
             }
             Err(e) => {
-                return Result::Err(e.into());
+                // prefer real errors over broken channel errors
+                if error_found.is_none() {
+                    error_found = Some(e.into());
+                }
             }
         }
     }
-    Ok(final_results)
+
+    if let Some(error) = error_found {
+        Err(error)
+    } else {
+        Ok(final_results)
+    }
 }
 
 /// Used by the processor thread to read data in a blocking way.
