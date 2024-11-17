@@ -28,8 +28,8 @@ use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;
 
-// MAX_STREAM_BITS should be a multiple of 8 and
-// (MAX_STREAM_BITS + 1 bit of carry + 1 bit of divider)
+// MAX_STREAM_BITS should be a multiple of 8 larger than 8,
+// and (MAX_STREAM_BITS + 1 bit of carry + 1 bit of divider)
 // should fit into 64 bits of `low_value`
 const MAX_STREAM_BITS: i32 = 56; //48; //40;// 32;// 24;// 16;//
 
@@ -124,16 +124,14 @@ impl<W: Write> VPXBoolWriter<W> {
             if (*tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
                 self.carry();
             }
-
-            let mut full_stream_bytes = (stream_bits >> 3) - 1;
+            // write all full bytes
             let mut sh = MAX_STREAM_BITS - 8;
-            while full_stream_bytes > 0 {
+            while sh > 0 {
                 self.buffer.push((*tmp_value >> sh) as u8);
                 sh -= 8;
-                full_stream_bytes -= 1;
             }
-            *tmp_value &= (1 << (sh + 8)) - 1; // exclude written bytes
-            *tmp_value |= 1 << (sh + 9); // restore divider bit
+            *tmp_value &= (1 << 8) - 1; // exclude written bytes
+            *tmp_value |= 1 << 9; // restore divider bit
 
             shift = count;
         }
