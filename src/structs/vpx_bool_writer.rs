@@ -286,12 +286,11 @@ impl<W: Write> VPXBoolWriter<W> {
         let mut tmp_value = self.low_value;
         let stream_bits = 64 - tmp_value.leading_zeros() as i32 - 2;
 
-        tmp_value <<= MAX_STREAM_BITS - stream_bits - 1;
-        if (tmp_value & (1 << (MAX_STREAM_BITS - 1))) != 0 {
+        tmp_value <<= MAX_STREAM_BITS - stream_bits;
+        if (tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
             self.carry();
         }
 
-        tmp_value <<= 1;
         let mut shift = MAX_STREAM_BITS - 8;
         let mut stream_bytes = (stream_bits + 7) >> 3;
         while stream_bytes > 0 {
