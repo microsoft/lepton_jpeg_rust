@@ -81,20 +81,60 @@ where
     rayon_core::spawn(f);
 }
 
-/// spawns a thread that will run the given function and return a receiver that will get the result
-fn spawn_with_result<F, R>(f: F) -> Receiver<Result<R>>
-where
-    F: FnOnce() -> Result<R> + Send + 'static,
-    R: Send + 'static,
-{
-    let (tx, rx) = channel();
+/// Collects the thread results and errors and returns them as a vector
+struct ThreadResults<RESULT> {
+    results: Vec<Receiver<Result<RESULT>>>,
+}
 
-    my_spawn_simple(move || {
-        let r = catch_unwind_result(f);
-        let _ = tx.send(r);
-    });
+impl<RESULT> ThreadResults<RESULT> {
+    fn new() -> Self {
+        ThreadResults {
+            results: Vec::new(),
+        }
+    }
+    /// creates a closure that wraps the passed in closure, catches any panics,
+    /// collects the return result and send it to the receiver to collect.
+    fn send_results(
+        &mut self,
+        f: impl FnOnce() -> Result<RESULT> + Send + 'static,
+    ) -> impl FnOnce() {
+        let (tx, rx) = channel();
 
-    rx
+        self.results.push(rx);
+
+        move || {
+            let r = catch_unwind_result(f);
+            let _ = tx.send(r);
+        }
+    }
+
+    /// extracts the results from all the receivers and returns them as a vector, or returns an
+    /// error if any of the threads errored out.
+    fn receive_results(&mut self) -> Result<Vec<RESULT>> {
+        let mut final_results = Vec::new();
+
+        let mut error_found = None;
+        for r in self.results.drain(..) {
+            match r.recv() {
+                Ok(Ok(r)) => final_results.push(r),
+                Ok(Err(e)) => {
+                    error_found = Some(e);
+                }
+                Err(e) => {
+                    // prefer real errors over broken channel errors
+                    if error_found.is_none() {
+                        error_found = Some(e.into());
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = error_found {
+            Err(error)
+        } else {
+            Ok(final_results)
+        }
+    }
 }
 
 /// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
@@ -111,8 +151,9 @@ where
     FN: Fn(&mut MultiplexWriter, usize) -> Result<RESULT> + Send + Sync + 'static,
     RESULT: Send + 'static,
 {
-    let mut thread_results = Vec::new();
+    let mut thread_results = ThreadResults::new();
 
+    // receives packets from threads as they are generated
     let mut packet_receivers = Vec::new();
 
     let arc_processor = Arc::new(Box::new(processor));
@@ -128,7 +169,7 @@ where
 
         let processor_clone = arc_processor.clone();
 
-        thread_results.push(spawn_with_result(move || {
+        let f = thread_results.send_results(move || {
             let r = processor_clone(&mut thread_writer, thread_id)?;
 
             thread_writer.flush().context()?;
@@ -138,7 +179,9 @@ where
                 .send(Message::Eof(thread_id))
                 .context()?;
             Ok(r)
-        }));
+        });
+
+        my_spawn_simple(f);
 
         packet_receivers.push(rx);
     }
@@ -177,37 +220,7 @@ where
             }
         }
     }
-    extract_execute_results(&mut thread_results)
-}
-
-/// extracts the results from a bunch of receivers and returns them as a vector, or returns an
-/// error if any of the threads errored out.
-fn extract_execute_results<RESULT>(
-    results: &mut Vec<Receiver<Result<RESULT>>>,
-) -> Result<Vec<RESULT>> {
-    let mut final_results = Vec::new();
-
-    let mut error_found = None;
-    for r in results.drain(..) {
-        match r.recv() {
-            Ok(Ok(r)) => final_results.push(r),
-            Ok(Err(e)) => {
-                error_found = Some(e);
-            }
-            Err(e) => {
-                // prefer real errors over broken channel errors
-                if error_found.is_none() {
-                    error_found = Some(e.into());
-                }
-            }
-        }
-    }
-
-    if let Some(error) = error_found {
-        Err(error)
-    } else {
-        Ok(final_results)
-    }
+    thread_results.receive_results()
 }
 
 /// Used by the processor thread to read data in a blocking way.
@@ -288,7 +301,7 @@ impl MultiplexReader {
 /// of the results back to the caller.
 pub struct MultiplexReaderState<RESULT> {
     sender_channels: Vec<Sender<Message>>,
-    result_receiver: Vec<Receiver<Result<RESULT>>>,
+    result_receiver: ThreadResults<RESULT>,
     retention_bytes: usize,
     current_state: State,
 }
@@ -316,7 +329,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
         // collect the worker threads in a queue so we can spawn them
         let mut work = VecDeque::new();
-        let mut result_receiver = Vec::new();
+        let mut result_receiver = ThreadResults::new();
 
         for thread_id in 0..num_threads {
             let (tx, rx) = channel::<Message>();
@@ -324,7 +337,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
             let cloned_processor = arc_processor.clone();
 
-            let mywork = move || {
+            let f = result_receiver.send_results(move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
                     thread_id: thread_id,
@@ -334,14 +347,9 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                 };
 
                 cloned_processor(thread_id, &mut proc_reader)
-            };
-
-            let (tx_results, rx_results) = channel::<Result<RESULT>>();
-            result_receiver.push(rx_results);
-            work.push_back(move || {
-                let r = catch_unwind_result(mywork);
-                let _ = tx_results.send(r);
             });
+
+            work.push_back(f);
         }
 
         let shared_queue = Arc::new(Mutex::new(work));
@@ -436,7 +444,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             let _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
         }
 
-        extract_execute_results(&mut self.result_receiver)
+        self.result_receiver.receive_results()
     }
 }
 
