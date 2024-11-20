@@ -24,11 +24,11 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 
 use std::io::{Read, Result};
 
+use crate::lepton_error;
+use crate::lepton_error::{err_exit_code, ExitCode};
 use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;
-use crate::lepton_error;
-use crate::lepton_error::{err_exit_code, ExitCode};
 
 const BITS_IN_BYTE: u32 = 8;
 const BITS_IN_VALUE: u32 = 64;
