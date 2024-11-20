@@ -27,6 +27,8 @@ use std::io::{Read, Result};
 use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;
+use crate::lepton_error;
+use crate::lepton_error::{err_exit_code, ExitCode};
 
 const BITS_IN_BYTE: u32 = 8;
 const BITS_IN_VALUE: u32 = 64;
@@ -43,7 +45,7 @@ pub struct VPXBoolReader<R> {
 }
 
 impl<R: Read> VPXBoolReader<R> {
-    pub fn new(reader: R) -> Result<Self> {
+    pub fn new(reader: R) -> lepton_error::Result<Self> {
         let mut r = VPXBoolReader {
             upstream_reader: reader,
             value: 1 << (BITS_IN_VALUE - 1), // guard bit
@@ -53,7 +55,10 @@ impl<R: Read> VPXBoolReader<R> {
         };
 
         let mut dummy_branch = Branch::new();
-        r.get_bit(&mut dummy_branch, ModelComponent::Dummy)?; // marker bit
+        let bit = r.get_bit(&mut dummy_branch, ModelComponent::Dummy)?; // marker false bit
+        if bit {
+            return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
+        }
 
         return Ok(r);
     }
