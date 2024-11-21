@@ -133,9 +133,7 @@ impl<W: Write> VPXBoolWriter<W> {
 
     // each added bit can extend stream for up to 7 bits
     #[inline(always)]
-    fn cannot_put_bits(
-        tmp_value: u64, num_bits: u32
-    ) -> bool {
+    fn cannot_put_bits(tmp_value: u64, num_bits: u32) -> bool {
         tmp_value & (u64::MAX << (64 - num_bits * 7)) != 0
     }
 
@@ -321,7 +319,11 @@ impl<W: Write> VPXBoolWriter<W> {
             stream_bytes -= 1;
         }
         // check that no stream bits remain in the buffer
-        debug_assert!(if shift == 56 {tmp_value == 0} else {!(u64::MAX << (shift + 8)) & tmp_value == 0});
+        debug_assert!(if shift == 56 {
+            tmp_value == 0
+        } else {
+            !(u64::MAX << (shift + 8)) & tmp_value == 0
+        });
 
         self.writer.write_all(&self.buffer[..])?;
         Ok(())
