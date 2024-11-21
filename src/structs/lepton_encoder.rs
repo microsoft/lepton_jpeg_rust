@@ -623,7 +623,7 @@ fn roundtrip_ac_only() {
         &block,
         &block,
         [1; 64],
-        0xC634E0F1A29033CA,
+        0x9F5637364D41FE11,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -656,7 +656,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x12050FD2C854F927,
+        0x95CBDD4F7D7B72EB,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
