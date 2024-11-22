@@ -72,7 +72,7 @@ Options:
     --iter <n>              number of iterations to run
     --dump                  dump the JPEG file
     --all                   dump includes the scan lines
-    --cppverify <exe path>  verify the output with the C++ encoder
+    --cppverify <exe path>  verify the output with the C++ decoder
     --overwrite             overwrite the output file
     --corrupt <seed>        randomly corrupt the input file (for testing)
     --quiet                 suppress all output
