@@ -173,50 +173,18 @@ Options:
         enabled_features.use_16bit_dc_estimate = false;
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(not(feature = "use_rayon"))]
     if pargs.contains("--highpriority") {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
-        #[cfg(feature = "use_rayon")]
-        {
-            let priority = ThreadPriority::Os(thread_priority::ThreadPriority::Max);
-
-            set_current_thread_priority(priority).unwrap();
-
-            let b = rayon_core::ThreadPoolBuilder::new();
-            b.start_handler(move |_| {
-                set_current_thread_priority(priority).unwrap();
-            })
-            .build_global()
-            .unwrap();
-        }
-        #[cfg(not(feature = "use_rayon"))]
-        {
-            lepton_jpeg::set_thread_priority(thread_priority::ThreadPriority::Max);
-        }
+        lepton_jpeg::set_thread_priority(100);
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(not(feature = "use_rayon"))]
     if pargs.contains("--lowpriority") {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority
-        #[cfg(feature = "use_rayon")]
-        {
-            let priority = ThreadPriority::Os(thread_priority::ThreadPriority::Min);
-
-            set_current_thread_priority(priority).unwrap();
-
-            let b = rayon_core::ThreadPoolBuilder::new();
-            b.start_handler(move |_| {
-                set_current_thread_priority(priority).unwrap();
-            })
-            .build_global()
-            .unwrap();
-        }
-        #[cfg(not(feature = "use_rayon"))]
-        {
-            lepton_jpeg::set_thread_priority(thread_priority::ThreadPriority::Min);
-        }
+        lepton_jpeg::set_thread_priority(0);
     }
 
     let filenames = pargs.finish();

@@ -31,6 +31,8 @@ jobs:
       run: cargo build --locked --target x86_64-pc-windows-msvc --lib
     - name: Run tests
       run: cargo test --locked
+    - name: Run tests (use_rayon)
+      run: cargo test --locked --features use_rayon
     - name: Check formatting
       run: cargo fmt --check
       
