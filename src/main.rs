@@ -79,6 +79,7 @@ Options:
     --noverify              do not verify the output
     --max-width <n>         maximum width of the JPEG file
     --max-height <n>        maximum height of the JPEG file
+    --max-jpeg-file-size <n> maximum size of the JPEG file
     --threads <n>           maximum number of threads to use
     --rejectprogressive     reject progressive JPEG files
     --rejectdqtswithzeros   reject DQT tables with zeros
@@ -149,6 +150,13 @@ Options:
         "--rejectinvalidhuffman",
         |_| Ok(false),
         &mut enabled_features.accept_invalid_dht,
+    )?;
+
+    override_if(
+        &mut pargs,
+        "--max-jpeg-file-size",
+        parse_u32,
+        &mut enabled_features.max_jpeg_file_size,
     )?;
 
     if pargs.contains("--version") {

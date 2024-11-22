@@ -146,11 +146,18 @@ impl LeptonHeader {
         enabled_features: &mut EnabledFeatures,
         compressed_header_size: usize,
     ) -> Result<()> {
-        if compressed_header_size > MAX_FILE_SIZE_BYTES as usize {
+        if compressed_header_size > enabled_features.max_jpeg_file_size as usize {
             return err_exit_code(ExitCode::BadLeptonFile, "Too big compressed header");
         }
-        if self.jpeg_file_size > MAX_FILE_SIZE_BYTES as u32 {
-            return err_exit_code(ExitCode::BadLeptonFile, "Only support images < 128 megs");
+        if self.jpeg_file_size > enabled_features.max_jpeg_file_size {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                format!(
+                    "Only support images < {} megs",
+                    enabled_features.max_jpeg_file_size / (1024 * 1024)
+                )
+                .as_str(),
+            );
         }
 
         // limit reading to the compressed header

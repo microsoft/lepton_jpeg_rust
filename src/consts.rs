@@ -78,7 +78,7 @@ pub const MAX_THREADS: usize = 8;
 pub const RESIDUAL_NOISE_FLOOR: usize = 7;
 
 pub const LEPTON_VERSION: u8 = 1; // Lepton version, same as used by Lepton C++ since we support the same format
-pub const MAX_FILE_SIZE_BYTES: i32 = 128 * 1024 * 1024;
+
 //pub const LogMaxNumerator : i32 = 18;
 //pub const DefaultEncodingThreads : usize = 8;
 pub const SMALL_FILE_BYTES_PER_ENCDOING_THREAD: usize = 125000;

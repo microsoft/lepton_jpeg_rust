@@ -257,6 +257,14 @@ pub fn read_jpeg<R: Read + Seek>(
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
     lp.jpeg_file_size = reader.stream_position().context()? as u32;
+
+    if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "file is too large to encode, increase max_jpeg_file_size",
+        );
+    }
+
     Ok((lp, image_data))
 }
 
