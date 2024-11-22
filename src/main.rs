@@ -173,6 +173,7 @@ Options:
         enabled_features.use_16bit_dc_estimate = false;
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     if pargs.contains("--highpriority") {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
@@ -195,6 +196,7 @@ Options:
         }
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     if pargs.contains("--lowpriority") {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority

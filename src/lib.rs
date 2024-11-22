@@ -22,6 +22,7 @@ pub use metrics::Metrics;
 
 use crate::lepton_error::{AddContext, Result};
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[cfg(not(feature = "use_rayon"))]
 pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
     thread_priority::set_current_thread_priority(priority).unwrap();
