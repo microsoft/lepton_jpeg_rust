@@ -22,6 +22,12 @@ pub use metrics::Metrics;
 
 use crate::lepton_error::{AddContext, Result};
 
+#[cfg(not(feature = "use_rayon"))]
+pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
+    thread_priority::set_current_thread_priority(priority).unwrap();
+    crate::structs::simple_threadpool::set_thread_priority(priority);
+}
+
 /// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,

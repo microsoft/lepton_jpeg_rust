@@ -34,7 +34,7 @@ mod row_spec;
 mod simple_hash;
 
 #[cfg(not(feature = "use_rayon"))]
-mod simple_threadpool;
+pub mod simple_threadpool;
 
 mod thread_handoff;
 mod truncate_components;
