@@ -37,7 +37,8 @@ pub struct VPXBoolWriter<W> {
     low_value: u64,
     range: u32,
     writer: W,
-    buffer: Vec<u8>,
+    num_buffered_bytes: u32,
+    buffered_byte: u8,
     model_statistics: Metrics,
     #[allow(dead_code)]
     pub hash: SimpleHash,
@@ -48,10 +49,11 @@ impl<W: Write> VPXBoolWriter<W> {
         let mut retval = VPXBoolWriter {
             low_value: 1 << 9, // this divider bit keeps track of stream bits number
             range: 255,
-            buffer: Vec::new(),
             writer: writer,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
+            buffered_byte: 0,
+            num_buffered_bytes: 0,
         };
 
         let mut dummy_branch = Branch::new();
@@ -122,12 +124,14 @@ impl<W: Write> VPXBoolWriter<W> {
             // check carry
             *tmp_value <<= MAX_STREAM_BITS - stream_bits;
             if (*tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-                self.carry();
+                self.carry()?;
             }
+
             // write all full bytes
             let mut sh = MAX_STREAM_BITS - 8;
             while sh > 0 {
-                self.buffer.push((*tmp_value >> sh) as u8);
+                self.push_byte((*tmp_value >> sh) as u8)?;
+
                 sh -= 8;
             }
             *tmp_value &= (1 << 8) - 1; // exclude written bytes
@@ -141,22 +145,46 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
+    fn push_byte(&mut self, byte: u8) -> Result<()> {
+        if self.num_buffered_bytes == 0 {
+            self.buffered_byte = byte;
+            self.num_buffered_bytes = 1;
+        } else if byte == 0xff {
+            self.num_buffered_bytes += 1;
+        } else {
+            self.flush_buffered_bytes(0)?;
+
+            self.buffered_byte = byte;
+            self.num_buffered_bytes = 1;
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
+        let mut b = self.num_buffered_bytes;
+        if b > 0 {
+            self.writer
+                .write(&[self.buffered_byte.wrapping_add(carry)])?;
+            b -= 1;
+
+            while b > 0 {
+                self.writer.write(&[0xffu8.wrapping_add(carry)])?;
+                b -= 1;
+            }
+            self.num_buffered_bytes = 0;
+        }
+
+        Ok(())
+    }
+
     /// Safe as: at the stream beginning initially put `false` ensure that carry cannot get out
     /// of the first stream byte - then `carry` cannot be invoked on empty `buffer`,
     /// and after the stream beginning `flush_non_final_data` keeps carry-terminating
     /// byte sequence (one non-255-byte before any number of 255-bytes) inside the `buffer`.
     #[inline(always)]
-    fn carry(&mut self) {
-        let mut x = self.buffer.len() - 1;
-
-        while self.buffer[x] == 0xFF {
-            self.buffer[x] = 0;
-
-            assert!(x > 0);
-            x -= 1;
-        }
-
-        self.buffer[x] += 1;
+    fn carry(&mut self) -> Result<()> {
+        self.flush_buffered_bytes(1)
     }
 
     #[inline(always)]
@@ -288,18 +316,18 @@ impl<W: Write> VPXBoolWriter<W> {
 
         tmp_value <<= MAX_STREAM_BITS - stream_bits;
         if (tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-            self.carry();
+            self.carry()?;
         }
 
         let mut shift = MAX_STREAM_BITS - 8;
         let mut stream_bytes = (stream_bits + 7) >> 3;
         while stream_bytes > 0 {
-            self.buffer.push((tmp_value >> shift) as u8);
+            self.push_byte((tmp_value >> shift) as u8)?;
             shift -= 8;
             stream_bytes -= 1;
         }
 
-        self.writer.write_all(&self.buffer[..])?;
+        self.flush_buffered_bytes(0)?;
         Ok(())
     }
 
@@ -307,19 +335,6 @@ impl<W: Write> VPXBoolWriter<W> {
     /// is not final and should be carried over to the next buffer. At least one byte
     /// will remain in `buffer` if it is non-empty.
     pub fn flush_non_final_data(&mut self) -> Result<()> {
-        // carry over buffer data that might be not final
-        let mut i = self.buffer.len();
-        if i > 1 {
-            i -= 1;
-            while self.buffer[i] == 0xFF {
-                assert!(i > 0);
-                i -= 1;
-            }
-
-            self.writer.write_all(&self.buffer[..i])?;
-            self.buffer.drain(..i);
-        }
-
         Ok(())
     }
 }
