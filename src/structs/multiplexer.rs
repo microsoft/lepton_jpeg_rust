@@ -1,4 +1,3 @@
-use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
@@ -31,26 +30,19 @@ pub struct MultiplexWriter {
 const WRITE_BUFFER_SIZE: usize = 65536;
 
 impl Write for MultiplexWriter {
+    #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut copy_start = 0;
-        while copy_start < buf.len() {
-            let amount_to_copy = cmp::min(
-                WRITE_BUFFER_SIZE - self.buffer.len(),
-                buf.len() - copy_start,
-            );
-            self.buffer
-                .extend_from_slice(&buf[copy_start..copy_start + amount_to_copy]);
-
+        for i in 0..buf.len() {
             if self.buffer.len() == WRITE_BUFFER_SIZE {
                 self.flush()?;
             }
-
-            copy_start += amount_to_copy;
+            self.buffer.push(buf[i]);
         }
 
         Ok(buf.len())
     }
 
+    #[cold]
     fn flush(&mut self) -> std::io::Result<()> {
         if self.buffer.len() > 0 {
             let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);

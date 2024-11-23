@@ -124,7 +124,7 @@ impl<W: Write> VPXBoolWriter<W> {
             // check carry
             *tmp_value <<= MAX_STREAM_BITS - stream_bits;
             if (*tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-                self.carry()?;
+                self.flush_buffered_bytes(1)?;
             }
 
             // write all full bytes
@@ -145,6 +145,7 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
+    #[inline(always)]
     fn push_byte(&mut self, byte: u8) -> Result<()> {
         if self.num_buffered_bytes == 0 {
             self.buffered_byte = byte;
@@ -160,6 +161,10 @@ impl<W: Write> VPXBoolWriter<W> {
         Ok(())
     }
 
+    /// Safe as: at the stream beginning initially put `false` ensure that carry cannot get out
+    /// of the first stream byte - then `carry` cannot be invoked on empty `buffer`,
+    /// and after the stream beginning `flush_non_final_data` keeps carry-terminating
+    /// byte sequence (one non-255-byte before any number of 255-bytes) inside the `buffer`.
     #[inline(always)]
     fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
         let mut b = self.num_buffered_bytes;
@@ -176,15 +181,6 @@ impl<W: Write> VPXBoolWriter<W> {
         }
 
         Ok(())
-    }
-
-    /// Safe as: at the stream beginning initially put `false` ensure that carry cannot get out
-    /// of the first stream byte - then `carry` cannot be invoked on empty `buffer`,
-    /// and after the stream beginning `flush_non_final_data` keeps carry-terminating
-    /// byte sequence (one non-255-byte before any number of 255-bytes) inside the `buffer`.
-    #[inline(always)]
-    fn carry(&mut self) -> Result<()> {
-        self.flush_buffered_bytes(1)
     }
 
     #[inline(always)]
@@ -316,7 +312,7 @@ impl<W: Write> VPXBoolWriter<W> {
 
         tmp_value <<= MAX_STREAM_BITS - stream_bits;
         if (tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-            self.carry()?;
+            self.flush_buffered_bytes(1)?;
         }
 
         let mut shift = MAX_STREAM_BITS - 8;
