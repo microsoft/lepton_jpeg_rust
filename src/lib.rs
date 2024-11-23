@@ -22,6 +22,21 @@ pub use metrics::Metrics;
 
 use crate::lepton_error::{AddContext, Result};
 
+#[cfg(not(feature = "use_rayon"))]
+pub fn set_thread_priority(priority: i32) {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        let p = match priority {
+            100 => thread_priority::ThreadPriority::Max,
+            0 => thread_priority::ThreadPriority::Min,
+            _ => panic!("Unsupported thread priority value: {}", priority),
+        };
+
+        thread_priority::set_current_thread_priority(p).unwrap();
+        crate::structs::simple_threadpool::set_thread_priority(p);
+    }
+}
+
 /// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,

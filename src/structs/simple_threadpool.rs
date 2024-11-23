@@ -23,9 +23,18 @@ static IDLE_THREADS: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static
     LazyLock::new(|| Mutex::new(Vec::new()));
 static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+static THREAD_PRIORITY: Mutex<Option<thread_priority::ThreadPriority>> = Mutex::new(None);
+
 #[allow(dead_code)]
 pub fn get_idle_threads() -> usize {
     IDLE_THREADS.lock().unwrap().len()
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[allow(dead_code)]
+pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
+    *THREAD_PRIORITY.lock().unwrap() = Some(priority);
 }
 
 /// Executes a closure on a thread from the thread pool. Does not block or return any result.
@@ -39,7 +48,15 @@ where
         // channel for receiving future work on this thread
         let (tx_schedule, rx_schedule) = channel();
 
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let thread_priority = THREAD_PRIORITY.lock().unwrap().clone();
+
         spawn(move || {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            if let Some(priority) = thread_priority {
+                thread_priority::set_current_thread_priority(priority).unwrap();
+            }
+
             f();
 
             loop {

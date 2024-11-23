@@ -157,6 +157,15 @@ impl From<TryFromIntError> for LeptonError {
     }
 }
 
+impl From<pico_args::Error> for LeptonError {
+    #[track_caller]
+    fn from(e: pico_args::Error) -> Self {
+        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string().as_str());
+        e.add_context();
+        e
+    }
+}
+
 impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
     #[track_caller]
     fn from(e: std::sync::mpsc::SendError<T>) -> Self {
