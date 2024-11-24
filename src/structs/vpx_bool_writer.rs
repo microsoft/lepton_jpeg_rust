@@ -37,8 +37,7 @@ pub struct VPXBoolWriter<W> {
     low_value: u64,
     range: u32,
     writer: W,
-    num_buffered_bytes: u32,
-    buffered_byte: u8,
+    buffered_bytes: u64,
     model_statistics: Metrics,
     #[allow(dead_code)]
     pub hash: SimpleHash,
@@ -52,8 +51,7 @@ impl<W: Write> VPXBoolWriter<W> {
             writer: writer,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
-            buffered_byte: 0,
-            num_buffered_bytes: 0,
+            buffered_bytes: 0,
         };
 
         let mut dummy_branch = Branch::new();
@@ -67,8 +65,9 @@ impl<W: Write> VPXBoolWriter<W> {
         self.model_statistics.drain()
     }
 
+    /// requires caller to ensure there is enough space
     #[inline(always)]
-    pub fn put(
+    fn internal_put(
         &mut self,
         value: bool,
         branch: &mut Branch,
@@ -124,16 +123,24 @@ impl<W: Write> VPXBoolWriter<W> {
             // check carry
             *tmp_value <<= MAX_STREAM_BITS - stream_bits;
             if (*tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-                self.flush_buffered_bytes(1)?;
+                Self::flush_buffered_bytes(&mut self.writer, 1, &mut self.buffered_bytes)?;
             }
 
             // write all full bytes
             let mut sh = MAX_STREAM_BITS - 8;
+            let mut tmp_buffered_bytes = self.buffered_bytes;
+
             while sh > 0 {
-                self.push_byte((*tmp_value >> sh) as u8)?;
+                Self::push_byte(
+                    &mut self.writer,
+                    (*tmp_value >> sh) as u8,
+                    &mut tmp_buffered_bytes,
+                )?;
 
                 sh -= 8;
             }
+            self.buffered_bytes = tmp_buffered_bytes;
+
             *tmp_value &= (1 << 8) - 1; // exclude written bytes
             *tmp_value |= 1 << 9; // restore divider bit
 
@@ -146,17 +153,15 @@ impl<W: Write> VPXBoolWriter<W> {
     }
 
     #[inline(always)]
-    fn push_byte(&mut self, byte: u8) -> Result<()> {
-        if self.num_buffered_bytes == 0 {
-            self.buffered_byte = byte;
-            self.num_buffered_bytes = 1;
+    fn push_byte(writer: &mut W, byte: u8, buffered_bytes: &mut u64) -> Result<()> {
+        if *buffered_bytes < 0x100 {
+            *buffered_bytes = byte as u64 | 0x100;
         } else if byte == 0xff {
-            self.num_buffered_bytes += 1;
+            *buffered_bytes += 0x100;
         } else {
-            self.flush_buffered_bytes(0)?;
+            Self::flush_buffered_bytes(writer, 0, buffered_bytes)?;
 
-            self.buffered_byte = byte;
-            self.num_buffered_bytes = 1;
+            *buffered_bytes = byte as u64 | 0x100;
         }
         Ok(())
     }
@@ -166,18 +171,17 @@ impl<W: Write> VPXBoolWriter<W> {
     /// and after the stream beginning `flush_non_final_data` keeps carry-terminating
     /// byte sequence (one non-255-byte before any number of 255-bytes) inside the `buffer`.
     #[inline(always)]
-    fn flush_buffered_bytes(&mut self, carry: u8) -> Result<()> {
-        let mut b = self.num_buffered_bytes;
+    fn flush_buffered_bytes(writer: &mut W, carry: u8, buffered_bytes: &mut u64) -> Result<()> {
+        let mut b = *buffered_bytes >> 8;
         if b > 0 {
-            self.writer
-                .write(&[self.buffered_byte.wrapping_add(carry)])?;
+            writer.write(&[buffered_bytes.wrapping_add(carry as u64) as u8])?;
             b -= 1;
 
             while b > 0 {
-                self.writer.write(&[0xffu8.wrapping_add(carry)])?;
+                writer.write(&[0xffu8.wrapping_add(carry)])?;
                 b -= 1;
             }
-            self.num_buffered_bytes = 0;
+            *buffered_bytes = 0;
         }
 
         Ok(())
@@ -200,7 +204,7 @@ impl<W: Write> VPXBoolWriter<W> {
 
         loop {
             let cur_bit = (v & (1 << index)) != 0;
-            self.put(
+            self.internal_put(
                 cur_bit,
                 &mut branches[serialized_so_far],
                 &mut tmp_value,
@@ -237,7 +241,7 @@ impl<W: Write> VPXBoolWriter<W> {
 
         let mut i: i32 = (num_bits - 1) as i32;
         while i >= 0 {
-            self.put(
+            self.internal_put(
                 (bits & (1 << i)) != 0,
                 &mut branches[i as usize],
                 &mut tmp_value,
@@ -268,7 +272,7 @@ impl<W: Write> VPXBoolWriter<W> {
         for i in 0..A {
             let cur_bit = v != i;
 
-            self.put(
+            self.internal_put(
                 cur_bit,
                 &mut branches[i],
                 &mut tmp_value,
@@ -296,7 +300,7 @@ impl<W: Write> VPXBoolWriter<W> {
         let mut tmp_value = self.low_value;
         let mut tmp_range = self.range;
 
-        self.put(value, branch, &mut tmp_value, &mut tmp_range, _cmp)?;
+        self.internal_put(value, branch, &mut tmp_value, &mut tmp_range, _cmp)?;
 
         self.low_value = tmp_value;
         self.range = tmp_range;
@@ -312,18 +316,23 @@ impl<W: Write> VPXBoolWriter<W> {
 
         tmp_value <<= MAX_STREAM_BITS - stream_bits;
         if (tmp_value & (1 << MAX_STREAM_BITS)) != 0 {
-            self.flush_buffered_bytes(1)?;
+            Self::flush_buffered_bytes(&mut self.writer, 1, &mut self.buffered_bytes)?;
         }
 
         let mut shift = MAX_STREAM_BITS - 8;
         let mut stream_bytes = (stream_bits + 7) >> 3;
         while stream_bytes > 0 {
-            self.push_byte((tmp_value >> shift) as u8)?;
+            Self::push_byte(
+                &mut self.writer,
+                (tmp_value >> shift) as u8,
+                &mut self.buffered_bytes,
+            )?;
             shift -= 8;
             stream_bytes -= 1;
         }
 
-        self.flush_buffered_bytes(0)?;
+        Self::flush_buffered_bytes(&mut self.writer, 0, &mut self.buffered_bytes)?;
+
         Ok(())
     }
 

@@ -29,20 +29,29 @@ pub struct MultiplexWriter {
 
 const WRITE_BUFFER_SIZE: usize = 65536;
 
+impl MultiplexWriter {
+    #[cold]
+    fn flush_and_push(&mut self, b: u8) -> Result<()> {
+        self.flush()?;
+        self.buffer.push(b);
+        Ok(())
+    }
+}
+
 impl Write for MultiplexWriter {
     #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         for i in 0..buf.len() {
-            if self.buffer.len() == WRITE_BUFFER_SIZE {
-                self.flush()?;
+            if self.buffer.len() < self.buffer.capacity() {
+                self.buffer.push(buf[i]);
+            } else {
+                self.flush_and_push(buf[i])?;
             }
-            self.buffer.push(buf[i]);
         }
 
         Ok(buf.len())
     }
 
-    #[cold]
     fn flush(&mut self) -> std::io::Result<()> {
         if self.buffer.len() > 0 {
             let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
