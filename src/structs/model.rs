@@ -614,6 +614,7 @@ impl Model {
         .context();
     }
 
+    #[inline(always)]
     fn get_dc_branches(
         &mut self,
         uncertainty: i16,

@@ -80,6 +80,7 @@ impl ProbabilityTables {
         return if component == 0 { 0 } else { 1 };
     }
 
+    #[inline(always)]
     pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
         return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
     }
