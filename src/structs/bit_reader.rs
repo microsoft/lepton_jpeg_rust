@@ -18,22 +18,29 @@ pub struct BitReader<R> {
     eof: bool,
     start_offset: u64,
     truncated_ff: bool,
+    advance_bytes: usize,
 }
 
 impl<R: BufRead + Seek> BitReader<R> {
     pub fn get_stream_position(&mut self) -> i32 {
-        let pos = (self.inner.stream_position().unwrap() - self.start_offset)
+        self.remove_advance_bits();
+
+        let pos: i32 = (self.inner.stream_position().unwrap() - self.start_offset)
             .try_into()
             .unwrap();
 
         if self.bits_left > 0 && !self.eof {
             if self.bits as u8 == 0xff && !self.truncated_ff {
+                debug_assert!(
+                    self.advance_bytes == 0,
+                    "never should advance bytes when there are 0xff sequences"
+                );
                 return pos - 2;
             } else {
-                return pos - 1;
+                return pos - 1 + self.advance_bytes as i32;
             }
         } else {
-            return pos;
+            return pos + self.advance_bytes as i32;
         }
     }
 
@@ -48,6 +55,7 @@ impl<R: BufRead + Seek> BitReader<R> {
             eof: false,
             start_offset,
             truncated_ff: false,
+            advance_bytes: 0,
         }
     }
 }
@@ -88,27 +96,29 @@ impl<R: BufRead> BitReader<R> {
 
     #[inline(always)]
     pub fn fill_register(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
+        self.inner.consume(self.advance_bytes);
+
         let fb = self.inner.fill_buf()?;
 
         let mut index = 0;
         let mut temp_bits = self.bits;
         let mut temp_bits_left = self.bits_left;
+        let mut advance_bytes = 0;
 
-        while index < fb.len() && fb[index] != 0xff {
+        while index < fb.len() && fb[index] != 0xff && temp_bits_left < 56 {
             temp_bits = (temp_bits << 8) | (fb[index] as u64);
             temp_bits_left += 8;
             index += 1;
-            if bits_to_read <= temp_bits_left {
-                self.bits = temp_bits;
-                self.bits_left = temp_bits_left;
-                self.inner.consume(index);
-                return Ok(());
+
+            if temp_bits_left >= bits_to_read {
+                advance_bytes += 1;
             }
         }
 
         self.bits = temp_bits;
         self.bits_left = temp_bits_left;
-        self.inner.consume(index);
+        self.advance_bytes = advance_bytes;
+        self.inner.consume(index - advance_bytes);
 
         if bits_to_read <= self.bits_left {
             return Ok(());
@@ -197,10 +207,12 @@ impl<R: BufRead> BitReader<R> {
         &mut self,
         pad_bit: &mut Option<u8>,
     ) -> Result<(), LeptonError> {
+        self.remove_advance_bits();
+
         // if there are bits left, we need to see whether they
         // are 1s or zeros.
 
-        if self.bits_left > 0 && !self.eof {
+        if (self.bits_left) > 0 && !self.eof {
             let num_bits_to_read = self.bits_left;
             let actual = self.read(num_bits_to_read)?;
             let all_one = (1 << num_bits_to_read) - 1;
@@ -239,6 +251,8 @@ impl<R: BufRead> BitReader<R> {
         // we reached the end of a MCU, so we need to find a reset code and the huffman codes start get padded out, but the spec
         // doesn't specify whether the padding should be 1s or 0s, so we ensure that at least the file is consistant so that we
         // can recode it again just by remembering the pad bit.
+        self.inner.consume(self.advance_bytes);
+        self.advance_bytes = 0;
 
         let mut h = [0u8; 2];
         self.inner.read_exact(&mut h)?;
@@ -263,12 +277,30 @@ impl<R: BufRead> BitReader<R> {
     ///
     /// bitsAlreadyRead: the number of bits already read from the current byte
     /// byteBeingRead: the byte currently being read, with any bits not read from it yet cleared (0'ed)
-    pub fn overhang(&self) -> (u8, u8) {
+    pub fn overhang(&mut self) -> (u8, u8) {
+        self.remove_advance_bits();
         let bits_already_read = ((64 - self.bits_left) & 7) as u8; // already read bits in the current byte
 
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 
         return (bits_already_read, (self.bits as u8) & mask);
+    }
+
+    /// "puts back" advance bits that were read from the stream but not consumed.
+    /// We need to do this in cases where we may have read too far ahead in the stream, but
+    /// since we haven't yet called "consume" on the BufRead, we can safely just pretend that
+    /// we never read the bits.
+    pub fn remove_advance_bits(&mut self) {
+        while self.bits_left >= 8 && self.advance_bytes > 0 {
+            self.bits_left -= 8;
+            self.bits >>= 8;
+            self.advance_bytes -= 1;
+        }
+
+        if self.advance_bytes > 0 {
+            self.inner.consume(self.advance_bytes);
+            self.advance_bytes = 0;
+        }
     }
 }
 
