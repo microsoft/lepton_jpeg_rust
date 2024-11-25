@@ -318,13 +318,6 @@ impl<W: Write> VPXBoolWriter<W> {
 
         Ok(())
     }
-
-    /// When buffer is full and is going to be sent to output, preserve buffer data that
-    /// is not final and should be carried over to the next buffer. At least one byte
-    /// will remain in `buffer` if it is non-empty.
-    pub fn flush_non_final_data(&mut self) -> Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
