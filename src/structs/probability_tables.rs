@@ -4,7 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use wide::{i16x8, i32x8};
+use bytemuck::cast;
+use wide::{i16x8, i32x8, u16x8};
 
 use crate::consts::*;
 use crate::enabled_features;
@@ -120,38 +121,36 @@ impl ProbabilityTables {
         above: &AlignedBlock,
         above_left: &AlignedBlock,
     ) -> [u16; 64] {
-        let mut best_prior = [0; 64];
+        let mut best_prior = [u16x8::ZERO; 8];
 
         if ALL_PRESENT {
-            // compiler does a pretty amazing job with SSE/AVX2 here
-            for i in 8..64 {
+            for i in 1..8 {
                 // approximate average of 3 without a divide with double the weight for left/top vs diagonal
                 //
                 // No need to go to 32 bits since max exponent is 11, ie 2047, so
                 // (2047 + 2047) * 13 + 2047 * 6 = 65504 which still fits in 16 bits.
                 // In addition, if we ever returned anything higher that 2047, it would
                 // assert in the array lookup in the model.
-                best_prior[i] = ((left.get_coefficient(i).unsigned_abs()
-                    + above.get_coefficient(i).unsigned_abs())
-                    * 13
-                    + 6 * above_left.get_coefficient(i).unsigned_abs())
-                    >> 5;
+                best_prior[i] =
+                    ((left.as_i16x8(i).unsigned_abs() + above.as_i16x8(i).unsigned_abs()) * 13
+                        + above_left.as_i16x8(i).unsigned_abs() * 6)
+                        >> 5;
             }
         } else {
             // handle edge case :) where we are on the top or left edge
 
             if self.left_present {
-                for i in 8..64 {
-                    best_prior[i] = left.get_coefficient(i).unsigned_abs();
+                for i in 1..8 {
+                    best_prior[i] = left.as_i16x8(i).unsigned_abs();
                 }
             } else if self.above_present {
-                for i in 8..64 {
-                    best_prior[i] = above.get_coefficient(i).unsigned_abs();
+                for i in 1..8 {
+                    best_prior[i] = above.as_i16x8(i).unsigned_abs();
                 }
             }
         }
 
-        best_prior
+        cast(best_prior)
     }
 
     // Predictor calculations in `compute_lak` are made using partial IDCT along only one dimension
