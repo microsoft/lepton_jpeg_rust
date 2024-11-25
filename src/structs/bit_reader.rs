@@ -13,7 +13,7 @@ use crate::{jpeg_code, LeptonError};
 pub struct BitReader<R> {
     inner: R,
     bits: u64,
-    bits_left: u8,
+    bits_left: u32,
     cpos: u32,
     eof: bool,
     start_offset: u64,
@@ -54,7 +54,7 @@ impl<R: BufRead + Seek> BitReader<R> {
 
 impl<R: BufRead> BitReader<R> {
     #[inline(always)]
-    pub fn read(&mut self, bits_to_read: u8) -> std::io::Result<u16> {
+    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u16> {
         if bits_to_read == 0 {
             return Ok(0);
         }
@@ -72,39 +72,63 @@ impl<R: BufRead> BitReader<R> {
     #[inline(always)]
     pub fn peek(&self) -> (u8, u8) {
         if self.bits_left < 8 {
-            return ((self.bits << (8 - self.bits_left)) as u8, self.bits_left);
+            return (
+                (self.bits << (8 - self.bits_left)) as u8,
+                self.bits_left as u8,
+            );
         } else {
             return ((self.bits >> (self.bits_left - 8)) as u8, 8);
         }
     }
 
     #[inline(always)]
-    pub fn advance(&mut self, bits: u8) {
+    pub fn advance(&mut self, bits: u32) {
         self.bits_left -= bits;
     }
 
     #[inline(always)]
-    pub fn fill_register(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
-        let buffer = self.inner.fill_buf()?;
-        if buffer.len() > 8 {
-            let fill = u64::from_be_bytes(buffer[..8].try_into().unwrap());
-            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) == 0 {
-                let mut v = 0;
-                while self.bits_left < bits_to_read {
-                    self.bits = (self.bits << 8) | buffer[v] as u64;
-                    self.bits_left += 8;
-                    v += 1;
-                }
-                self.inner.consume(v);
+    pub fn fill_register(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
+        let fb = self.inner.fill_buf()?;
 
+        let mut index = 0;
+        let mut temp_bits = self.bits;
+        let mut temp_bits_left = self.bits_left;
+
+        while index < fb.len() && fb[index] != 0xff {
+            temp_bits = (temp_bits << 8) | (fb[index] as u64);
+            temp_bits_left += 8;
+            index += 1;
+            if bits_to_read <= temp_bits_left {
+                self.bits = temp_bits;
+                self.bits_left = temp_bits_left;
+                self.inner.consume(index);
                 return Ok(());
             }
         }
+
+        self.bits = temp_bits;
+        self.bits_left = temp_bits_left;
+        self.inner.consume(index);
+
+        if bits_to_read <= self.bits_left {
+            return Ok(());
+        }
+
+        /*
+        let mut index = 0;
+        while self.bits_left < 56 && index < buffer.len() && buffer[index] != 0xff {
+            self.bits = (self.bits << 8) | (buffer[index] as u64);
+            self.bits_left += 8;
+            index += 1;
+        }
+        buffer.consume(index);
+        */
+
         return self.fill_register_slow(bits_to_read);
     }
 
     #[cold]
-    fn fill_register_slow(&mut self, bits_to_read: u8) -> Result<(), std::io::Error> {
+    fn fill_register_slow(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
         loop {
             let fb = self.inner.fill_buf()?;
             if let &[b, ..] = fb {

@@ -509,6 +509,7 @@ pub fn decode_block_seq<R: BufRead>(
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
+#[inline(always)]
 fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
     let mut node: u16 = 0;
 
@@ -535,7 +536,7 @@ fn read_dc<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result
     }
 }
 
-#[inline(always)]
+#[inline(never)]
 fn read_coef<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,
@@ -554,7 +555,7 @@ fn read_coef<R: BufRead>(
         if code_len <= peek_len {
             // found code directly, so advance by the number of bits immediately
             hc = code;
-            bit_reader.advance(code_len);
+            bit_reader.advance(u32::from(code_len));
             break;
         } else if peek_len < 8 {
             // peek code works with up to 8 bits at a time. If we had less
@@ -575,7 +576,7 @@ fn read_coef<R: BufRead>(
         if literal_bits == 0 {
             Ok(Some((z, 0)))
         } else {
-            let value = bit_reader.read(literal_bits)?;
+            let value = bit_reader.read(u32::from(literal_bits))?;
             Ok(Some((z, devli(literal_bits, value))))
         }
     } else {
@@ -608,7 +609,7 @@ fn decode_ac_prg_fs<R: BufRead>(
             // decode run/level combination
             let mut z = l;
             let s = r;
-            let n = bit_reader.read(s)?;
+            let n = bit_reader.read(u32::from(s))?;
             if (z + bpos) > to {
                 return err_exit_code(ExitCode::UnsupportedJpeg, "run is too long");
             }
@@ -624,7 +625,7 @@ fn decode_ac_prg_fs<R: BufRead>(
         } else {
             // decode eobrun
             let s = l;
-            let n = bit_reader.read(s)? as u16;
+            let n = bit_reader.read(u32::from(s))? as u16;
             state.eobrun = decode_eobrun_bits(s, n);
 
             state.eobrun -= 1; // decrement eobrun ( for this one )
@@ -702,7 +703,7 @@ fn decode_ac_prg_sa<R: BufRead>(
             // decode eobrun
             eob = bpos;
             let s = l;
-            let n = bit_reader.read(s)? as u16;
+            let n = bit_reader.read(u32::from(s))? as u16;
             state.eobrun = decode_eobrun_bits(s, n);
 
             // since we hit EOB, the rest can be done with the zero block decoder

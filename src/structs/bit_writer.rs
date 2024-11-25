@@ -189,7 +189,7 @@ fn roundtrip_bits() {
         let mut r = BitReader::new(Cursor::new(&buf));
 
         for i in 1..2048 {
-            assert_eq!(i, r.read(u32_bit_length(i as u32)).unwrap());
+            assert_eq!(i, r.read(u32_bit_length(i as u32) as u32).unwrap());
         }
 
         let mut pad = Some(0xff);
@@ -269,7 +269,11 @@ fn roundtrip_randombits() {
                         "peek unexpected result"
                     );
 
-                    assert_eq!(code, r.read(numbits).unwrap(), "read unexpected result");
+                    assert_eq!(
+                        code,
+                        r.read(numbits as u32).unwrap(),
+                        "read unexpected result"
+                    );
                 }
                 Action::Pad(fill) => {
                     let mut pad = Some(fill);
