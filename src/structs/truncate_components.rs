@@ -4,11 +4,10 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use crate::structs::component_info::*;
-
 use std::cmp;
 
-use super::jpeg_header::JPegHeader;
+use crate::structs::component_info::*;
+use crate::structs::jpeg_header::JPegHeader;
 
 #[derive(Debug, Clone)]
 struct TrucateComponentsInfo {

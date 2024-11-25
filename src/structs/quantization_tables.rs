@@ -6,8 +6,7 @@
 
 use crate::consts::*;
 use crate::helpers::*;
-
-use super::jpeg_header::JPegHeader;
+use crate::structs::jpeg_header::JPegHeader;
 
 pub struct QuantizationTables {
     quantization_table: [u16; 64],

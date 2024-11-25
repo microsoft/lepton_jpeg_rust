@@ -8,17 +8,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::lepton_error::{ExitCode, LeptonError};
 
-macro_rules! here {
-    () => {
-        concat!("at ", file!(), " line ", line!())
-    };
-}
-
-pub(crate) use here;
-
 /// Helper function to catch panics and convert them into the appropriate LeptonError
 pub fn catch_unwind_result<R>(
-    f: impl FnOnce() -> Result<R, anyhow::Error>,
+    f: impl FnOnce() -> Result<R, LeptonError>,
 ) -> Result<R, LeptonError> {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(r) => r.map_err(|e| e.into()),
@@ -83,11 +75,6 @@ pub const fn u16_bit_length(v: u16) -> u8 {
 #[inline(always)]
 pub const fn u32_bit_length(v: u32) -> u8 {
     return 32 - v.leading_zeros() as u8;
-}
-
-#[cold]
-pub fn err_exit_code<T>(error_code: ExitCode, message: &str) -> anyhow::Result<T> {
-    return Err(anyhow::Error::new(LeptonError::new(error_code, message)));
 }
 
 pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(

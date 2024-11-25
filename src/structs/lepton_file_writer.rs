@@ -4,31 +4,28 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use byteorder::{LittleEndian, WriteBytesExt};
-use default_boxed::DefaultBoxed;
-use log::info;
 use std::cmp;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use byteorder::{LittleEndian, WriteBytesExt};
+use default_boxed::DefaultBoxed;
+use log::info;
 
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
-use crate::helpers::*;
 use crate::jpeg_code;
-use crate::lepton_error::ExitCode;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegHeader;
+use crate::structs::jpeg_read::{read_progressive_scan, read_scan};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::lepton_file_reader::decode_lepton_file;
+use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
-
-use super::jpeg_read::{read_progressive_scan, read_scan};
-use super::lepton_header::LeptonHeader;
 
 /// reads a jpeg and writes it out as a lepton file
 pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
@@ -38,8 +35,7 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
 
-    lp.write_lepton_header(writer, enabled_features)
-        .context(here!())?;
+    lp.write_lepton_header(writer, enabled_features).context()?;
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
@@ -49,13 +45,13 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
         image_data,
         enabled_features,
     )
-    .context(here!())?;
+    .context()?;
 
     let final_file_size = writer.stream_position()? + 4;
 
     writer
         .write_u32::<LittleEndian>(final_file_size as u32)
-        .context(here!())?;
+        .context()?;
 
     Ok(metrics)
 }
@@ -74,7 +70,7 @@ pub fn encode_lepton_wrapper_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features).context(here!())?;
+        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -85,9 +81,8 @@ pub fn encode_lepton_wrapper_verify(
 
     let mut c = enabled_features.clone();
 
-    metrics.merge_from(
-        decode_lepton_file(&mut verifyreader, &mut verify_buffer, &mut c).context(here!())?,
-    );
+    metrics
+        .merge_from(decode_lepton_file(&mut verifyreader, &mut verify_buffer, &mut c).context()?);
 
     if input_data.len() != verify_buffer.len() {
         return err_exit_code(
@@ -132,7 +127,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     get_git_revision(&mut lp);
 
-    if !prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context(here!())? {
+    if !prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
 
@@ -143,7 +138,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
             ExitCode::ProgressiveUnsupported,
             "file is progressive, but this is disabled",
         )
-        .context(here!());
+        .context();
     }
 
     if lp.jpeg_header.cmpc > COLOR_CHANNEL_NUM_BLOCK_TYPES {
@@ -151,7 +146,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
             ExitCode::Unsupported4Colors,
             " can't support this kind of image",
         )
-        .context(here!());
+        .context();
     }
 
     lp.truncate_components.init(&lp.jpeg_header);
@@ -168,7 +163,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
     let start_scan = reader.stream_position()? as i32;
-    read_scan(&mut lp, reader, &mut thread_handoff, &mut image_data[..]).context(here!())?;
+    read_scan(&mut lp, reader, &mut thread_handoff, &mut image_data[..]).context()?;
     lp.scnc += 1;
 
     let mut end_scan = reader.stream_position()? as i32;
@@ -179,7 +174,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
             ExitCode::UnsupportedJpeg,
             "couldnt find any sections to encode",
         )
-        .context(here!());
+        .context();
     }
 
     for i in 0..thread_handoff.len() {
@@ -216,7 +211,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
         }
 
         // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
-        reader.read_to_end(&mut lp.garbage_data).context(here!())?;
+        reader.read_to_end(&mut lp.garbage_data).context()?;
     } else {
         assert!(lp.jpeg_header.jpeg_type == JPegType::Progressive);
 
@@ -225,14 +220,14 @@ pub fn read_jpeg<R: BufRead + Seek>(
                 ExitCode::UnsupportedJpeg,
                 "truncation is only supported for baseline images",
             )
-            .context(here!());
+            .context();
         }
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
-        while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context(here!())? {
+        while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
             callback(&lp.jpeg_header);
 
-            read_progressive_scan(&mut lp, reader, &mut image_data[..]).context(here!())?;
+            read_progressive_scan(&mut lp, reader, &mut image_data[..]).context()?;
             lp.scnc += 1;
 
             if lp.early_eof_encountered {
@@ -240,7 +235,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
                     ExitCode::UnsupportedJpeg,
                     "truncation is only supported for baseline images",
                 )
-                .context(here!());
+                .context();
             }
         }
 
@@ -251,7 +246,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
         lp.garbage_data = Vec::from(EOI);
 
         // append the rest of the file to the buffer
-        if reader.read_to_end(&mut lp.garbage_data).context(here!())? == 0 {
+        if reader.read_to_end(&mut lp.garbage_data).context()? == 0 {
             // no need to record EOI garbage data if there wasn't anything read
             lp.garbage_data.clear();
         }
@@ -261,7 +256,15 @@ pub fn read_jpeg<R: BufRead + Seek>(
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
-    lp.jpeg_file_size = reader.stream_position().context(here!())? as u32;
+    lp.jpeg_file_size = reader.stream_position().context()? as u32;
+
+    if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "file is too large to encode, increase max_jpeg_file_size",
+        );
+    }
+
     Ok((lp, image_data))
 }
 
@@ -335,7 +338,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
                 true,
                 &features,
             )
-            .context(here!())?;
+            .context()?;
 
             range_metrics.record_cpu_worker_time(cpu_time.elapsed());
 
@@ -443,10 +446,7 @@ fn prepare_to_decode_next_scan<R: Read>(
     enabled_features: &EnabledFeatures,
 ) -> Result<bool> {
     // parse the header and store it in the raw_jpeg_header
-    if !lp
-        .parse_jpeg_header(reader, enabled_features)
-        .context(here!())?
-    {
+    if !lp.parse_jpeg_header(reader, enabled_features).context()? {
         return Ok(false);
     }
 

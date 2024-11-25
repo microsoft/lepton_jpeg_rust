@@ -4,30 +4,28 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use anyhow::{Context, Result};
-use bytemuck::cast;
-use wide::i32x8;
-
 use std::cmp;
 use std::io::Write;
+
+use bytemuck::cast;
+use default_boxed::DefaultBoxed;
+use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
-use crate::lepton_error::ExitCode;
-
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::metrics::Metrics;
-use crate::structs::{
-    block_based_image::AlignedBlock, block_based_image::BlockBasedImage,
-    block_context::BlockContext, model::Model, model::ModelPerColor,
-    neighbor_summary::NeighborSummary, probability_tables::ProbabilityTables,
-    quantization_tables::QuantizationTables, row_spec::RowSpec, truncate_components::*,
-    vpx_bool_writer::VPXBoolWriter,
-};
-
-use default_boxed::DefaultBoxed;
-
-use super::block_context::NeighborData;
+use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::structs::block_context::{BlockContext, NeighborData};
+use crate::structs::model::{Model, ModelPerColor};
+use crate::structs::neighbor_summary::NeighborSummary;
+use crate::structs::probability_tables::ProbabilityTables;
+use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::row_spec::RowSpec;
+use crate::structs::truncate_components::*;
+use crate::structs::vpx_bool_writer::VPXBoolWriter;
+use crate::Result;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -118,7 +116,9 @@ pub fn lepton_encode_row_range<W: Write>(
             component_size_in_blocks[component],
             features,
         )
-        .context(here!())?;
+        .context()?;
+
+        bool_writer.flush_non_final_data().context()?;
     }
 
     if is_last_thread && full_file_compression {
@@ -140,7 +140,7 @@ pub fn lepton_encode_row_range<W: Write>(
         );
     }
 
-    bool_writer.finish().context(here!())?;
+    bool_writer.finish().context()?;
 
     Ok(bool_writer.drain_stats())
 }
@@ -182,7 +182,7 @@ fn process_row<W: Write>(
                 bool_writer,
                 features,
             )
-            .context(here!())?;
+            .context()?;
         } else {
             serialize_tokens::<W, false>(
                 &block_context,
@@ -195,7 +195,7 @@ fn process_row<W: Write>(
                 bool_writer,
                 features,
             )
-            .context(here!())?;
+            .context()?;
         }
 
         let offset = block_context.next();
@@ -283,7 +283,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             num_non_zeros_7x7_context_bin,
             num_non_zeros_7x7,
         )
-        .context(here!())?;
+        .context()?;
 
     // these are used as predictors for the number of non-zero edge coefficients
     // do math in 32 bits since this is faster on most modern platforms
@@ -316,7 +316,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                     num_non_zeros_remaining_bin,
                     best_prior_bit_length as usize,
                 )
-                .context(here!())?;
+                .context()?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
@@ -355,7 +355,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         eob_x as u8,
         eob_y as u8,
     )
-    .context(here!())?;
+    .context()?;
 
     // finally the DC coefficient (at 0,0)
     let q0 = qt.get_quantization_table()[0] as i32;
@@ -386,7 +386,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             predicted_val.uncertainty,
             predicted_val.uncertainty2,
         )
-        .context(here!())?;
+        .context()?;
 
     // neighbor summary is used as a predictor for the next block
     let neighbor_summary = NeighborSummary::new(
@@ -438,7 +438,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         num_non_zeros_bin,
         eob_x,
     )
-    .context(here!())?;
+    .context()?;
 
     encode_one_edge::<W, ALL_PRESENT, false>(
         here_tr,
@@ -450,7 +450,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
         num_non_zeros_bin,
         eob_y,
     )
-    .context(here!())?;
+    .context()?;
 
     // prepare predictors for edge coefficients of the blocks below and to the right of current one
     let (next_horiz_pred, next_vert_pred) = ProbabilityTables::predict_next_edges(&raster);
@@ -503,7 +503,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             num_non_zeros_bin,
             num_non_zeros_edge,
         )
-        .context(here!())?;
+        .context()?;
 
     let delta;
     let mut zig15offset;
@@ -537,7 +537,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
                 num_non_zeros_edge,
                 best_prior,
             )
-            .context(here!())?;
+            .context()?;
 
         if coef != 0 {
             num_non_zeros_edge -= 1;
@@ -562,7 +562,7 @@ fn roundtrip_zeros() {
         &block,
         &block,
         [1; 64],
-        0xc2bc71721120de75,
+        0x4154B63BDE6F2912,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -579,7 +579,7 @@ fn roundtrip_dc_only() {
         &block,
         &block,
         [1; 64],
-        0xe777404068ec50e0,
+        0x2556719DE605BB41,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -599,7 +599,7 @@ fn roundtrip_edges_only() {
         &block,
         &block,
         [1; 64],
-        0xe3f7a94ebde1a7a,
+        0x91061AE0FBE7C626,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -623,7 +623,7 @@ fn roundtrip_ac_only() {
         &block,
         &block,
         [1; 64],
-        0x2a9b90a785c01dc1,
+        0x9F5637364D41FE11,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -638,7 +638,7 @@ fn roundtrip_ones() {
         &block,
         &block,
         [1; 64],
-        0xf665236641c3940b,
+        0x6B2A9E7E1DA9A4B3,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -656,7 +656,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [1; 64],
-        0x7b5080d88472e2bb,
+        0x95CBDD4F7D7B72EB,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -670,7 +670,7 @@ fn roundtrip_large_coef() {
         &block,
         &block,
         [65535; 64],
-        0x2292c1567bcd03aa,
+        0xE514715BD531D80E,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -700,7 +700,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0xb29a6ba0fe9f14e6,
+        0x146C568A90EB0F14,
         &EnabledFeatures::compat_lepton_scalar_read(),
     );
 
@@ -711,7 +711,7 @@ fn roundtrip_random_seed() {
         &above_left,
         &here,
         qt,
-        0x12aa8dc3af82fc8,
+        0x12ECA3C71A29300C,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 
@@ -737,7 +737,7 @@ fn roundtrip_unique() {
         &above_left,
         &here,
         [1; 64],
-        0xaa01fa1a67ba3a1,
+        0x8FA72ED7E5961A1C,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -765,7 +765,7 @@ fn roundtrip_non_zeros_counts() {
         &block,
         &block,
         [1; 64],
-        0x57482d106b5c83b6,
+        0x6C93F3EF5495440B,
         &EnabledFeatures::compat_lepton_vector_read(),
     );
 }
@@ -782,7 +782,7 @@ fn make_random_model() -> Box<Model> {
     let mut rng = crate::helpers::get_rand_from_seed([2u8; 32]);
 
     model.walk(|x| {
-        x.set_count(rng.gen_range(0x101..=0xffff));
+        x.set_count(rng.gen_range(0x01..=0xff) * 256 + rng.gen_range(0x01..=0xff));
     });
     model
 }
@@ -804,15 +804,16 @@ fn roundtrip_read_write_coefficients(
     verified_output: u64,
     features: &EnabledFeatures,
 ) -> u64 {
-    use crate::structs::{
-        block_based_image::EMPTY_BLOCK, lepton_decoder::read_coefficient_block,
-        neighbor_summary::NEIGHBOR_DATA_EMPTY, vpx_bool_reader::VPXBoolReader,
-    };
+    use std::hash::Hasher;
+    use std::io::{Cursor, Read};
 
     // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
-    use std::hash::Hasher;
-    use std::io::{Cursor, Read};
+
+    use crate::structs::block_based_image::EMPTY_BLOCK;
+    use crate::structs::lepton_decoder::read_coefficient_block;
+    use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
+    use crate::structs::vpx_bool_reader::VPXBoolReader;
 
     let mut write_model = make_random_model();
 

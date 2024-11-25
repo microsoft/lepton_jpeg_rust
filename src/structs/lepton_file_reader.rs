@@ -4,33 +4,29 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use default_boxed::DefaultBoxed;
-use log::warn;
 use std::cmp::min;
 use std::io::{BufRead, Cursor, Write};
 use std::mem;
 
+use default_boxed::DefaultBoxed;
 #[cfg(feature = "detailed_tracing")]
 use log::info;
-
-use anyhow::{Context, Result};
+use log::warn;
 
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
-use crate::helpers::*;
 use crate::jpeg_code;
-use crate::lepton_error::ExitCode;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::block_based_image::BlockBasedImage;
 use crate::structs::jpeg_header::JPegEncodingInfo;
 use crate::structs::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
+use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
+use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
+use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-
-use super::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
-use super::multiplexer::{MultiplexReader, MultiplexReaderState};
-use super::partial_buffer::PartialBuffer;
 
 /// reads a lepton file and writes it out as a jpeg
 /// wraps LeptonFileReader
@@ -43,11 +39,11 @@ pub fn decode_lepton_file<R: BufRead, W: Write>(
 
     let mut done = false;
     while !done {
-        let buffer = reader.fill_buf().context(here!())?;
+        let buffer = reader.fill_buf().context()?;
 
         done = decoder
             .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX)
-            .context(here!())?;
+            .context()?;
 
         let amt = buffer.len();
         reader.consume(amt);
@@ -67,19 +63,17 @@ pub fn decode_lepton_file_image<R: BufRead>(
     let mut enabled_features = enabled_features.clone();
 
     let mut fixed_header_buffer = [0; FIXED_HEADER_SIZE];
-    reader
-        .read_exact(&mut fixed_header_buffer)
-        .context(here!())?;
+    reader.read_exact(&mut fixed_header_buffer).context()?;
 
     let compressed_header_size = lh
         .read_lepton_fixed_header(&fixed_header_buffer, &mut enabled_features)
-        .context(here!())?;
+        .context()?;
 
     lh.read_compressed_lepton_header(reader, &mut enabled_features, compressed_header_size)
-        .context(here!())?;
+        .context()?;
 
     let mut buf = [0; 3];
-    reader.read_exact(&mut buf).context(here!())?;
+    reader.read_exact(&mut buf).context()?;
 
     if buf != LEPTON_HEADER_COMPLETION_MARKER {
         return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -94,12 +88,12 @@ pub fn decode_lepton_file_image<R: BufRead>(
             return Ok(image_data);
         },
     )
-    .context(here!())?;
+    .context()?;
 
     // process the rest of the file (except for the 4 byte EOF marker)
     let mut extra_buffer = Vec::new();
     loop {
-        let b = reader.fill_buf().context(here!())?;
+        let b = reader.fill_buf().context()?;
         let b_len = b.len();
         if b_len == 0 {
             break;
@@ -111,7 +105,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
     // run the threads first, since we need everything before we can start decoding
     let mut results = Vec::new();
 
-    for (_metric, vec) in state.complete().context(here!())? {
+    for (_metric, vec) in state.complete().context()? {
         results.push(vec);
     }
 
@@ -202,7 +196,7 @@ impl LeptonFileReader {
                                 &v.try_into().unwrap(),
                                 &mut self.enabled_features,
                             )
-                            .context(here!())?;
+                            .context()?;
                         self.state = DecoderState::CompressedHeader(compressed_header_size);
                     }
                 }
@@ -214,7 +208,7 @@ impl LeptonFileReader {
                                 &mut self.enabled_features,
                                 *compressed_length,
                             )
-                            .context(here!())?;
+                            .context()?;
 
                         self.state = DecoderState::CMP();
                     }
@@ -232,10 +226,8 @@ impl LeptonFileReader {
                         Self::verify_eof_file_size(self.total_read_size, &mut in_buffer)?;
 
                         // complete the operation and merge the metrics
-                        let results = Self::merge_metrics(
-                            &mut self.metrics,
-                            state.complete().context(here!())?,
-                        );
+                        let results =
+                            Self::merge_metrics(&mut self.metrics, state.complete().context()?);
 
                         self.state = Self::process_progressive(
                             &mut self.lh,
@@ -251,10 +243,8 @@ impl LeptonFileReader {
                         Self::verify_eof_file_size(self.total_read_size, &mut in_buffer)?;
 
                         // complete the operation and merge the metrics
-                        let results = Self::merge_metrics(
-                            &mut self.metrics,
-                            state.complete().context(here!())?,
-                        );
+                        let results =
+                            Self::merge_metrics(&mut self.metrics, state.complete().context()?);
 
                         self.state = Self::process_baseline(&self.lh, results)?;
                     }
@@ -326,7 +316,7 @@ impl LeptonFileReader {
         header.write_all(&SOI)?;
         header
             .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
-            .context(here!())?;
+            .context()?;
 
         results.insert(0, header);
 
@@ -386,22 +376,19 @@ impl LeptonFileReader {
         header.write_all(&SOI)?;
         header
             .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
-            .context(here!())?;
+            .context()?;
 
         let mut results = Vec::new();
         results.push(header);
 
         loop {
             // progressive JPEG consists of scans followed by headers
-            let scan =
-                jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context(here!())?;
+            let scan = jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context()?;
             results.push(scan);
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
             let old_pos = lh.raw_jpeg_header_read_index;
-            let result = lh
-                .advance_next_header_segment(enabled_features)
-                .context(here!())?;
+            let result = lh.advance_next_header_segment(enabled_features).context()?;
 
             results.push(lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
 
@@ -434,7 +421,7 @@ impl LeptonFileReader {
                     return Ok(image_data);
                 },
             )
-            .context(here!())?;
+            .context()?;
 
             DecoderState::ScanProgressive(mux)
         } else {
@@ -453,7 +440,7 @@ impl LeptonFileReader {
                         &image_data,
                         jenc,
                     )
-                    .context(here!())?;
+                    .context()?;
 
                     #[cfg(feature = "detailed_tracing")]
                     info!(
@@ -589,7 +576,7 @@ impl LeptonFileReader {
                 true,
                 &features,
             )
-            .context(here!())?,
+            .context()?,
         );
 
         let process_result = process(thread_handoff, image_data, &jenc)?;

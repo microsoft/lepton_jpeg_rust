@@ -4,16 +4,11 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use crate::{
-    consts::{JPegDecodeStatus, JPegType},
-    helpers::err_exit_code,
-    helpers::here,
-    lepton_error::ExitCode,
-};
+use crate::consts::{JPegDecodeStatus, JPegType};
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::{LeptonError, Result};
 
-use super::jpeg_header::{HuffCodes, JPegHeader};
-
-use anyhow::{Context, Result};
+use crate::structs::jpeg_header::{HuffCodes, JPegHeader};
 
 /// used to keep track of position while encoding or decoding a jpeg
 pub struct JpegPositionState {
@@ -212,38 +207,37 @@ impl JpegPositionState {
                     ExitCode::UnsupportedJpeg,
                     "skip_eobrun: eob run extends passed end of reset interval",
                 )
-                .context(here!());
+                .context();
             } else {
                 self.rstw -= i32::from(self.eobrun);
             }
+        }
+
+        fn checked_add(a: i32, b: i32) -> Result<i32> {
+            a.checked_add(b)
+                .ok_or_else(|| LeptonError::new(ExitCode::UnsupportedJpeg, "integer overflow"))
         }
 
         let cmp_info = &jf.cmp_info[self.cmp];
 
         // fix for non interleaved mcu - horizontal
         if cmp_info.bch != cmp_info.nch {
-            self.dpos = self
-                .dpos
-                .checked_add(
-                    (((self.dpos % cmp_info.bch) + i32::from(self.eobrun)) / cmp_info.nch)
-                        * (cmp_info.bch - cmp_info.nch),
-                )
-                .context(here!())?;
+            self.dpos = checked_add(
+                self.dpos,
+                (((self.dpos % cmp_info.bch) + i32::from(self.eobrun)) / cmp_info.nch)
+                    * (cmp_info.bch - cmp_info.nch),
+            )
+            .context()?;
         }
 
         // fix for non interleaved mcu - vertical
         if cmp_info.bcv != cmp_info.ncv && self.dpos / cmp_info.bch >= cmp_info.ncv {
-            self.dpos = self
-                .dpos
-                .checked_add((cmp_info.bcv - cmp_info.ncv) * cmp_info.bch)
-                .context(here!())?;
+            self.dpos =
+                checked_add(self.dpos, (cmp_info.bcv - cmp_info.ncv) * cmp_info.bch).context()?;
         }
 
         // skip blocks
-        self.dpos = self
-            .dpos
-            .checked_add(i32::from(self.eobrun))
-            .context(here!())?;
+        self.dpos = checked_add(self.dpos, i32::from(self.eobrun)).context()?;
 
         // reset eobrun
         self.eobrun = 0;
@@ -256,7 +250,7 @@ impl JpegPositionState {
                 ExitCode::UnsupportedJpeg,
                 "skip_eobrun: position extended passed block count",
             )
-            .context(here!())
+            .context()
         } else if jf.rsti > 0 && self.rstw == 0 {
             Ok(JPegDecodeStatus::RestartIntervalExpired)
         } else {

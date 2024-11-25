@@ -4,7 +4,9 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::{fmt::Display, io::ErrorKind};
+use std::fmt::Display;
+use std::io::ErrorKind;
+use std::num::TryFromIntError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
@@ -32,6 +34,7 @@ pub enum ExitCode {
     InvalidPadding = 45,
     //WrapperOutputWriteFailed = 101,
     BadLeptonFile = 102,
+    ChannelFailure = 103,
 
     // Add new failures here
     GeneralFailure = 1000,
@@ -59,88 +62,124 @@ impl ExitCode {
     }
 }
 
-/// Standard error returned by Lepton library
+/// Since errors are rare and stop everything, we want them to be as lightweight as possible.
 #[derive(Debug, Clone)]
-pub struct LeptonError {
-    /// standard error code
+struct LeptonErrorInternal {
     exit_code: ExitCode,
-
-    /// diagnostic message including location. Content should not be relied on.
     message: String,
 }
 
+/// Standard error returned by Lepton library
+#[derive(Debug, Clone)]
+pub struct LeptonError {
+    i: Box<LeptonErrorInternal>,
+}
+
+pub type Result<T> = std::result::Result<T, LeptonError>;
+
 impl Display for LeptonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{0}: {1}", self.exit_code, self.message)
+        write!(f, "{0}: {1}", self.i.exit_code, self.i.message)
     }
 }
 
 impl LeptonError {
     pub fn new(exit_code: ExitCode, message: &str) -> LeptonError {
         LeptonError {
-            exit_code,
-            message: message.to_owned(),
+            i: Box::new(LeptonErrorInternal {
+                exit_code,
+                message: message.to_owned(),
+            }),
         }
     }
 
     pub fn exit_code(&self) -> ExitCode {
-        self.exit_code
+        self.i.exit_code
     }
 
     pub fn message(&self) -> &str {
-        &self.message
+        &self.i.message
+    }
+
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub fn add_context(&mut self) {
+        self.i
+            .message
+            .push_str(&format!("\n at {}", std::panic::Location::caller()));
+    }
+}
+
+#[cold]
+#[track_caller]
+pub fn err_exit_code<T>(error_code: ExitCode, message: &str) -> Result<T> {
+    let mut e = LeptonError::new(error_code, message);
+    e.add_context();
+    return Err(e);
+}
+
+pub trait AddContext<T> {
+    #[track_caller]
+    fn context(self) -> Result<T>;
+}
+
+impl<T, E: Into<LeptonError>> AddContext<T> for core::result::Result<T, E> {
+    #[track_caller]
+    fn context(self) -> Result<T> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(e) => {
+                let mut e = e.into();
+                e.add_context();
+                Err(e)
+            }
+        }
     }
 }
 
 impl std::error::Error for LeptonError {}
-
-impl From<anyhow::Error> for LeptonError {
-    fn from(mut error: anyhow::Error) -> Self {
-        // first see if there is a LeptonError already inside
-        match error.downcast::<LeptonError>() {
-            Ok(le) => {
-                return le;
-            }
-            Err(old_error) => {
-                error = old_error;
-            }
-        }
-
-        // capture the original error string before we lose it due
-        // to downcasting to look for stashed LeptonErrors
-        let original_string = error.to_string();
-
-        // see if there is a LeptonError hiding inside an io error
-        // which happens if we cross an API boundary that returns an std::io:Error
-        // like Read or Write
-        match error.downcast::<std::io::Error>() {
-            Ok(ioe) => match ioe.downcast::<LeptonError>() {
-                Ok(le) => {
-                    return le;
-                }
-                Err(e) => {
-                    return LeptonError {
-                        exit_code: get_io_error_exit_code(&e),
-                        message: format!("{} {}", e, original_string),
-                    };
-                }
-            },
-            Err(_) => {}
-        }
-
-        // don't know what we got, so treat it as a general failure
-        return LeptonError {
-            exit_code: ExitCode::GeneralFailure,
-            message: original_string,
-        };
-    }
-}
 
 fn get_io_error_exit_code(e: &std::io::Error) -> ExitCode {
     if e.kind() == ErrorKind::UnexpectedEof {
         ExitCode::ShortRead
     } else {
         ExitCode::OsError
+    }
+}
+
+impl From<TryFromIntError> for LeptonError {
+    #[track_caller]
+    fn from(e: TryFromIntError) -> Self {
+        let mut e = LeptonError::new(ExitCode::GeneralFailure, e.to_string().as_str());
+        e.add_context();
+        e
+    }
+}
+
+impl From<pico_args::Error> for LeptonError {
+    #[track_caller]
+    fn from(e: pico_args::Error) -> Self {
+        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string().as_str());
+        e.add_context();
+        e
+    }
+}
+
+impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
+    #[track_caller]
+    fn from(e: std::sync::mpsc::SendError<T>) -> Self {
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
+        e.add_context();
+        e
+    }
+}
+impl From<std::sync::mpsc::RecvError> for LeptonError {
+    #[track_caller]
+    fn from(e: std::sync::mpsc::RecvError) -> Self {
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
+        e.add_context();
+        e
     }
 }
 
@@ -153,11 +192,9 @@ impl From<std::io::Error> for LeptonError {
                 return le;
             }
             Err(e) => {
-                let caller = std::panic::Location::caller();
-                return LeptonError {
-                    exit_code: get_io_error_exit_code(&e),
-                    message: format!("error {} at {}", e.to_string(), caller.to_string()),
-                };
+                let mut e = LeptonError::new(get_io_error_exit_code(&e), e.to_string().as_str());
+                e.add_context();
+                e
             }
         }
     }
@@ -173,24 +210,15 @@ impl From<LeptonError> for std::io::Error {
 #[test]
 fn test_error_translation() {
     // test wrapping inside an io error
-    fn my_std_error() -> Result<(), std::io::Error> {
+    fn my_std_error() -> core::result::Result<(), std::io::Error> {
         Err(LeptonError::new(ExitCode::SyntaxError, "test error").into())
     }
 
     let e: LeptonError = my_std_error().unwrap_err().into();
-    assert_eq!(e.exit_code, ExitCode::SyntaxError);
-    assert_eq!(e.message, "test error");
-
-    // wrapping inside anyhow
-    fn my_anyhow() -> Result<(), anyhow::Error> {
-        Err(LeptonError::new(ExitCode::SyntaxError, "test error").into())
-    }
-
-    let e: LeptonError = my_anyhow().unwrap_err().into();
-    assert_eq!(e.exit_code, ExitCode::SyntaxError);
-    assert_eq!(e.message, "test error");
+    assert_eq!(e.exit_code(), ExitCode::SyntaxError);
+    assert_eq!(e.message(), "test error");
 
     // an IO error should be translated into an OsError
     let e: LeptonError = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into();
-    assert_eq!(e.exit_code, ExitCode::OsError);
+    assert_eq!(e.exit_code(), ExitCode::OsError);
 }

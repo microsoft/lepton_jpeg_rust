@@ -6,10 +6,8 @@
 
 use std::io::{BufRead, Seek};
 
-use crate::LeptonError;
-use crate::{helpers::err_exit_code, jpeg_code};
-
-use crate::lepton_error::ExitCode;
+use crate::lepton_error::{err_exit_code, ExitCode};
+use crate::{jpeg_code, LeptonError};
 
 // Implemenation of bit reader on top of JPEG data stream as read by a reader
 pub struct BitReader<R> {
@@ -171,7 +169,10 @@ impl<R: BufRead> BitReader<R> {
 
     /// used to verify whether this image is using 1s or 0s as fill bits.
     /// Returns whether the fill bit was 1 or so or unknown (None)
-    pub fn read_and_verify_fill_bits(&mut self, pad_bit: &mut Option<u8>) -> anyhow::Result<()> {
+    pub fn read_and_verify_fill_bits(
+        &mut self,
+        pad_bit: &mut Option<u8>,
+    ) -> Result<(), LeptonError> {
         // if there are bits left, we need to see whether they
         // are 1s or zeros.
 
@@ -210,7 +211,7 @@ impl<R: BufRead> BitReader<R> {
         return Ok(());
     }
 
-    pub fn verify_reset_code(&mut self) -> anyhow::Result<()> {
+    pub fn verify_reset_code(&mut self) -> Result<(), LeptonError> {
         // we reached the end of a MCU, so we need to find a reset code and the huffman codes start get padded out, but the spec
         // doesn't specify whether the padding should be 1s or 0s, so we ensure that at least the file is consistant so that we
         // can recode it again just by remembering the pad bit.

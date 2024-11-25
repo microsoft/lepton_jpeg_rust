@@ -32,23 +32,19 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use anyhow::{Context, Result};
 use std::cmp::{self, max};
 use std::io::{BufRead, Seek};
 
-use crate::helpers::here;
-
-use super::bit_reader::BitReader;
-use super::block_based_image::{AlignedBlock, BlockBasedImage};
-use super::jpeg_position_state::JpegPositionState;
-use super::lepton_header::LeptonHeader;
-use super::thread_handoff::ThreadHandoff;
-use crate::lepton_error::ExitCode;
-
 use crate::consts::*;
 use crate::helpers::*;
-
-use super::jpeg_header::HuffTree;
+use crate::lepton_error::Result;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::structs::bit_reader::BitReader;
+use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::structs::jpeg_header::HuffTree;
+use crate::structs::jpeg_position_state::JpegPositionState;
+use crate::structs::lepton_header::LeptonHeader;
+use crate::structs::thread_handoff::ThreadHandoff;
 
 pub fn read_scan<R: BufRead + Seek>(
     lp: &mut LeptonHeader,
@@ -80,10 +76,10 @@ pub fn read_scan<R: BufRead + Seek>(
                 image_data,
                 &mut do_handoff,
             )
-            .context(here!())?;
+            .context()?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
             // only need DC
-            jf.verify_huffman_table(true, false).context(here!())?;
+            jf.verify_huffman_table(true, false).context()?;
 
             let mut last_dc = [0i16; 4];
 
@@ -127,19 +123,19 @@ pub fn read_scan<R: BufRead + Seek>(
                 ExitCode::UnsupportedJpeg,
                 "progress must start with DC stage",
             )
-            .context(here!());
+            .context();
         }
 
         // if we saw a pad bit at the end of the block, then remember whether they were 1s or 0s. This
         // will be used later on to reconstruct the padding
         bit_reader
             .read_and_verify_fill_bits(&mut lp.pad_bit)
-            .context(here!())?;
+            .context()?;
 
         // verify that we got the right RST code here since the above should do 1 mcu.
         // If we didn't then we won't re-encode the file binary identical so there's no point in continuing
         if sta == JPegDecodeStatus::RestartIntervalExpired {
-            bit_reader.verify_reset_code().context(here!())?;
+            bit_reader.verify_reset_code().context()?;
 
             sta = JPegDecodeStatus::DecodeInProgress;
         }
@@ -210,11 +206,11 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
                     ExitCode::UnsupportedJpeg,
                     "progress can't have two DC first stages",
                 )
-                .context(here!());
+                .context();
             }
 
             // only need DC
-            jf.verify_huffman_table(true, false).context(here!())?;
+            jf.verify_huffman_table(true, false).context()?;
 
             while sta == JPegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
@@ -248,7 +244,7 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
             }
 
             // only need AC
-            jf.verify_huffman_table(false, true).context(here!())?;
+            jf.verify_huffman_table(false, true).context()?;
 
             if jf.cs_sah == 0 {
                 if jf.cs_cmpc != 1 {
@@ -274,14 +270,14 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
                             jf.cs_from,
                             jf.cs_to,
                         )
-                        .context(here!())?;
+                        .context()?;
 
                         state
                             .check_optimal_eobrun(
                                 eob == jf.cs_from,
                                 jf.get_huff_ac_codes(state.get_cmp()),
                             )
-                            .context(here!())?;
+                            .context()?;
 
                         for bpos in jf.cs_from..eob {
                             current_block.set_transposed_from_zigzag(
@@ -291,7 +287,7 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
                         }
                     }
 
-                    sta = state.skip_eobrun(&jf).context(here!())?;
+                    sta = state.skip_eobrun(&jf).context()?;
 
                     // proceed only if no error encountered
                     if sta == JPegDecodeStatus::DecodeInProgress {
@@ -321,14 +317,14 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
                             jf.cs_from,
                             jf.cs_to,
                         )
-                        .context(here!())?;
+                        .context()?;
 
                         state
                             .check_optimal_eobrun(
                                 eob == jf.cs_from,
                                 jf.get_huff_ac_codes(state.get_cmp()),
                             )
-                            .context(here!())?;
+                            .context()?;
                     } else {
                         // decode zero run block (short routine)
                         decode_eobrun_sa(
@@ -338,7 +334,7 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
                             jf.cs_from,
                             jf.cs_to,
                         )
-                        .context(here!())?;
+                        .context()?;
                     }
 
                     // copy back to colldata
@@ -360,12 +356,12 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
         // will be used later on to reconstruct the padding
         bit_reader
             .read_and_verify_fill_bits(&mut lp.pad_bit)
-            .context(here!())?;
+            .context()?;
 
         // verify that we got the right RST code here since the above should do 1 mcu.
         // If we didn't then we won't re-encode the file binary identical so there's no point in continuing
         if sta == JPegDecodeStatus::RestartIntervalExpired {
-            bit_reader.verify_reset_code().context(here!())?;
+            bit_reader.verify_reset_code().context()?;
 
             sta = JPegDecodeStatus::DecodeInProgress;
         }
@@ -385,9 +381,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
     do_handoff: &mut bool,
 ) -> Result<JPegDecodeStatus> {
     // should have both AC and DC components
-    lp.jpeg_header
-        .verify_huffman_table(true, true)
-        .context(here!())?;
+    lp.jpeg_header.verify_huffman_table(true, true).context()?;
 
     let mut sta = JPegDecodeStatus::DecodeInProgress;
     let mut lastdc = [0i16; 4]; // (re)set last DCs for diff coding
@@ -678,7 +672,7 @@ fn decode_ac_prg_sa<R: BufRead>(
                 let n = bit_reader.read(1)?;
                 v = if n == 0 { -1 } else { 1 }; // fast decode vli
             } else {
-                return err_exit_code(ExitCode::UnsupportedJpeg, "decoding error").context(here!());
+                return err_exit_code(ExitCode::UnsupportedJpeg, "decoding error").context();
             }
 
             // write zeroes / write correction bits
@@ -699,8 +693,7 @@ fn decode_ac_prg_sa<R: BufRead>(
                 }
 
                 if bpos >= to {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, "decoding error")
-                        .context(here!());
+                    return err_exit_code(ExitCode::UnsupportedJpeg, "decoding error").context();
                 }
 
                 bpos += 1;
