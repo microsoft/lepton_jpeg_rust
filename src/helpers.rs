@@ -93,12 +93,12 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
 
 #[inline(always)]
 pub const fn devli(s: u8, value: u16) -> i16 {
-    if s == 0 {
+    let shifted = 1 << s;
+
+    if value >= (shifted >> 1) {
         value as i16
-    } else if value < (1 << (s as u16 - 1)) {
-        value as i16 + (-1 << s as i16) + 1
     } else {
-        value as i16
+        (value + !(shifted - 1) + 1) as i16
     }
 }
 
