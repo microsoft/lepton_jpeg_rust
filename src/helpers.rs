@@ -91,6 +91,13 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
     return true;
 }
 
+/// returns true if the 64 bit value contains an 0xff byte.
+/// Uses fancy bit manipulation to avoid branches.
+#[inline(always)]
+pub fn has_ff(v: u64) -> bool {
+    (v & 0x8080808080808080 & !v.wrapping_add(0x0101010101010101)) != 0
+}
+
 #[inline(always)]
 pub const fn devli(s: u8, value: u16) -> i16 {
     let shifted = 1 << s;

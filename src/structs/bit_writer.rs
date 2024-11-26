@@ -85,7 +85,7 @@ impl BitWriter {
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
-            if (fill & 0x8080808080808080 & !fill.wrapping_add(0x0101010101010101)) != 0
+            if has_ff(fill)
                 || self
                     .data_buffer
                     .capacity()
@@ -142,6 +142,7 @@ impl BitWriter {
 #[cfg(test)]
 use std::io::Cursor;
 
+use crate::helpers::has_ff;
 #[cfg(test)]
 use crate::helpers::u32_bit_length;
 #[cfg(test)]
@@ -259,7 +260,7 @@ fn roundtrip_randombits() {
                     };
 
                     let (peekcode, peekbits) = r.peek();
-                    let num_valid_bits = peekbits.min(8).min(numbits);
+                    let num_valid_bits = peekbits.min(8).min(u32::from(numbits));
 
                     let mask = (0xff00 >> num_valid_bits) as u8;
 

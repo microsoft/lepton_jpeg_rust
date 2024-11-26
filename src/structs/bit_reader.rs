@@ -6,6 +6,7 @@
 
 use std::io::{BufRead, Seek};
 
+use crate::helpers::has_ff;
 use crate::lepton_error::{err_exit_code, ExitCode};
 use crate::{jpeg_code, LeptonError};
 
@@ -18,7 +19,7 @@ pub struct BitReader<R> {
     eof: bool,
     start_offset: u64,
     truncated_ff: bool,
-    read_ahead_bytes: usize,
+    read_ahead_bytes: u32,
 }
 
 impl<R: BufRead + Seek> BitReader<R> {
@@ -74,16 +75,22 @@ impl<R: BufRead> BitReader<R> {
     }
 
     #[inline(always)]
-    pub fn peek(&self) -> (u8, u8) {
-        if self.bits_left < 8 {
-            return (
-                (self.bits << (8 - self.bits_left)) as u8,
-                self.bits_left as u8,
-            );
-        } else {
-            return ((self.bits >> (self.bits_left - 8)) as u8, 8);
-        }
+    pub fn peek(&self) -> (u8, u32) {
+        (
+            ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u8,
+            self.bits_left,
+        )
     }
+
+    /*    #[inline(always)]
+    pub fn peek(&self) -> (u8, u8) {
+        let bits = ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u8;
+        if self.bits_left > 8 {
+            return (bits, 8);
+        } else {
+            return (bits, self.bits_left as u8);
+        }
+    }*/
 
     #[inline(always)]
     pub fn advance(&mut self, bits: u32) {
@@ -94,45 +101,34 @@ impl<R: BufRead> BitReader<R> {
     pub fn fill_register(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
         // first consume the read_ahead bytes that we have now consumed
         // (otherwise we wouldn't have been called)
-        self.inner.consume(self.read_ahead_bytes);
+        self.inner.consume(self.read_ahead_bytes as usize);
 
         let fb = self.inner.fill_buf()?;
 
-        let mut index = 0;
-        let mut temp_bits = self.bits;
-        let mut temp_bits_left = self.bits_left;
-        let mut read_ahead_bytes = 0;
-
-        while index < fb.len() && fb[index] != 0xff && temp_bits_left < 56 {
-            temp_bits = (temp_bits << 8) | (fb[index] as u64);
-            temp_bits_left += 8;
-            index += 1;
-
-            if temp_bits_left >= bits_to_read {
-                read_ahead_bytes += 1;
-            }
+        // if we have 8 bytes and there is no 0xff in them, then we can just read the bits directly as big endian
+        let mut v;
+        if fb.len() < 8 || {
+            v = u64::from_le_bytes(fb[..8].try_into().unwrap());
+            has_ff(v)
+        } {
+            self.read_ahead_bytes = 0;
+            return self.fill_register_slow(bits_to_read);
         }
 
-        self.bits = temp_bits;
-        self.bits_left = temp_bits_left;
-        self.read_ahead_bytes = read_ahead_bytes;
-        self.inner.consume(index - read_ahead_bytes);
+        v = v.to_be();
 
-        if bits_to_read <= self.bits_left {
-            return Ok(());
-        }
+        // only fill 63 bits not 64 to avoid having to special case
+        // of self.bits << 64 which is a nop
+        let bytes_to_read = (63 - self.bits_left) / 8;
 
-        /*
-        let mut index = 0;
-        while self.bits_left < 56 && index < buffer.len() && buffer[index] != 0xff {
-            self.bits = (self.bits << 8) | (buffer[index] as u64);
-            self.bits_left += 8;
-            index += 1;
-        }
-        buffer.consume(index);
-        */
+        self.bits = self.bits << (bytes_to_read * 8) | v >> (64 - bytes_to_read * 8);
+        self.bits_left += bytes_to_read * 8;
+        self.read_ahead_bytes = (self.bits_left - bits_to_read) / 8;
 
-        return self.fill_register_slow(bits_to_read);
+        self.inner
+            .consume((bytes_to_read - self.read_ahead_bytes) as usize);
+
+        return Ok(());
     }
 
     #[cold]
@@ -297,7 +293,7 @@ impl<R: BufRead> BitReader<R> {
         }
 
         if self.read_ahead_bytes > 0 {
-            self.inner.consume(self.read_ahead_bytes);
+            self.inner.consume(self.read_ahead_bytes as usize);
             self.read_ahead_bytes = 0;
         }
     }
