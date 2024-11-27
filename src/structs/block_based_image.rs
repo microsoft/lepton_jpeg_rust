@@ -6,7 +6,7 @@
 
 use bytemuck::{cast, cast_ref};
 use log::info;
-use wide::i16x8;
+use wide::{i16x8, CmpEq};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
 use crate::structs::block_context::BlockContext;
@@ -193,6 +193,29 @@ impl AlignedBlock {
         AlignedBlock { raw_data: block }
     }
 
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn as_i16x8(&self, index: usize) -> i16x8 {
+        let v: &[i16x8; 8] = cast_ref(&self.raw_data);
+        v[index]
+    }
+
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn transpose(&self) -> AlignedBlock {
+        return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
+    }
+
+    #[inline(always)]
+    pub fn get_dc(&self) -> i16 {
+        return self.raw_data[0];
+    }
+
+    #[inline(always)]
+    pub fn set_dc(&mut self, value: i16) {
+        self.raw_data[0] = value
+    }
+
     #[inline(always)]
     pub fn zigzag_to_transposed(a: [i16; 64]) -> AlignedBlock {
         AlignedBlock {
@@ -222,36 +245,11 @@ impl AlignedBlock {
         }
     }
 
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn as_i16x8(&self, index: usize) -> i16x8 {
-        let v: &[i16x8; 8] = cast_ref(&self.raw_data);
-        v[index]
-    }
-
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn transpose(&self) -> AlignedBlock {
-        return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
-    }
-
-    #[inline(always)]
-    pub fn get_dc(&self) -> i16 {
-        return self.raw_data[0];
-    }
-
-    #[inline(always)]
-    pub fn set_dc(&mut self, value: i16) {
-        self.raw_data[0] = value
-    }
-
-    // used for debugging
     #[inline(always)]
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }
 
-    // used for debugging
     #[inline(always)]
     pub fn get_block_mut(&mut self) -> &mut [i16; 64] {
         return &mut self.raw_data;
@@ -267,15 +265,20 @@ impl AlignedBlock {
         return sum;
     }
 
+    #[inline(always)]
     pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
-        let mut num_non_zeros7x7: u8 = 0;
-        for index in 9..64 {
-            if index & 0x7 != 0 && self.raw_data[index] != 0 {
-                num_non_zeros7x7 += 1;
-            }
+        /// counts a row of non-zero values in the 7x7 block
+        #[inline(always)]
+        fn count_non_zeros_7x7_row(v: i16x8) -> i16x8 {
+            !v.cmp_eq(i16x8::ZERO) & i16x8::new([0, 1, 1, 1, 1, 1, 1, 1])
         }
 
-        return num_non_zeros7x7;
+        let mut sum = i16x8::ZERO;
+        for i in 1..8 {
+            sum += count_non_zeros_7x7_row(self.as_i16x8(i));
+        }
+
+        return sum.reduce_add() as u8;
     }
 
     #[inline(always)]
