@@ -413,10 +413,7 @@ fn decode_baseline_rst<R: Read>(
         lastdc[state.get_cmp()] = block[0];
 
         // prepare and set transposed raster block from zigzagged
-        let mut block_tr = AlignedBlock::default();
-        for bpos in 0..eob {
-            block_tr.set_transposed_from_zigzag(bpos, block[bpos]);
-        }
+        let block_tr = AlignedBlock::zigzag_to_transposed(block);
 
         image_data[state.get_cmp()].set_block_data(state.get_dpos(), &block_tr);
 
