@@ -189,25 +189,29 @@ impl Default for AlignedBlock {
 }
 
 impl AlignedBlock {
+    #[inline(always)]
     pub fn new(block: [i16; 64]) -> Self {
         AlignedBlock { raw_data: block }
     }
 
-    #[allow(dead_code)]
+    #[inline(always)]
     pub fn as_i16x8(&self, index: usize) -> i16x8 {
         let v: &[i16x8; 8] = cast_ref(&self.raw_data);
         v[index]
     }
 
     #[allow(dead_code)]
+    #[inline(always)]
     pub fn transpose(&self) -> AlignedBlock {
         return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
     }
 
+    #[inline(always)]
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[0];
     }
 
+    #[inline(always)]
     pub fn set_dc(&mut self, value: i16) {
         self.raw_data[0] = value
     }
@@ -255,22 +259,27 @@ impl AlignedBlock {
         return num_non_zeros7x7;
     }
 
+    #[inline(always)]
     pub fn get_coefficient(&self, index: usize) -> i16 {
         return self.raw_data[index];
     }
 
+    #[inline(always)]
     pub fn set_coefficient(&mut self, index: usize, v: i16) {
         self.raw_data[index] = v;
     }
 
+    #[inline(always)]
     pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
         self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
     }
 
+    #[inline(always)]
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
         return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];
     }
 
+    #[inline(always)]
     pub fn from_stride(&self, offset: usize, stride: usize) -> i16x8 {
         return i16x8::new([
             self.raw_data[offset],
