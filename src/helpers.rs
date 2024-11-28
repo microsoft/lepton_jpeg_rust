@@ -105,7 +105,7 @@ pub const fn devli(s: u8, value: u16) -> i16 {
     if value & (shifted >> 1) != 0 {
         value as i16
     } else {
-        (!shifted + 2 + value) as i16
+        value.wrapping_add(2).wrapping_add(!shifted) as i16
     }
 }
 
