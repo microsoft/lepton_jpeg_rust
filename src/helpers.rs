@@ -102,10 +102,10 @@ pub fn has_ff(v: u64) -> bool {
 pub const fn devli(s: u8, value: u16) -> i16 {
     let shifted = 1 << s;
 
-    if value >= (shifted >> 1) {
+    if value & (shifted >> 1) != 0 {
         value as i16
     } else {
-        (value + !(shifted - 1) + 1) as i16
+        value.wrapping_add(2).wrapping_add(!shifted) as i16
     }
 }
 
