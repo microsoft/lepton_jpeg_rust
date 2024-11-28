@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::cmp;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -28,7 +28,7 @@ use crate::structs::thread_handoff::ThreadHandoff;
 use crate::structs::truncate_components::TruncateComponents;
 
 /// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
+pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -111,7 +111,7 @@ pub fn encode_lepton_wrapper_verify(
 ///
 /// The callback is called for each jpeg header that is parsed, which
 /// is currently only used by the dump utility for debugging purposes.
-pub fn read_jpeg<R: Read + Seek>(
+pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
     callback: fn(&JPegHeader),

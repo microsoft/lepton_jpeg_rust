@@ -6,8 +6,7 @@
 
 use bytemuck::{cast, cast_ref};
 use log::info;
-use unroll::unroll_for_loops;
-use wide::i16x8;
+use wide::{i16x8, CmpEq};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
 use crate::structs::block_context::BlockContext;
@@ -216,24 +215,41 @@ impl AlignedBlock {
         self.raw_data[0] = value
     }
 
-    /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
-    #[unroll_for_loops]
-    pub fn zigzag_from_transposed(&self) -> AlignedBlock {
-        let mut block = AlignedBlock::default();
-        for i in 0..64 {
-            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[i])];
+    #[inline(always)]
+    pub fn zigzag_to_transposed(a: [i16; 64]) -> AlignedBlock {
+        AlignedBlock {
+            raw_data: [
+                a[0], a[2], a[3], a[9], a[10], a[20], a[21], a[35], a[1], a[4], a[8], a[11], a[19],
+                a[22], a[34], a[36], a[5], a[7], a[12], a[18], a[23], a[33], a[37], a[48], a[6],
+                a[13], a[17], a[24], a[32], a[38], a[47], a[49], a[14], a[16], a[25], a[31], a[39],
+                a[46], a[50], a[57], a[15], a[26], a[30], a[40], a[45], a[51], a[56], a[58], a[27],
+                a[29], a[41], a[44], a[52], a[55], a[59], a[62], a[28], a[42], a[43], a[53], a[54],
+                a[60], a[61], a[63],
+            ],
         }
-        return block;
     }
 
-    // used for debugging
-    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn zigzag_from_transposed(&self) -> AlignedBlock {
+        let a = self.raw_data;
+        AlignedBlock {
+            raw_data: [
+                a[0], a[8], a[1], a[2], a[9], a[16], a[24], a[17], a[10], a[3], a[4], a[11], a[18],
+                a[25], a[32], a[40], a[33], a[26], a[19], a[12], a[5], a[6], a[13], a[20], a[27],
+                a[34], a[41], a[48], a[56], a[49], a[42], a[35], a[28], a[21], a[14], a[7], a[15],
+                a[22], a[29], a[36], a[43], a[50], a[57], a[58], a[51], a[44], a[37], a[30], a[23],
+                a[31], a[38], a[45], a[52], a[59], a[60], a[53], a[46], a[39], a[47], a[54], a[61],
+                a[62], a[55], a[63],
+            ],
+        }
+    }
+
+    #[inline(always)]
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }
 
-    // used for debugging
-    #[allow(dead_code)]
+    #[inline(always)]
     pub fn get_block_mut(&mut self) -> &mut [i16; 64] {
         return &mut self.raw_data;
     }
@@ -248,15 +264,20 @@ impl AlignedBlock {
         return sum;
     }
 
+    #[inline(always)]
     pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
-        let mut num_non_zeros7x7: u8 = 0;
-        for index in 9..64 {
-            if index & 0x7 != 0 && self.raw_data[index] != 0 {
-                num_non_zeros7x7 += 1;
-            }
+        /// counts a row of non-zero values in the 7x7 block
+        #[inline(always)]
+        fn count_non_zeros_7x7_row(v: i16x8) -> i16x8 {
+            !v.cmp_eq(i16x8::ZERO) & i16x8::new([0, 1, 1, 1, 1, 1, 1, 1])
         }
 
-        return num_non_zeros7x7;
+        let mut sum = i16x8::ZERO;
+        for i in 1..8 {
+            sum += count_non_zeros_7x7_row(self.as_i16x8(i));
+        }
+
+        return sum.reduce_add() as u8;
     }
 
     #[inline(always)]
