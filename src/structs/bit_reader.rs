@@ -82,16 +82,6 @@ impl<R: BufRead> BitReader<R> {
         )
     }
 
-    /*    #[inline(always)]
-    pub fn peek(&self) -> (u8, u8) {
-        let bits = ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u8;
-        if self.bits_left > 8 {
-            return (bits, 8);
-        } else {
-            return (bits, self.bits_left as u8);
-        }
-    }*/
-
     #[inline(always)]
     pub fn advance(&mut self, bits: u32) {
         self.bits_left -= bits;
@@ -157,8 +147,12 @@ impl<R: BufRead> BitReader<R> {
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                     } else {
-                        // verify_reset_code should get called in all instances where there should be a reset code. If we find one that
-                        // is not where it is supposed to be, then we would fail to roundtrip the reset code, so just fail.
+                        // this was not an escaped 0xff which is the only thing we accept at this part of the decoding.
+                        //
+                        // verify_reset_code should have gotten called in all instances where there should be a reset code,
+                        // or at the end of the file we should have stopped decoding before we hit the end of file marker.
+                        //
+                        // Since we have no way of encoding these cases in our bitstream, we exit.
                         return Err(LeptonError::new(
                             ExitCode::InvalidResetCode,
                             format!(
