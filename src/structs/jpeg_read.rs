@@ -421,7 +421,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         // prepare and set transposed raster block from zigzagged
         let block_tr = AlignedBlock::zigzag_to_transposed(block);
 
-        image_data[state.get_cmp()].set_block_data(state.get_dpos(), &block_tr);
+        image_data[state.get_cmp()].set_block_data(state.get_dpos(), block_tr);
 
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();
