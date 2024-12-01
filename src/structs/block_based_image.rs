@@ -128,25 +128,46 @@ impl BlockBasedImage {
         self.original_height
     }
 
-    fn fill_up_to_dpos(&mut self, dpos: i32) {
-        // set our dpos the first time we get set, since we should be seeing our data in order
+    /// ensure that the image is filled up to a given dpos with blank blocks and optionally
+    /// write a block at the given position.
+    #[inline(always)]
+    pub fn fill_up_to_dpos(
+        &mut self,
+        dpos: i32,
+        block_to_write: Option<AlignedBlock>,
+    ) -> &mut AlignedBlock {
+        // ensure that dpos_offset got set to the right value when we start writing
         if self.image.len() == 0 {
-            assert!(self.dpos_offset == dpos);
+            debug_assert!(self.dpos_offset == dpos);
         }
 
-        assert!(dpos >= self.dpos_offset);
+        // should never underflow otherwise we are writing to the wrong part of the image
+        let relative_offset = (dpos as usize)
+            .checked_sub(self.dpos_offset as usize)
+            .unwrap();
 
-        while self.image.len() <= (dpos - self.dpos_offset) as usize {
-            if self.image.len() >= self.image.capacity() {
-                panic!("out of memory");
+        if relative_offset < self.image.len() {
+            if let Some(b) = block_to_write {
+                self.image[relative_offset as usize] = b;
             }
-            self.image.push(AlignedBlock { raw_data: [0; 64] });
+        } else {
+            assert!(
+                relative_offset < self.image.capacity(),
+                "capacity should be set to the exact image size"
+            );
+
+            // optimizer realizes that this is memset
+            self.image
+                .resize_with(relative_offset, || AlignedBlock::default());
+
+            self.image.push(block_to_write.unwrap_or_default());
         }
+
+        return &mut self.image[relative_offset as usize];
     }
 
-    pub fn set_block_data(&mut self, dpos: i32, block_data: &AlignedBlock) {
-        self.fill_up_to_dpos(dpos);
-        *self.image[(dpos - self.dpos_offset) as usize].get_block_mut() = *block_data.get_block();
+    pub fn set_block_data(&mut self, dpos: i32, block_data: AlignedBlock) {
+        self.fill_up_to_dpos(dpos, Some(block_data));
     }
 
     pub fn get_block(&self, dpos: i32) -> &AlignedBlock {
@@ -166,9 +187,9 @@ impl BlockBasedImage {
         self.image.push(block);
     }
 
+    #[inline(always)]
     pub fn get_block_mut(&mut self, dpos: i32) -> &mut AlignedBlock {
-        self.fill_up_to_dpos(dpos);
-        return &mut self.image[(dpos - self.dpos_offset) as usize];
+        self.fill_up_to_dpos(dpos, None)
     }
 }
 

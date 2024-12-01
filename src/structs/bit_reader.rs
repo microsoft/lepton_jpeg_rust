@@ -6,6 +6,8 @@
 
 use std::io::{BufRead, Seek};
 
+use likely_stable::unlikely;
+
 use crate::helpers::has_ff;
 use crate::lepton_error::{err_exit_code, ExitCode};
 use crate::{jpeg_code, LeptonError};
@@ -59,32 +61,53 @@ impl<R: BufRead + Seek> BitReader<R> {
 
 impl<R: BufRead> BitReader<R> {
     #[inline(always)]
-    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u16> {
-        if bits_to_read == 0 {
-            return Ok(0);
-        }
+    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u32> {
+        let (mut diff, overflow) = self.bits_left.overflowing_sub(bits_to_read);
 
-        if self.bits_left < bits_to_read {
+        if unlikely(overflow) {
             self.fill_register(bits_to_read)?;
+            diff = self.bits_left - bits_to_read;
         }
 
-        let retval =
-            (self.bits >> (self.bits_left - bits_to_read) & ((1 << bits_to_read) - 1)) as u16;
-        self.bits_left -= bits_to_read;
-        return Ok(retval);
-    }
-
-    #[inline(always)]
-    pub fn peek(&self) -> (u8, u32) {
-        (
-            ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u8,
-            self.bits_left,
-        )
+        let mask = (1u32 << bits_to_read) - 1;
+        self.bits_left = diff;
+        return Ok(((self.bits >> diff) as u32) & mask);
     }
 
     #[inline(always)]
     pub fn advance(&mut self, bits: u32) {
         self.bits_left -= bits;
+    }
+
+    #[inline(always)]
+    pub fn peek_byte(&mut self) -> Option<u8> {
+        if unlikely(self.bits_left < 8) {
+            let rh = self.read_ahead_bytes as usize;
+
+            // no peeking if we are near EOF to avoid special casing
+            let buffer = match self.inner.fill_buf() {
+                Err(_) => return None,
+                Ok(fb) => {
+                    if fb.len() < rh + 8 {
+                        return None;
+                    } else {
+                        // this is what we want to read
+                        fb[rh..rh + 8].try_into().unwrap()
+                    }
+                }
+            };
+
+            let rh_new;
+            (rh_new, self.bits, self.bits_left) =
+                parse_8_byte_block(buffer, self.bits, self.bits_left);
+
+            self.read_ahead_bytes += rh_new;
+            if unlikely(self.bits_left < 8) {
+                return None;
+            }
+        }
+
+        return Some((self.bits >> (self.bits_left - 8)) as u8);
     }
 
     #[inline(always)]
@@ -96,29 +119,37 @@ impl<R: BufRead> BitReader<R> {
         let fb = self.inner.fill_buf()?;
 
         // if we have 8 bytes and there is no 0xff in them, then we can just read the bits directly as big endian
-        let mut v;
-        if fb.len() < 8 || {
-            v = u64::from_le_bytes(fb[..8].try_into().unwrap());
-            has_ff(v)
-        } {
+        if fb.len() < 8 {
             self.read_ahead_bytes = 0;
             return self.fill_register_slow(bits_to_read);
         }
 
-        v = v.to_be();
+        let buffer = fb[..8].try_into().unwrap();
+        (self.read_ahead_bytes, self.bits, self.bits_left) =
+            parse_8_byte_block(buffer, self.bits, self.bits_left);
 
-        // only fill 63 bits not 64 to avoid having to special case
-        // of self.bits << 64 which is a nop
-        let bytes_to_read = (63 - self.bits_left) / 8;
-
-        self.bits = self.bits << (bytes_to_read * 8) | v >> (64 - bytes_to_read * 8);
-        self.bits_left += bytes_to_read * 8;
-        self.read_ahead_bytes = (self.bits_left - bits_to_read) / 8;
-
-        self.inner
-            .consume((bytes_to_read - self.read_ahead_bytes) as usize);
+        // if we don't have enough bits here, it means that the parser choked on a 0xff marker,
+        // let the slow path handle this since it is extremely rare and aborts the encoding
+        if bits_to_read > self.bits_left {
+            return self.fill_register_slow(bits_to_read);
+        }
 
         return Ok(());
+    }
+
+    #[cold]
+    fn bad_escape_code(b: u8) -> std::io::Error {
+        // this was not an escaped 0xff which is the only thing we accept at this part of the decoding.
+        //
+        // verify_reset_code should have gotten called in all instances where there should be a reset code,
+        // or at the end of the file we should have stopped decoding before we hit the end of file marker.
+        //
+        // Since we have no way of encoding these cases in our bitstream, we exit.
+        return LeptonError::new(
+            ExitCode::InvalidResetCode,
+            format!("invalid reset {0:x} {1:x} code found in stream", 0xff, b).as_str(),
+        )
+        .into();
     }
 
     #[cold]
@@ -147,21 +178,7 @@ impl<R: BufRead> BitReader<R> {
                         self.bits = (self.bits << 8) | 0xff;
                         self.bits_left += 8;
                     } else {
-                        // this was not an escaped 0xff which is the only thing we accept at this part of the decoding.
-                        //
-                        // verify_reset_code should have gotten called in all instances where there should be a reset code,
-                        // or at the end of the file we should have stopped decoding before we hit the end of file marker.
-                        //
-                        // Since we have no way of encoding these cases in our bitstream, we exit.
-                        return Err(LeptonError::new(
-                            ExitCode::InvalidResetCode,
-                            format!(
-                                "invalid reset {0:x} {1:x} code found in stream",
-                                0xff, buffer[0]
-                            )
-                            .as_str(),
-                        )
-                        .into());
+                        return Err(Self::bad_escape_code(buffer[0]));
                     }
                 } else {
                     self.bits = (self.bits << 8) | (b as u64);
@@ -224,7 +241,7 @@ impl<R: BufRead> BitReader<R> {
                 }
                 Some(x) => {
                     // if we already saw a padding, then it should match
-                    let expected = u16::from(x) & all_one;
+                    let expected = u32::from(x) & all_one;
                     if actual != expected {
                         return err_exit_code(ExitCode::InvalidPadding, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
                     }
@@ -282,14 +299,65 @@ impl<R: BufRead> BitReader<R> {
     pub fn undo_read_ahead(&mut self) {
         while self.bits_left >= 8 && self.read_ahead_bytes > 0 {
             self.bits_left -= 8;
+            if (self.bits & 0xff) == 0xff {
+                self.read_ahead_bytes -= 2;
+            } else {
+                self.read_ahead_bytes -= 1;
+            }
             self.bits >>= 8;
-            self.read_ahead_bytes -= 1;
         }
 
         if self.read_ahead_bytes > 0 {
             self.inner.consume(self.read_ahead_bytes as usize);
             self.read_ahead_bytes = 0;
         }
+    }
+}
+
+#[inline(always)]
+fn parse_8_byte_block(block: [u8; 8], mut bits: u64, mut bits_left: u32) -> (u32, u64, u32) {
+    #[cold]
+    fn parse_cold(bits_left: &mut u32, v: &mut u64, bits: &mut u64) -> i32 {
+        let mut i = 0;
+
+        while *bits_left < 56 && i <= 6 {
+            let masked = *v & 0xff;
+            if masked == 0xff {
+                if *v & 0xff00 != 0 {
+                    // this is not an escaped 0xff, let the slow path handle it
+                    break;
+                }
+
+                *bits = (*bits << 8) | 0xff;
+                i += 2;
+                *v >>= 16;
+            } else {
+                *bits = (*bits << 8) | masked;
+                *v >>= 8;
+                i += 1;
+            }
+
+            *bits_left += 8;
+        }
+        i
+    }
+
+    let mut v: u64 = u64::from_le_bytes(block);
+    if has_ff(v) {
+        let i = parse_cold(&mut bits_left, &mut v, &mut bits);
+
+        (i as u32, bits, bits_left)
+    } else {
+        v = v.to_be();
+
+        // only fill 63 bits not 64 to avoid having to special case
+        // of self.bits << 64 which is a nop
+        let bytes_to_read = (63 - bits_left) / 8;
+
+        bits = bits << (bytes_to_read * 8) | v >> (64 - bytes_to_read * 8);
+        bits_left += bytes_to_read * 8;
+
+        (bytes_to_read, bits, bits_left)
     }
 }
 
