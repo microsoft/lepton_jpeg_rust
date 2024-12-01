@@ -147,13 +147,16 @@ impl BlockBasedImage {
             .unwrap();
 
         if relative_offset < self.image.len() {
+            // rewrite already written block
             if let Some(b) = block_to_write {
                 self.image[relative_offset as usize] = b;
             }
         } else {
+            // need to extend the image length and add any necessary
+            // zero blocks to fill the gap.
             assert!(
                 relative_offset < self.image.capacity(),
-                "capacity should be set to the exact image size"
+                "capacity should be set to the exact image size to avoid reallocations"
             );
 
             // optimizer realizes that this is memset
