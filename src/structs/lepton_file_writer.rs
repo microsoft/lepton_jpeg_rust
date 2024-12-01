@@ -162,11 +162,11 @@ pub fn read_jpeg<R: BufRead + Seek>(
     }
 
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
-    let start_scan = reader.stream_position()? as i32;
+    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
     read_scan(&mut lp, reader, &mut thread_handoff, &mut image_data[..]).context()?;
     lp.scnc += 1;
 
-    let mut end_scan = reader.stream_position()? as i32;
+    let mut end_scan = reader.stream_position()?.try_into().unwrap();
 
     // need at least two bytes of scan data
     if start_scan + 2 > end_scan || thread_handoff.len() == 0 {
@@ -207,7 +207,8 @@ pub fn read_jpeg<R: BufRead + Seek>(
             // and then fix up the broken file later in the decoder. The following logic will create a valid file
             // that the C++ and CS version will still decode properly without the fixup logic.
             let len = thread_handoff.len();
-            thread_handoff[len - 1].segment_size -= 2;
+            thread_handoff[len - 1].segment_size =
+                thread_handoff[len - 1].segment_size.saturating_sub(2);
         }
 
         // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
@@ -239,7 +240,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
             }
         }
 
-        end_scan = reader.stream_position()? as i32;
+        end_scan = reader.stream_position()? as u32;
 
         // since prepare_to_decode_next_scan consumes the EOI,
         // we need to add it to the beginning of the garbage data (if there is any)
@@ -252,7 +253,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
         }
     }
 
-    set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan as i32);
+    set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan);
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
@@ -450,7 +451,7 @@ fn prepare_to_decode_next_scan<R: Read>(
         return Ok(false);
     }
 
-    lp.max_bpos = cmp::max(lp.max_bpos, lp.jpeg_header.cs_to as i32);
+    lp.max_bpos = cmp::max(lp.max_bpos, u32::from(lp.jpeg_header.cs_to));
 
     // FIXME: not sure why only first bit of csSah is examined but 4 bits of it are stored
     lp.max_sah = cmp::max(
@@ -459,7 +460,7 @@ fn prepare_to_decode_next_scan<R: Read>(
     );
 
     for i in 0..lp.jpeg_header.cs_cmpc {
-        lp.max_cmp = cmp::max(lp.max_cmp, lp.jpeg_header.cs_cmp[i] as i32);
+        lp.max_cmp = cmp::max(lp.max_cmp, lp.jpeg_header.cs_cmp[i] as u32);
     }
 
     return Ok(true);
@@ -467,7 +468,7 @@ fn prepare_to_decode_next_scan<R: Read>(
 
 fn set_segment_size_in_row_thread_handoffs(
     thread_handoffs: &mut [ThreadHandoff],
-    entropy_data_end_offset_in_file: i32,
+    entropy_data_end_offset_in_file: u32,
 ) {
     if thread_handoffs.len() != 0 {
         for i in 0..thread_handoffs.len() - 1 {

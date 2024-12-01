@@ -51,8 +51,8 @@ pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
     overhang_byte: u8,
     num_overhang_bits: u8,
-    luma_y_start: i32,
-    luma_y_end: i32,
+    luma_y_start: u32,
+    luma_y_end: u32,
     mut last_dc: [i16; 4],
     image_data: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,
@@ -92,7 +92,7 @@ pub fn jpeg_write_baseline_row_range(
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
+                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
                 jenc,
@@ -138,7 +138,7 @@ pub fn jpeg_write_entire_scan(
         if cur_row.last_row_to_complete_mcu {
             let r = recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh,
+                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
                 jenc,
@@ -157,7 +157,7 @@ pub fn jpeg_write_entire_scan(
 #[inline(never)]
 fn recode_one_mcu_row(
     huffw: &mut BitWriter,
-    mcu: i32,
+    mcu: u32,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
     jenc: &JPegEncodingInfo,

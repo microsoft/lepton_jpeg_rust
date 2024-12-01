@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use std::io::Read;
+use std::num::NonZeroU32;
 
 use crate::consts::JPegType;
 use crate::enabled_features::EnabledFeatures;
@@ -125,10 +126,10 @@ impl HuffCodes {
         for i in 0..256 {
             let s = i & 0xf;
             self.c_len_plus_s[i] = (self.c_len[i] + (s as u16)) as u8;
-            self.c_val_shift_s[i] = (self.c_val[i] as u32) << s;
+            self.c_val_shift_s[i] = u32::from(self.c_val[i]) << s;
 
             // calculate the value for negative coefficients, which compensates for the sign bit
-            self.c_val_shift_s[i + 256] = ((self.c_val[i] as u32) << s) | ((1u32 << s) - 1);
+            self.c_val_shift_s[i + 256] = (u32::from(self.c_val[i]) << s) | ((1u32 << s) - 1);
         }
 
         // find out eobrun (runs of all zero blocks) max value. This is used encoding/decoding progressive files.
@@ -273,17 +274,17 @@ pub struct JPegHeader {
     pub ht_set: [[u8; 4]; 2],         // 1 if huffman table is set
     pub cmp_info: [ComponentInfo; 4], // components
     pub cmpc: usize,                  // component count
-    pub img_width: i32,               // width of image
-    pub img_height: i32,              // height of image
+    pub img_width: u32,               // width of image
+    pub img_height: u32,              // height of image
 
     pub jpeg_type: JPegType,
-    pub sfhm: i32, // max horizontal sample factor
-    pub sfvm: i32, // max verical sample factor
-    pub mcuv: i32, // mcus per line
-    pub mcuh: i32, // mcus per collumn
-    pub mcuc: i32, // count of mcus
+    pub sfhm: u32,        // max horizontal sample factor
+    pub sfvm: u32,        // max verical sample factor
+    pub mcuv: NonZeroU32, // mcus per line
+    pub mcuh: NonZeroU32, // mcus per collumn
+    pub mcuc: u32,        // count of mcus
 
-    pub rsti: i32,          // restart interval
+    pub rsti: u32,          // restart interval
     pub cs_cmpc: usize,     // component count in current scan
     pub cs_cmp: [usize; 4], // component numbers in current scan
 
@@ -300,7 +301,7 @@ pub struct JPegEncodingInfo {
 
     /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
     /// within the corresponding scan segment.
-    pub rst_cnt: Vec<i32>,
+    pub rst_cnt: Vec<u32>,
 
     /// the mask for padding out the bitstream when we get to the end of a reset block
     pub pad_bit: Option<u8>,
@@ -349,8 +350,8 @@ impl Default for JPegHeader {
             jpeg_type: JPegType::Unknown,
             sfhm: 0,
             sfvm: 0,
-            mcuv: 0,
-            mcuh: 0,
+            mcuv: NonZeroU32::MIN,
+            mcuh: NonZeroU32::MIN,
             mcuc: 0,
             rsti: 0,
             cs_cmpc: 0,
@@ -364,18 +365,22 @@ impl Default for JPegHeader {
 }
 
 impl JPegHeader {
+    #[inline(always)]
     pub fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }
 
+    #[inline(always)]
     pub fn get_huff_dc_tree(&self, cmp: usize) -> &HuffTree {
         &self.h_trees[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }
 
+    #[inline(always)]
     pub fn get_huff_ac_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[1][usize::from(self.cmp_info[cmp].huff_ac)]
     }
 
+    #[inline(always)]
     pub fn get_huff_ac_tree(&self, cmp: usize) -> &HuffTree {
         &self.h_trees[1][usize::from(self.cmp_info[cmp].huff_ac)]
     }
@@ -434,30 +439,35 @@ impl JPegHeader {
             }
         }
 
-        self.mcuv = (1.0 * self.img_height as f64 / (8.0 * self.sfhm as f64)).ceil() as i32;
-        self.mcuh = (1.0 * self.img_width as f64 / (8.0 * self.sfvm as f64)).ceil() as i32;
-        self.mcuc = self.mcuv * self.mcuh;
+        self.mcuv = NonZeroU32::new(
+            (1.0 * self.img_height as f64 / (8.0 * self.sfhm as f64)).ceil() as u32,
+        )
+        .unwrap();
+        self.mcuh =
+            NonZeroU32::new((1.0 * self.img_width as f64 / (8.0 * self.sfvm as f64)).ceil() as u32)
+                .unwrap();
+        self.mcuc = self.mcuv.get() * self.mcuh.get();
 
         for cmp in 0..self.cmpc {
             self.cmp_info[cmp].mbs = self.cmp_info[cmp].sfv * self.cmp_info[cmp].sfh;
-            self.cmp_info[cmp].bcv = self.mcuv * self.cmp_info[cmp].sfh;
-            self.cmp_info[cmp].bch = self.mcuh * self.cmp_info[cmp].sfv;
+            self.cmp_info[cmp].bcv = self.mcuv.get() * self.cmp_info[cmp].sfh;
+            self.cmp_info[cmp].bch = self.mcuh.get() * self.cmp_info[cmp].sfv;
             self.cmp_info[cmp].bc = self.cmp_info[cmp].bcv * self.cmp_info[cmp].bch;
             self.cmp_info[cmp].ncv = (1.0
                 * self.img_height as f64
                 * (self.cmp_info[cmp].sfh as f64 / (8.0 * self.sfhm as f64)))
-                .ceil() as i32;
+                .ceil() as u32;
             self.cmp_info[cmp].nch = (1.0
                 * self.img_width as f64
                 * (self.cmp_info[cmp].sfv as f64 / (8.0 * self.sfvm as f64)))
-                .ceil() as i32;
+                .ceil() as u32;
             self.cmp_info[cmp].nc = self.cmp_info[cmp].ncv * self.cmp_info[cmp].nch;
         }
 
         // decide components' statistical ids
         if self.cmpc <= 3 {
             for cmp in 0..self.cmpc {
-                self.cmp_info[cmp].sid = cmp as i32;
+                self.cmp_info[cmp].sid = cmp as u32;
             }
         } else {
             for cmp in 0..self.cmpc {
@@ -642,7 +652,7 @@ impl JPegHeader {
             {  // DRI segment
                 // define restart interval
                 ensure_space(segment,hpos, 2).context()?;
-                self.rsti = b_short(segment[hpos], segment[hpos + 1]) as i32;
+                self.rsti = u32::from(b_short(segment[hpos], segment[hpos + 1]));
             }
 
             jpeg_code::SOS => // SOS segment
@@ -741,8 +751,8 @@ impl JPegHeader {
                 }
 
                 // image size, height & component count
-                self.img_height = i32::from(b_short(segment[hpos + 1], segment[hpos + 2]));
-                self.img_width = i32::from(b_short(segment[hpos + 3], segment[hpos + 4]));
+                self.img_height = u32::from(b_short(segment[hpos + 1], segment[hpos + 2]));
+                self.img_width = u32::from(b_short(segment[hpos + 3], segment[hpos + 4]));
 
                 if self.img_height == 0 || self.img_width == 0
                 {
@@ -769,8 +779,8 @@ impl JPegHeader {
                     ensure_space(segment,hpos, 3).context()?;
 
                     self.cmp_info[cmp].jid = segment[hpos];
-                    self.cmp_info[cmp].sfv = lbits(segment[hpos + 1], 4) as i32;
-                    self.cmp_info[cmp].sfh = rbits(segment[hpos + 1], 4) as i32;
+                    self.cmp_info[cmp].sfv = u32::from(lbits(segment[hpos + 1], 4));
+                    self.cmp_info[cmp].sfh = u32::from(rbits(segment[hpos + 1], 4));
 
                     if self.cmp_info[cmp].sfv > 2 || self.cmp_info[cmp].sfh > 2
                     {

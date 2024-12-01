@@ -11,9 +11,9 @@ use crate::structs::jpeg_header::JPegHeader;
 
 #[derive(Debug, Clone)]
 struct TrucateComponentsInfo {
-    trunc_bcv: i32, // the number of vertical components in this (truncated) image
+    trunc_bcv: u32, // the number of vertical components in this (truncated) image
 
-    trunc_bc: i32,
+    trunc_bc: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -22,9 +22,9 @@ pub struct TruncateComponents {
 
     pub components_count: usize,
 
-    pub mcu_count_horizontal: i32,
+    pub mcu_count_horizontal: u32,
 
-    pub mcu_count_vertical: i32,
+    pub mcu_count_vertical: u32,
 }
 
 impl Default for TruncateComponents {
@@ -40,8 +40,8 @@ impl Default for TruncateComponents {
 
 impl TruncateComponents {
     pub fn init(&mut self, jpeg_header: &JPegHeader) {
-        self.mcu_count_horizontal = jpeg_header.mcuh;
-        self.mcu_count_vertical = jpeg_header.mcuv;
+        self.mcu_count_horizontal = jpeg_header.mcuh.get();
+        self.mcu_count_vertical = jpeg_header.mcuv.get();
         self.components_count = jpeg_header.cmpc;
 
         for i in 0..jpeg_header.cmpc {
@@ -61,7 +61,7 @@ impl TruncateComponents {
         return retval;
     }
 
-    pub fn set_truncation_bounds(&mut self, jpeg_header: &JPegHeader, max_d_pos: [i32; 4]) {
+    pub fn set_truncation_bounds(&mut self, jpeg_header: &JPegHeader, max_d_pos: [u32; 4]) {
         for i in 0..self.components_count {
             TruncateComponents::set_block_count_d_pos(
                 &mut self.trunc_info[i],
@@ -72,15 +72,15 @@ impl TruncateComponents {
         }
     }
 
-    pub fn get_block_height(&self, cmp: usize) -> i32 {
+    pub fn get_block_height(&self, cmp: usize) -> u32 {
         return self.trunc_info[cmp].trunc_bcv;
     }
 
     fn set_block_count_d_pos(
         ti: &mut TrucateComponentsInfo,
         ci: &ComponentInfo,
-        trunc_bc: i32,
-        mcu_count_vertical: i32,
+        trunc_bc: u32,
+        mcu_count_vertical: u32,
     ) {
         assert!(
             ci.bcv == (ci.bc / ci.bch) + (if ci.bc % ci.bch != 0 { 1 } else { 0 }),
@@ -105,12 +105,12 @@ impl TruncateComponents {
         ti.trunc_bc = trunc_bc;
     }
 
-    fn get_min_vertical_extcmp_multiple(cmp_info: &ComponentInfo, mcu_count_vertical: i32) -> i32 {
+    fn get_min_vertical_extcmp_multiple(cmp_info: &ComponentInfo, mcu_count_vertical: u32) -> u32 {
         let luma_height = cmp_info.bcv;
         return luma_height / mcu_count_vertical;
     }
 
-    pub fn get_component_sizes_in_blocks(&self) -> Vec<i32> {
+    pub fn get_component_sizes_in_blocks(&self) -> Vec<u32> {
         let mut retval = Vec::new();
         for i in 0..self.components_count {
             retval.push(self.trunc_info[i].trunc_bc);

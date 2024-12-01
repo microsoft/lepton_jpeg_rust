@@ -329,7 +329,7 @@ impl LeptonFileReader {
             let mut markers = Vec::new();
 
             let cumulative_reset_markers = if lh.jpeg_header.rsti != 0 {
-                ((lh.jpeg_header.mcuh * lh.jpeg_header.mcuv) - 1) / lh.jpeg_header.rsti
+                (lh.jpeg_header.mcuc - 1) / lh.jpeg_header.rsti
             } else {
                 0
             } as u8;

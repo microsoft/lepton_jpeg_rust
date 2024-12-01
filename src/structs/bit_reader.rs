@@ -23,10 +23,10 @@ pub struct BitReader<R> {
 }
 
 impl<R: BufRead + Seek> BitReader<R> {
-    pub fn get_stream_position(&mut self) -> i32 {
+    pub fn get_stream_position(&mut self) -> u32 {
         self.undo_read_ahead();
 
-        let pos: i32 = (self.inner.stream_position().unwrap() - self.start_offset)
+        let pos: u32 = (self.inner.stream_position().unwrap() - self.start_offset)
             .try_into()
             .unwrap();
 

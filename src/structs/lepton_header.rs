@@ -39,7 +39,7 @@ pub struct LeptonHeader {
 
     /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
     /// within the corresponding scan segment.
-    pub rst_cnt: Vec<i32>,
+    pub rst_cnt: Vec<u32>,
 
     /// the mask for padding out the bitstream when we get to the end of a reset block
     pub pad_bit: Option<u8>,
@@ -55,13 +55,13 @@ pub struct LeptonHeader {
     pub early_eof_encountered: bool,
 
     /// the maximum dpos in a truncated image
-    pub max_dpos: [i32; 4],
+    pub max_dpos: [u32; 4],
 
     /// the maximum component in a truncated image
-    pub max_cmp: i32,
+    pub max_cmp: u32,
 
     /// the maximum band in a truncated image
-    pub max_bpos: i32,
+    pub max_bpos: u32,
 
     /// the maximum bit in a truncated image
     pub max_sah: u8,
@@ -193,10 +193,10 @@ impl LeptonHeader {
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
         if self.early_eof_encountered {
-            let mut max_last_segment_size = i32::try_from(self.jpeg_file_size)?
-                - i32::try_from(self.garbage_data.len())?
-                - i32::try_from(self.raw_jpeg_header_read_index)?
-                - SOI.len() as i32;
+            let mut max_last_segment_size = self.jpeg_file_size
+                - u32::try_from(self.garbage_data.len())?
+                - u32::try_from(self.raw_jpeg_header_read_index)?
+                - u32::try_from(SOI.len())?;
 
             // subtract the segment sizes of all the previous segments (except for the last)
             for i in 0..num_threads - 1 {
@@ -204,6 +204,8 @@ impl LeptonHeader {
             }
 
             let last = &mut self.thread_handoff[num_threads - 1];
+
+            let max_last_segment_size = max_last_segment_size;
 
             if last.segment_size > max_last_segment_size {
                 // re-adjust the last segment size
@@ -283,7 +285,7 @@ impl LeptonHeader {
                 let rst_count = header_reader.read_u32::<LittleEndian>()?;
 
                 for _i in 0..rst_count {
-                    self.rst_cnt.push(header_reader.read_i32::<LittleEndian>()?);
+                    self.rst_cnt.push(header_reader.read_u32::<LittleEndian>()?);
                 }
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
@@ -325,13 +327,13 @@ impl LeptonHeader {
                 current_lepton_marker,
                 LEPTON_HEADER_EARLY_EOF_MARKER,
             ) {
-                self.max_cmp = header_reader.read_i32::<LittleEndian>()?;
-                self.max_bpos = header_reader.read_i32::<LittleEndian>()?;
-                self.max_sah = u8::try_from(header_reader.read_i32::<LittleEndian>()?)?;
-                self.max_dpos[0] = header_reader.read_i32::<LittleEndian>()?;
-                self.max_dpos[1] = header_reader.read_i32::<LittleEndian>()?;
-                self.max_dpos[2] = header_reader.read_i32::<LittleEndian>()?;
-                self.max_dpos[3] = header_reader.read_i32::<LittleEndian>()?;
+                self.max_cmp = header_reader.read_u32::<LittleEndian>()?;
+                self.max_bpos = header_reader.read_u32::<LittleEndian>()?;
+                self.max_sah = u8::try_from(header_reader.read_u32::<LittleEndian>()?)?;
+                self.max_dpos[0] = header_reader.read_u32::<LittleEndian>()?;
+                self.max_dpos[1] = header_reader.read_u32::<LittleEndian>()?;
+                self.max_dpos[2] = header_reader.read_u32::<LittleEndian>()?;
+                self.max_dpos[3] = header_reader.read_u32::<LittleEndian>()?;
                 self.early_eof_encountered = true;
             } else {
                 return err_exit_code(ExitCode::BadLeptonFile, "unknown data found");
@@ -495,13 +497,13 @@ impl LeptonHeader {
             // EEE marker
             mrw.write_all(&LEPTON_HEADER_EARLY_EOF_MARKER)?;
 
-            mrw.write_i32::<LittleEndian>(self.max_cmp)?;
-            mrw.write_i32::<LittleEndian>(self.max_bpos)?;
-            mrw.write_i32::<LittleEndian>(i32::from(self.max_sah))?;
-            mrw.write_i32::<LittleEndian>(self.max_dpos[0])?;
-            mrw.write_i32::<LittleEndian>(self.max_dpos[1])?;
-            mrw.write_i32::<LittleEndian>(self.max_dpos[2])?;
-            mrw.write_i32::<LittleEndian>(self.max_dpos[3])?;
+            mrw.write_u32::<LittleEndian>(self.max_cmp)?;
+            mrw.write_u32::<LittleEndian>(self.max_bpos)?;
+            mrw.write_u32::<LittleEndian>(u32::from(self.max_sah))?;
+            mrw.write_u32::<LittleEndian>(self.max_dpos[0])?;
+            mrw.write_u32::<LittleEndian>(self.max_dpos[1])?;
+            mrw.write_u32::<LittleEndian>(self.max_dpos[2])?;
+            mrw.write_u32::<LittleEndian>(self.max_dpos[3])?;
         }
 
         Ok(())
