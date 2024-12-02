@@ -262,7 +262,7 @@ impl LeptonHeader {
         // beginning here: recovery information (needed for exact JPEG recovery)
         // read further recovery information if any
         loop {
-            let mut current_lepton_marker = [0 as u8; 3];
+            let mut current_lepton_marker = [0u8; 3];
             match header_reader.read_exact(&mut current_lepton_marker) {
                 Ok(_) => {}
                 Err(e) => {
@@ -468,7 +468,7 @@ impl LeptonHeader {
             mrw.write_u32::<LittleEndian>(self.rst_cnt.len() as u32)?;
 
             for i in 0..self.rst_cnt.len() {
-                mrw.write_u32::<LittleEndian>(self.rst_cnt[i] as u32)?;
+                mrw.write_u32::<LittleEndian>(self.rst_cnt[i])?;
             }
         }
 

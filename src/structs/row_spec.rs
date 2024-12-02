@@ -38,8 +38,8 @@ impl RowSpec {
         let mut mcu_multiple = 0;
 
         for i in 0..num_cmp {
-            heights.push(image_data[i].get_original_height() as u32);
-            component_multiple.push(heights[i] / mcuv as u32);
+            heights.push(image_data[i].get_original_height());
+            component_multiple.push(heights[i] / mcuv);
             mcu_multiple += component_multiple[i];
         }
 

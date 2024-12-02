@@ -149,7 +149,7 @@ impl BlockBasedImage {
         if relative_offset < self.image.len() {
             // rewrite already written block
             if let Some(b) = block_to_write {
-                self.image[relative_offset as usize] = b;
+                self.image[relative_offset] = b;
             }
         } else {
             // need to extend the image length and add any necessary
@@ -166,7 +166,7 @@ impl BlockBasedImage {
             self.image.push(block_to_write.unwrap_or_default());
         }
 
-        return &mut self.image[relative_offset as usize];
+        return &mut self.image[relative_offset];
     }
 
     pub fn set_block_data(&mut self, dpos: u32, block_data: AlignedBlock) {

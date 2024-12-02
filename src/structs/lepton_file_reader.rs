@@ -334,8 +334,8 @@ impl LeptonFileReader {
                 0
             } as u8;
 
-            for i in 0..lh.rst_err[0] as u8 {
-                let rst = (jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7)) as u8;
+            for i in 0..lh.rst_err[0] {
+                let rst = jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7);
                 markers.push(0xFF);
                 markers.push(rst);
             }

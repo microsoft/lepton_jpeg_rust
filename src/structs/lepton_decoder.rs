@@ -458,7 +458,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         if coef != 0 {
             num_non_zeros_edge -= 1;
             here_mut.set_coefficient(coord_tr, coef);
-            raster[coord_tr as usize] =
+            raster[coord_tr] =
                 i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
         }
 

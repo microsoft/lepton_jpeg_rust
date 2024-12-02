@@ -51,7 +51,7 @@ impl QuantizationTables {
                     freq_max /= retval.quantization_table[coord];
                 }
 
-                let max_len = u16_bit_length(freq_max) as u8;
+                let max_len = u16_bit_length(freq_max);
                 if max_len > RESIDUAL_NOISE_FLOOR as u8 {
                     retval.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
                 }

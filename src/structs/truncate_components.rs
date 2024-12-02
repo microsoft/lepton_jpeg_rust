@@ -56,7 +56,7 @@ impl TruncateComponents {
         let mut retval = Vec::<u32>::new();
 
         for i in 0..self.components_count {
-            retval.push(self.trunc_info[i].trunc_bcv as u32);
+            retval.push(self.trunc_info[i].trunc_bcv);
         }
         return retval;
     }

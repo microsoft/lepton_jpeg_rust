@@ -380,7 +380,7 @@ fn split_row_handoffs_to_threads(
 
     info!("Number of threads: {0}", num_threads);
 
-    let mut selected_splits = Vec::with_capacity(num_threads as usize);
+    let mut selected_splits = Vec::with_capacity(num_threads);
 
     if num_threads == 1 {
         // Single thread execution - no split, run on the whole range
