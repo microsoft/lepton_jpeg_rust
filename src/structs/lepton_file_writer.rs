@@ -40,7 +40,7 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
-        &lp.truncate_components,
+        &lp.rinfo.truncate_components,
         writer,
         &lp.thread_handoff[..],
         image_data,
@@ -150,7 +150,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
         .context();
     }
 
-    lp.truncate_components.init(&lp.jpeg_header);
+    lp.rinfo.truncate_components.init(&lp.jpeg_header);
     let mut image_data = Vec::<BlockBasedImage>::new();
     for i in 0..lp.jpeg_header.cmpc {
         // constructor takes height in proportion to the component[0]
@@ -213,7 +213,8 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     if lp.jpeg_header.jpeg_type == JPegType::Sequential {
         if lp.rinfo.early_eof_encountered {
-            lp.truncate_components
+            lp.rinfo
+                .truncate_components
                 .set_truncation_bounds(&lp.jpeg_header, lp.rinfo.max_dpos);
 
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.

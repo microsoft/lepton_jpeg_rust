@@ -109,6 +109,9 @@ pub struct ReconstructionInfo {
     pub rst_cnt: Vec<u32>,
 
     pub rst_cnt_set: bool,
+
+    /// information about how to truncate the image if it was partially written
+    pub truncate_components: TruncateComponents,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -398,13 +401,6 @@ pub struct JPegHeader {
     /// successive approximation bit pos low
     pub cs_sal: u8,
 }
-
-pub struct JPegEncodingInfo {
-    pub jpeg_header: JPegHeader,
-    pub truncate_components: TruncateComponents,
-    pub rinfo: ReconstructionInfo,
-}
-
 enum ParseSegmentResult {
     Continue,
     EOI,

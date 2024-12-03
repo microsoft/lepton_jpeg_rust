@@ -43,7 +43,7 @@ use crate::{jpeg_code, Result};
 
 use super::bit_writer::BitWriter;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
-use super::jpeg_header::{HuffCodes, JPegEncodingInfo, RestartSegmentCodingInfo};
+use super::jpeg_header::{HuffCodes, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
 
@@ -53,9 +53,10 @@ pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
     restart_info: &RestartSegmentCodingInfo,
     image_data: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jpeg_header: &JPegHeader,
+    rinfo: &ReconstructionInfo,
 ) -> Result<Vec<u8>> {
-    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+    let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
 
     let mut huffw = BitWriter::new(encoded_length);
     huffw.reset_from_overhang_byte_and_num_bits(
@@ -70,7 +71,7 @@ pub fn jpeg_write_baseline_row_range(
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
             image_data,
-            jenc.truncate_components.mcu_count_vertical,
+            rinfo.truncate_components.mcu_count_vertical,
             &max_coded_heights,
         );
 
@@ -95,10 +96,11 @@ pub fn jpeg_write_baseline_row_range(
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
+                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
-                jenc,
+                jpeg_header,
+                rinfo,
             )
             .context()?;
         }
@@ -111,9 +113,10 @@ pub fn jpeg_write_baseline_row_range(
 // supports progressive encoding whereas the row range version does not
 pub fn jpeg_write_entire_scan(
     image_data: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jpeg_header: &JPegHeader,
+    rinfo: &ReconstructionInfo,
 ) -> Result<Vec<u8>> {
-    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+    let max_coded_heights = rinfo.truncate_components.get_max_coded_heights();
 
     let mut last_dc = [0i16; 4];
 
@@ -124,7 +127,7 @@ pub fn jpeg_write_entire_scan(
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
             image_data,
-            jenc.truncate_components.mcu_count_vertical,
+            jpeg_header.mcuv.get(),
             &max_coded_heights,
         );
 
@@ -141,10 +144,11 @@ pub fn jpeg_write_entire_scan(
         if cur_row.last_row_to_complete_mcu {
             let r = recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
+                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
-                jenc,
+                jpeg_header,
+                rinfo,
             )
             .context()?;
 
@@ -163,10 +167,9 @@ fn recode_one_mcu_row(
     mcu: u32,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jf: &JPegHeader,
+    rinfo: &ReconstructionInfo,
 ) -> Result<bool> {
-    let jf = &jenc.jpeg_header;
-
     let mut state = JpegPositionState::new(jf, mcu);
 
     let mut cumulative_reset_markers = state.get_cumulative_reset_markers(jf);
@@ -301,7 +304,7 @@ fn recode_one_mcu_row(
         }
 
         // pad huffman writer
-        huffw.pad(jenc.rinfo.pad_bit.unwrap_or(0));
+        huffw.pad(rinfo.pad_bit.unwrap_or(0));
 
         assert!(
             huffw.has_no_remainder(),
@@ -316,9 +319,9 @@ fn recode_one_mcu_row(
 
             // status 1 means restart
             if jf.rsti > 0 {
-                if jenc.rinfo.rst_cnt.len() == 0
-                    || (!jenc.rinfo.rst_cnt_set)
-                    || cumulative_reset_markers < jenc.rinfo.rst_cnt[jenc.rinfo.scnc]
+                if rinfo.rst_cnt.len() == 0
+                    || (!rinfo.rst_cnt_set)
+                    || cumulative_reset_markers < rinfo.rst_cnt[rinfo.scnc]
                 {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
 

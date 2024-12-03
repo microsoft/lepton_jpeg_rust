@@ -9,7 +9,6 @@ use flate2::Compression;
 use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
 use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo};
-use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::EnabledFeatures;
@@ -31,9 +30,6 @@ pub struct LeptonHeader {
     pub thread_handoff: Vec<ThreadHandoff>,
 
     pub jpeg_header: JPegHeader,
-
-    /// information about how to truncate the image if it was partially written
-    pub truncate_components: TruncateComponents,
 
     pub rst_err: Vec<u8>,
 
@@ -156,10 +152,11 @@ impl LeptonHeader {
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
 
-        self.truncate_components.init(&self.jpeg_header);
+        self.rinfo.truncate_components.init(&self.jpeg_header);
 
         if self.rinfo.early_eof_encountered {
-            self.truncate_components
+            self.rinfo
+                .truncate_components
                 .set_truncation_bounds(&self.jpeg_header, self.rinfo.max_dpos);
         }
 
@@ -167,7 +164,7 @@ impl LeptonHeader {
 
         // luma_y_end of the last thread is not serialized/deserialized, fill it here
         self.thread_handoff[num_threads - 1].luma_y_end =
-            self.truncate_components.get_block_height(0);
+            self.rinfo.truncate_components.get_block_height(0);
 
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
