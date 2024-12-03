@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
+use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
 use crate::structs::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use crate::structs::probability_tables::ProbabilityTables;
 pub struct BlockContext {
@@ -23,6 +23,28 @@ pub struct NeighborData<'a> {
 }
 
 impl BlockContext {
+    // blocks above the first line are never dereferenced
+    pub fn off_y(y: u32, image_data: &BlockBasedImage) -> BlockContext {
+        return BlockContext::new(
+            image_data.get_block_width() * y,
+            if y > 0 {
+                image_data.get_block_width() * (y - 1)
+            } else {
+                0
+            },
+            if (y & 1) != 0 {
+                image_data.get_block_width()
+            } else {
+                0
+            },
+            if (y & 1) != 0 {
+                0
+            } else {
+                image_data.get_block_width()
+            },
+        );
+    }
+
     // for debugging
     #[allow(dead_code)]
     pub fn get_here_index(&self) -> u32 {

@@ -40,11 +40,76 @@ use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::structs::component_info::ComponentInfo;
-use crate::structs::lepton_header::LeptonHeader;
-use crate::structs::quantization_tables::QuantizationTables;
-use crate::structs::truncate_components::TruncateComponents;
 use crate::LeptonError;
+
+use super::component_info::ComponentInfo;
+use super::truncate_components::TruncateComponents;
+
+/// information required to restart coding the huffman encoded stream at an arbitrary
+/// location in the stream.
+///
+/// This is used to partition the JPEG into multiple segments
+/// that can be used to decode it in multiple threads.
+///
+/// Each segment has its own unique restart info
+#[derive(Debug, Default, Clone)]
+pub struct RestartSegmentCodingInfo {
+    pub overhang_byte: u8,
+    pub num_overhang_bits: u8,
+    pub luma_y_start: u32,
+    pub luma_y_end: u32,
+    pub last_dc: [i16; 4],
+}
+
+impl RestartSegmentCodingInfo {
+    pub fn new(
+        overhang_byte: u8,
+        num_overhang_bits: u8,
+        last_dc: [i16; 4],
+        mcu: u32,
+        jf: &JPegHeader,
+    ) -> Self {
+        let mcu_y = mcu / jf.mcuh;
+        let luma_mul = jf.cmp_info[0].bcv / jf.mcuv;
+
+        Self {
+            overhang_byte,
+            num_overhang_bits,
+            last_dc,
+            luma_y_start: luma_mul * mcu_y,
+            luma_y_end: luma_mul * (mcu_y + 1),
+        }
+    }
+}
+
+/// Global information required to reconstruct the JPEG exactly the way that it was, especially
+/// regarding information about possible truncation and RST markers.
+#[derive(Default, Clone, Debug)]
+pub struct ReconstructionInfo {
+    /// the maximum band in a truncated image
+    pub max_bpos: u32,
+
+    /// the maximum dpos in a truncated image
+    pub max_dpos: [u32; 4],
+
+    /// if we encountered EOF before the expected end of the image
+    pub early_eof_encountered: bool,
+
+    /// the mask for padding out the bitstream when we get to the end of a reset block
+    pub pad_bit: Option<u8>,
+
+    /// count of scans encountered so far
+    pub scnc: usize,
+
+    /// the maximum bit in a truncated image
+    pub max_sah: u8,
+
+    /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
+    /// within the corresponding scan segment.
+    pub rst_cnt: Vec<u32>,
+
+    pub rst_cnt_set: bool,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct HuffCodes {
@@ -336,31 +401,7 @@ pub struct JPegHeader {
 pub struct JPegEncodingInfo {
     pub jpeg_header: JPegHeader,
     pub truncate_components: TruncateComponents,
-
-    /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
-    /// within the corresponding scan segment.
-    pub rst_cnt: Vec<u32>,
-
-    /// the mask for padding out the bitstream when we get to the end of a reset block
-    pub pad_bit: Option<u8>,
-
-    pub rst_cnt_set: bool,
-
-    /// count of scans encountered so far
-    pub scnc: usize,
-}
-
-impl JPegEncodingInfo {
-    pub fn new(lh: &LeptonHeader) -> Self {
-        JPegEncodingInfo {
-            jpeg_header: lh.jpeg_header.clone(),
-            truncate_components: lh.truncate_components.clone(),
-            rst_cnt: lh.rst_cnt.clone(),
-            pad_bit: lh.pad_bit,
-            rst_cnt_set: lh.rst_cnt_set,
-            scnc: lh.scnc,
-        }
-    }
+    pub rinfo: ReconstructionInfo,
 }
 
 enum ParseSegmentResult {
@@ -951,27 +992,6 @@ impl JPegHeader {
                 }
         }
         return Ok(ParseSegmentResult::Continue);
-    }
-
-    /// constructs the quantization table based on the jpeg header
-    pub fn construct_quantization_tables(&self) -> Result<Vec<QuantizationTables>> {
-        let mut quantization_tables = Vec::new();
-        for i in 0..self.cmpc {
-            let qtables = QuantizationTables::new(self, i);
-
-            // check to see if quantitization table was properly initialized
-            // (table contains divisors for edge coefficients so it never should have a zero)
-            for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
-                if qtables.get_quantization_table()[i] == 0 {
-                    return err_exit_code(
-                    ExitCode::UnsupportedJpegWithZeroIdct0,
-                    "Quantization table contains zero for edge which would cause a divide by zero",
-                );
-                }
-            }
-            quantization_tables.push(qtables);
-        }
-        Ok(quantization_tables)
     }
 }
 

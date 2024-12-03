@@ -8,10 +8,10 @@ use flate2::Compression;
 
 use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
+use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo};
+use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::structs::jpeg_header::JPegHeader;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::structs::truncate_components::TruncateComponents;
 use crate::EnabledFeatures;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
@@ -37,34 +37,13 @@ pub struct LeptonHeader {
 
     pub rst_err: Vec<u8>,
 
-    /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
-    /// within the corresponding scan segment.
-    pub rst_cnt: Vec<u32>,
-
-    /// the mask for padding out the bitstream when we get to the end of a reset block
-    pub pad_bit: Option<u8>,
-
-    pub rst_cnt_set: bool,
-
     /// garbage data (default value - empty segment - means no garbage data)
     pub garbage_data: Vec<u8>,
-
-    /// count of scans encountered so far
-    pub scnc: usize,
-
-    pub early_eof_encountered: bool,
-
-    /// the maximum dpos in a truncated image
-    pub max_dpos: [u32; 4],
 
     /// the maximum component in a truncated image
     pub max_cmp: u32,
 
-    /// the maximum band in a truncated image
-    pub max_bpos: u32,
-
-    /// the maximum bit in a truncated image
-    pub max_sah: u8,
+    pub rinfo: ReconstructionInfo,
 
     pub jpeg_file_size: u32,
 
@@ -179,9 +158,9 @@ impl LeptonHeader {
 
         self.truncate_components.init(&self.jpeg_header);
 
-        if self.early_eof_encountered {
+        if self.rinfo.early_eof_encountered {
             self.truncate_components
-                .set_truncation_bounds(&self.jpeg_header, self.max_dpos);
+                .set_truncation_bounds(&self.jpeg_header, self.rinfo.max_dpos);
         }
 
         let num_threads = self.thread_handoff.len();
@@ -192,7 +171,7 @@ impl LeptonHeader {
 
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
-        if self.early_eof_encountered {
+        if self.rinfo.early_eof_encountered {
             let mut max_last_segment_size = self.jpeg_file_size
                 - u32::try_from(self.garbage_data.len())?
                 - u32::try_from(self.raw_jpeg_header_read_index)?
@@ -275,17 +254,19 @@ impl LeptonHeader {
             }
 
             if buffer_prefix_matches_marker(current_lepton_marker, LEPTON_HEADER_PAD_MARKER) {
-                self.pad_bit = Some(header_reader.read_u8()?);
+                self.rinfo.pad_bit = Some(header_reader.read_u8()?);
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
                 LEPTON_HEADER_JPG_RESTARTS_MARKER,
             ) {
                 // CRS marker
-                self.rst_cnt_set = true;
+                self.rinfo.rst_cnt_set = true;
                 let rst_count = header_reader.read_u32::<LittleEndian>()?;
 
                 for _i in 0..rst_count {
-                    self.rst_cnt.push(header_reader.read_u32::<LittleEndian>()?);
+                    self.rinfo
+                        .rst_cnt
+                        .push(header_reader.read_u32::<LittleEndian>()?);
                 }
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
@@ -328,13 +309,13 @@ impl LeptonHeader {
                 LEPTON_HEADER_EARLY_EOF_MARKER,
             ) {
                 self.max_cmp = header_reader.read_u32::<LittleEndian>()?;
-                self.max_bpos = header_reader.read_u32::<LittleEndian>()?;
-                self.max_sah = u8::try_from(header_reader.read_u32::<LittleEndian>()?)?;
-                self.max_dpos[0] = header_reader.read_u32::<LittleEndian>()?;
-                self.max_dpos[1] = header_reader.read_u32::<LittleEndian>()?;
-                self.max_dpos[2] = header_reader.read_u32::<LittleEndian>()?;
-                self.max_dpos[3] = header_reader.read_u32::<LittleEndian>()?;
-                self.early_eof_encountered = true;
+                self.rinfo.max_bpos = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.max_sah = u8::try_from(header_reader.read_u32::<LittleEndian>()?)?;
+                self.rinfo.max_dpos[0] = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.max_dpos[1] = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.max_dpos[2] = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.max_dpos[3] = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.early_eof_encountered = true;
             } else {
                 return err_exit_code(ExitCode::BadLeptonFile, "unknown data found");
             }
@@ -445,7 +426,7 @@ impl LeptonHeader {
         mrw.write_all(&LEPTON_HEADER_PAD_MARKER)?;
 
         // data: this.padBit
-        mrw.write_u8(self.pad_bit.unwrap_or(0))?;
+        mrw.write_u8(self.rinfo.pad_bit.unwrap_or(0))?;
 
         Ok(())
     }
@@ -461,14 +442,14 @@ impl LeptonHeader {
     }
 
     fn write_lepton_jpeg_restarts_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
-        if self.rst_cnt.len() > 0 {
+        if self.rinfo.rst_cnt.len() > 0 {
             // marker: CRS
             mrw.write_all(&LEPTON_HEADER_JPG_RESTARTS_MARKER)?;
 
-            mrw.write_u32::<LittleEndian>(self.rst_cnt.len() as u32)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.rst_cnt.len() as u32)?;
 
-            for i in 0..self.rst_cnt.len() {
-                mrw.write_u32::<LittleEndian>(self.rst_cnt[i])?;
+            for i in 0..self.rinfo.rst_cnt.len() {
+                mrw.write_u32::<LittleEndian>(self.rinfo.rst_cnt[i])?;
             }
         }
 
@@ -493,17 +474,17 @@ impl LeptonHeader {
         &self,
         mrw: &mut W,
     ) -> Result<()> {
-        if self.early_eof_encountered {
+        if self.rinfo.early_eof_encountered {
             // EEE marker
             mrw.write_all(&LEPTON_HEADER_EARLY_EOF_MARKER)?;
 
             mrw.write_u32::<LittleEndian>(self.max_cmp)?;
-            mrw.write_u32::<LittleEndian>(self.max_bpos)?;
-            mrw.write_u32::<LittleEndian>(u32::from(self.max_sah))?;
-            mrw.write_u32::<LittleEndian>(self.max_dpos[0])?;
-            mrw.write_u32::<LittleEndian>(self.max_dpos[1])?;
-            mrw.write_u32::<LittleEndian>(self.max_dpos[2])?;
-            mrw.write_u32::<LittleEndian>(self.max_dpos[3])?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_bpos)?;
+            mrw.write_u32::<LittleEndian>(u32::from(self.rinfo.max_sah))?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_dpos[0])?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_dpos[1])?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_dpos[2])?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_dpos[3])?;
         }
 
         Ok(())

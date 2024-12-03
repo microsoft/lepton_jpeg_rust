@@ -14,16 +14,16 @@ use wide::i32x8;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
+use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::jpeg::row_spec::RowSpec;
+use crate::jpeg::truncate_components::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::metrics::Metrics;
-use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
 use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
-use crate::structs::row_spec::RowSpec;
-use crate::structs::truncate_components::*;
 use crate::structs::vpx_bool_writer::VPXBoolWriter;
 use crate::Result;
 
@@ -159,7 +159,7 @@ fn process_row<W: Write>(
     component_size_in_block: u32,
     features: &EnabledFeatures,
 ) -> Result<()> {
-    let mut block_context = image_data.off_y(curr_y);
+    let mut block_context = BlockContext::off_y(curr_y, image_data);
     let block_width = image_data.get_block_width();
 
     for jpeg_x in 0..block_width {
@@ -810,7 +810,7 @@ fn roundtrip_read_write_coefficients(
     // use the Sip hasher directly since that's guaranteed not to change implementation vs the default hasher
     use siphasher::sip::SipHasher13;
 
-    use crate::structs::block_based_image::EMPTY_BLOCK;
+    use crate::jpeg::block_based_image::EMPTY_BLOCK;
     use crate::structs::lepton_decoder::read_coefficient_block;
     use crate::structs::neighbor_summary::NEIGHBOR_DATA_EMPTY;
     use crate::structs::vpx_bool_reader::VPXBoolReader;

@@ -15,12 +15,12 @@ use log::warn;
 
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
+use crate::jpeg::block_based_image::BlockBasedImage;
+use crate::jpeg::jpeg_header::{JPegEncodingInfo, RestartSegmentCodingInfo};
+use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
-use crate::structs::block_based_image::BlockBasedImage;
-use crate::structs::jpeg_header::JPegEncodingInfo;
-use crate::structs::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
@@ -382,8 +382,14 @@ impl LeptonFileReader {
         results.push(header);
 
         loop {
+            let jenc = JPegEncodingInfo {
+                jpeg_header: lh.jpeg_header.clone(),
+                truncate_components: lh.truncate_components.clone(),
+                rinfo: lh.rinfo.clone(),
+            };
+
             // progressive JPEG consists of scans followed by headers
-            let scan = jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context()?;
+            let scan = jpeg_write_entire_scan(&merged[..], &jenc).context()?;
             results.push(scan);
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
@@ -397,7 +403,7 @@ impl LeptonFileReader {
             }
 
             // advance to next scan
-            lh.scnc += 1;
+            lh.rinfo.scnc += 1;
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -430,13 +436,17 @@ impl LeptonFileReader {
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 |thread_handoff, image_data, jenc| {
+                    let restart_info = RestartSegmentCodingInfo {
+                        overhang_byte: thread_handoff.overhang_byte,
+                        num_overhang_bits: thread_handoff.num_overhang_bits,
+                        luma_y_start: thread_handoff.luma_y_start,
+                        luma_y_end: thread_handoff.luma_y_end,
+                        last_dc: thread_handoff.last_dc,
+                    };
+
                     let mut result_buffer = jpeg_write_baseline_row_range(
                         thread_handoff.segment_size as usize,
-                        thread_handoff.overhang_byte,
-                        thread_handoff.num_overhang_bits,
-                        thread_handoff.luma_y_start,
-                        thread_handoff.luma_y_end,
-                        thread_handoff.last_dc,
+                        &restart_info,
                         &image_data,
                         jenc,
                     )
@@ -507,11 +517,15 @@ impl LeptonFileReader {
             jenc: &JPegEncodingInfo,
         ) -> Result<P>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
-        let qt = lh.jpeg_header.construct_quantization_tables()?;
+        let qt = QuantizationTables::construct_quantization_tables(&lh.jpeg_header)?;
 
         let features = features.clone();
 
-        let jenc = JPegEncodingInfo::new(lh);
+        let jenc = JPegEncodingInfo {
+            jpeg_header: lh.jpeg_header.clone(),
+            truncate_components: lh.truncate_components.clone(),
+            rinfo: lh.rinfo.clone(),
+        };
 
         let thread_handoff = lh.thread_handoff.clone();
 
