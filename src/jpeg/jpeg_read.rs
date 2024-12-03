@@ -428,7 +428,7 @@ fn decode_baseline_rst<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
 /// sequential block decoding routine
 /// </summary>
 #[inline(never)]
-pub fn decode_block_seq<R: BufRead>(
+pub(super) fn decode_block_seq<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     dctree: &HuffTree,
     actree: &HuffTree,

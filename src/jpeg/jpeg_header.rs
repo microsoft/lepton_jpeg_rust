@@ -112,7 +112,7 @@ pub struct ReconstructionInfo {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct HuffCodes {
+pub(super) struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u16; 256],
     pub c_len_plus_s: [u8; 256],
@@ -220,7 +220,7 @@ impl HuffCodes {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct HuffTree {
+pub(super) struct HuffTree {
     pub node: [[u16; 2]; 256],
     pub peek_code: [(u8, u8); 256],
 }
@@ -332,6 +332,7 @@ impl HuffTree {
     }
 }
 
+/// JPEG information parsed out of segments found before the image segment
 #[derive(Debug, Clone)]
 pub struct JPegHeader {
     /// quantization tables 4 x 64
@@ -344,7 +345,7 @@ pub struct JPegHeader {
     h_trees: [[HuffTree; 4]; 2],
 
     /// 1 if huffman table is set
-    pub ht_set: [[u8; 4]; 2],
+    ht_set: [[u8; 4]; 2],
 
     /// components
     pub cmp_info: [ComponentInfo; 4],
@@ -445,26 +446,29 @@ impl Default for JPegHeader {
 
 impl JPegHeader {
     #[inline(always)]
-    pub fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
+    pub(super) fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }
 
     #[inline(always)]
-    pub fn get_huff_dc_tree(&self, cmp: usize) -> &HuffTree {
+    pub(super) fn get_huff_dc_tree(&self, cmp: usize) -> &HuffTree {
         &self.h_trees[0][usize::from(self.cmp_info[cmp].huff_dc)]
     }
 
     #[inline(always)]
-    pub fn get_huff_ac_codes(&self, cmp: usize) -> &HuffCodes {
+    pub(super) fn get_huff_ac_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[1][usize::from(self.cmp_info[cmp].huff_ac)]
     }
 
     #[inline(always)]
-    pub fn get_huff_ac_tree(&self, cmp: usize) -> &HuffTree {
+    pub(super) fn get_huff_ac_tree(&self, cmp: usize) -> &HuffTree {
         &self.h_trees[1][usize::from(self.cmp_info[cmp].huff_ac)]
     }
 
-    /// Parses header for imageinfo
+    /// Parses JPEG segments and updates the appropriate header fields
+    /// until we hit either an SOS (image data) or EOI (end of image).
+    ///
+    /// Returns false if we hit EOI, true if we have an image to process.
     pub fn parse<R: Read>(
         &mut self,
         reader: &mut R,
@@ -1005,7 +1009,7 @@ fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
 
 /// constructs a huffman table for testing purposes from a given distribution
 #[cfg(test)]
-pub fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
+pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
     use std::collections::{BinaryHeap, HashMap};
 
     struct Node {

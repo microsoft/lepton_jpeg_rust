@@ -6,7 +6,7 @@
 
 mod consts;
 mod helpers;
-mod jpeg;
+pub mod jpeg;
 mod jpeg_code;
 pub mod metrics;
 mod structs;
