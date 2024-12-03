@@ -249,13 +249,8 @@ pub fn read_jpeg<R: BufRead + Seek>(
         while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
             callback(&lp.jpeg_header);
 
-            read_progressive_scan(
-                &mut lp.jpeg_header,
-                reader,
-                &mut image_data[..],
-                &mut lp.rinfo,
-            )
-            .context()?;
+            read_progressive_scan(&lp.jpeg_header, reader, &mut image_data[..], &mut lp.rinfo)
+                .context()?;
             lp.rinfo.scnc += 1;
 
             if lp.rinfo.early_eof_encountered {

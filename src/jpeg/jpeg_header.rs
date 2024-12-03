@@ -45,13 +45,12 @@ use crate::LeptonError;
 use super::component_info::ComponentInfo;
 use super::truncate_components::TruncateComponents;
 
-/// information required to restart coding the huffman encoded stream at an arbitrary
-/// location in the stream.
+/// Information required to partition the coding the JPEG huffman encoded stream of a scan
+/// at an arbitrary location in the stream.
 ///
-/// This is used to partition the JPEG into multiple segments
-/// that can be used to decode it in multiple threads.
-///
-/// Each segment has its own unique restart info
+/// Note that this only works for sequential JPEGs since progressive ones have multiple scans
+/// that each process the entire image.
+
 #[derive(Debug, Default, Clone)]
 pub struct RestartSegmentCodingInfo {
     pub overhang_byte: u8,

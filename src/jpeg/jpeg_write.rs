@@ -47,7 +47,9 @@ use super::jpeg_header::{HuffCodes, JPegHeader, ReconstructionInfo, RestartSegme
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
 
-/// write a range of rows corresponding to the thread_handoff structure into the writer.
+/// write a range of rows corresponding to the restart_info structure.
+/// Returns the encoded data as a buffer.
+///
 /// Only works with baseline non-progressive images.
 pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
@@ -109,8 +111,8 @@ pub fn jpeg_write_baseline_row_range(
     Ok(huffw.detach_buffer())
 }
 
-// writes an entire scan vs only a range of rows as above.
-// supports progressive encoding whereas the row range version does not
+/// writes an entire scan vs only a range of rows as above.
+/// supports progressive encoding whereas the row range version does not
 pub fn jpeg_write_entire_scan(
     image_data: &[BlockBasedImage],
     jpeg_header: &JPegHeader,

@@ -45,6 +45,10 @@ use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_header::{HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use super::jpeg_position_state::JpegPositionState;
 
+/// Reads the scan from the JPEG file, writes the image data to the image_data array and
+/// partitions it into restart segments using the partition callback.
+///
+/// This only works for sequential JPEGs. For progressive JPEGs, use `read_progressive_scan`.
 pub fn read_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
     jf: &JPegHeader,
     reader: &mut R,
@@ -149,9 +153,11 @@ pub fn read_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingI
     Ok(())
 }
 
-// reads subsequent scans for progressive images
+/// Reads a scan for progressive images where the image is encoded in multiple passes.
+/// Between each scan are a bunch of header than need to be parsed containing information
+/// like updated Huffman tables and quantization tables.
 pub fn read_progressive_scan<R: BufRead + Seek>(
-    jf: &mut JPegHeader,
+    jf: &JPegHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
     reconstruct_info: &mut ReconstructionInfo,
