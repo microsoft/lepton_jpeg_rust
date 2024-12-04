@@ -23,26 +23,35 @@ pub struct NeighborData<'a> {
 }
 
 impl BlockContext {
-    // blocks above the first line are never dereferenced
+    /// Create a new BlockContext for the first line of the image at a given y-coordinate.
     pub fn off_y(y: u32, image_data: &BlockBasedImage) -> BlockContext {
-        return BlockContext::new(
-            image_data.get_block_width() * y,
-            if y > 0 {
-                image_data.get_block_width() * (y - 1)
-            } else {
-                0
-            },
-            if (y & 1) != 0 {
-                image_data.get_block_width()
-            } else {
-                0
-            },
-            if (y & 1) != 0 {
-                0
-            } else {
-                image_data.get_block_width()
-            },
-        );
+        let cur_block_index = image_data.get_block_width() * y;
+
+        // blocks above the first line are never dereferenced
+        let above_block_index = if y > 0 {
+            image_data.get_block_width() * (y - 1)
+        } else {
+            0
+        };
+
+        let cur_neighbor_summary_index = if (y & 1) != 0 {
+            image_data.get_block_width()
+        } else {
+            0
+        };
+
+        let above_neighbor_summary_index = if (y & 1) != 0 {
+            0
+        } else {
+            image_data.get_block_width()
+        };
+
+        BlockContext {
+            cur_block_index,
+            above_block_index,
+            cur_neighbor_summary_index,
+            above_neighbor_summary_index,
+        }
     }
 
     // for debugging
@@ -52,7 +61,7 @@ impl BlockContext {
     }
 
     // as each new line BlockContext is set by `off_y`, no edge cases with dereferencing
-    // out of bounds indices is possilbe, therefore no special treatment is needed
+    // out of bounds indices is possible, therefore no special treatment is needed
     pub fn next(&mut self) -> u32 {
         self.cur_block_index += 1;
         self.above_block_index += 1;
@@ -60,20 +69,6 @@ impl BlockContext {
         self.above_neighbor_summary_index += 1;
 
         self.cur_block_index
-    }
-
-    pub fn new(
-        cur_block_index: u32,
-        above_block_index: u32,
-        cur_neighbor_summary_index: u32,
-        above_neighbor_summary_index: u32,
-    ) -> Self {
-        return BlockContext {
-            cur_block_index,
-            above_block_index,
-            cur_neighbor_summary_index,
-            above_neighbor_summary_index,
-        };
     }
 
     pub fn here<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
