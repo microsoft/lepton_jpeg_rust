@@ -16,7 +16,7 @@ use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JPegHeader;
-use crate::jpeg::jpeg_read::{read_progressive_scan, read_scan};
+use crate::jpeg::jpeg_read::{read_first_scan, read_progressive_scan};
 use crate::jpeg::truncate_components::TruncateComponents;
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -164,7 +164,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
     let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
-    read_scan(
+    read_first_scan(
         &lp.jpeg_header,
         reader,
         &mut |segment_offset_in_file, restart_info| {

@@ -99,7 +99,7 @@ pub struct ReconstructionInfo {
     /// count of scans encountered so far
     pub scnc: usize,
 
-    /// the maximum bit in a truncated image
+    /// the maximum bit in a truncated image. This is not implemented or used for progressive images.
     pub max_sah: u8,
 
     /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals

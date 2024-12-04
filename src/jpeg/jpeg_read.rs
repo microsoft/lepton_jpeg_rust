@@ -47,8 +47,9 @@ use super::jpeg_position_state::JpegPositionState;
 /// Reads the scan from the JPEG file, writes the image data to the image_data array and
 /// partitions it into restart segments using the partition callback.
 ///
-/// This only works for sequential JPEGs. For progressive JPEGs, use `read_progressive_scan`.
-pub fn read_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
+/// This only works for sequential JPEGs or the first scan in a progressive image.
+/// For subsequent scans, use the `read_progressive_scan`.
+pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
     jf: &JPegHeader,
     reader: &mut R,
     partition: &mut FPARTITION,
@@ -88,21 +89,15 @@ pub fn read_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingI
             while sta == JPegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
-                // first time through, collect the handoffs although for progressive images the offsets
-                // won't mean much, but we do need to divide the scan into sections
-
+                // collect the handoffs although for progressive images
+                // we still split the scan into sections, but we don't partition the actual JPEG
+                // writes since they have to be done on a single thread in a loop for a progressive file.
+                //
+                // TODO: get rid of this and just chop up the scan into sections in Lepton code
                 if do_handoff {
-                    let (num_overhang_bits, overhang_byte) = bit_reader.overhang();
-
                     partition(
-                        bit_reader.get_stream_position(),
-                        RestartSegmentCodingInfo::new(
-                            overhang_byte,
-                            num_overhang_bits,
-                            last_dc,
-                            state.get_mcu(),
-                            jf,
-                        ),
+                        0,
+                        RestartSegmentCodingInfo::new(0, 0, [0; 4], state.get_mcu(), jf),
                     );
 
                     do_handoff = false;
