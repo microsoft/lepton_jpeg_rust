@@ -8,8 +8,7 @@ use crate::consts::*;
 use crate::helpers::*;
 use crate::jpeg::jpeg_header::JPegHeader;
 use crate::lepton_error::err_exit_code;
-use crate::ExitCode;
-use crate::Result;
+use crate::{ExitCode, Result};
 
 pub struct QuantizationTables {
     quantization_table: [u16; 64],

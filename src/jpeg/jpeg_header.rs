@@ -38,9 +38,8 @@ use std::num::NonZeroU32;
 use crate::consts::JPegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
-use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::LeptonError;
+use crate::{jpeg_code, LeptonError};
 
 use super::component_info::ComponentInfo;
 use super::truncate_components::TruncateComponents;

@@ -6,7 +6,8 @@
 
 use std::cmp;
 
-use super::{component_info::ComponentInfo, jpeg_header::JPegHeader};
+use super::component_info::ComponentInfo;
+use super::jpeg_header::JPegHeader;
 
 #[derive(Debug, Clone)]
 struct TrucateComponentsInfo {

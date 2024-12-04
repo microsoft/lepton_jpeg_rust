@@ -37,8 +37,7 @@ use std::io::{BufRead, Seek};
 
 use crate::consts::*;
 use crate::helpers::*;
-use crate::lepton_error::Result;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
