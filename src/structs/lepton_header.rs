@@ -205,8 +205,6 @@ impl LeptonHeader {
 
             let last = &mut self.thread_handoff[num_threads - 1];
 
-            let max_last_segment_size = max_last_segment_size;
-
             if last.segment_size > max_last_segment_size {
                 // re-adjust the last segment size
                 last.segment_size = max_last_segment_size;
