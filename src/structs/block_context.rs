@@ -8,11 +8,11 @@ use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLO
 use crate::structs::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
 use crate::structs::probability_tables::ProbabilityTables;
 pub struct BlockContext {
-    cur_block_index: i32,
-    above_block_index: i32,
+    cur_block_index: u32,
+    above_block_index: u32,
 
-    cur_neighbor_summary_index: i32,
-    above_neighbor_summary_index: i32,
+    cur_neighbor_summary_index: u32,
+    above_neighbor_summary_index: u32,
 }
 pub struct NeighborData<'a> {
     pub above: &'a AlignedBlock,
@@ -25,13 +25,13 @@ pub struct NeighborData<'a> {
 impl BlockContext {
     // for debugging
     #[allow(dead_code)]
-    pub fn get_here_index(&self) -> i32 {
+    pub fn get_here_index(&self) -> u32 {
         self.cur_block_index
     }
 
     // as each new line BlockContext is set by `off_y`, no edge cases with dereferencing
     // out of bounds indices is possilbe, therefore no special treatment is needed
-    pub fn next(&mut self) -> i32 {
+    pub fn next(&mut self) -> u32 {
         self.cur_block_index += 1;
         self.above_block_index += 1;
         self.cur_neighbor_summary_index += 1;
@@ -41,10 +41,10 @@ impl BlockContext {
     }
 
     pub fn new(
-        cur_block_index: i32,
-        above_block_index: i32,
-        cur_neighbor_summary_index: i32,
-        above_neighbor_summary_index: i32,
+        cur_block_index: u32,
+        above_block_index: u32,
+        cur_neighbor_summary_index: u32,
+        above_neighbor_summary_index: u32,
     ) -> Self {
         return BlockContext {
             cur_block_index,

@@ -35,8 +35,8 @@ pub fn lepton_decode_row_range<R: Read>(
     trunc: &TruncateComponents,
     image_data: &mut [BlockBasedImage],
     reader: &mut R,
-    min_y: i32,
-    max_y: i32,
+    min_y: u32,
+    max_y: u32,
     is_last_thread: bool,
     full_file_compression: bool,
     features: &EnabledFeatures,
@@ -131,8 +131,8 @@ fn decode_row_wrapper<R: Read>(
     image_data: &mut BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut [NeighborSummary],
-    curr_y: i32,
-    component_size_in_blocks: i32,
+    curr_y: u32,
+    component_size_in_blocks: u32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     let mut block_context = image_data.off_y(curr_y);
@@ -458,7 +458,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         if coef != 0 {
             num_non_zeros_edge -= 1;
             here_mut.set_coefficient(coord_tr, coef);
-            raster[coord_tr as usize] =
+            raster[coord_tr] =
                 i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
         }
 

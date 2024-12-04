@@ -23,10 +23,10 @@ pub struct BitReader<R> {
 }
 
 impl<R: BufRead + Seek> BitReader<R> {
-    pub fn get_stream_position(&mut self) -> i32 {
+    pub fn get_stream_position(&mut self) -> u32 {
         self.undo_read_ahead();
 
-        let pos: i32 = (self.inner.stream_position().unwrap() - self.start_offset)
+        let pos: u32 = (self.inner.stream_position().unwrap() - self.start_offset)
             .try_into()
             .unwrap();
 
@@ -299,7 +299,7 @@ use std::io::Cursor;
 // test reading a simple bit pattern with an escaped 0xff inside it.
 #[test]
 fn read_simple() {
-    let arr = [0x12 as u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
+    let arr = [0x12u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
 
     let mut b = BitReader::new(Cursor::new(&arr));
 
@@ -338,7 +338,7 @@ fn read_simple() {
 // what happens when a file has 0xff as the last character (assume that it is an escaped 0xff)
 #[test]
 fn read_truncate_ff() {
-    let arr = [0x12 as u8, 0xff];
+    let arr = [0x12u8, 0xff];
 
     let mut b = BitReader::new(Cursor::new(&arr));
 

@@ -16,34 +16,34 @@ pub struct ComponentInfo {
     pub huff_ac: u8,
 
     /// sample factor vertical
-    pub sfv: i32,
+    pub sfv: u32,
 
     /// sample factor horizontal
-    pub sfh: i32,
+    pub sfh: u32,
 
     /// blocks in mcu
-    pub mbs: i32,
+    pub mbs: u32,
 
     /// block count vertical (interleaved)
-    pub bcv: i32,
+    pub bcv: u32,
 
     /// block count horizontal (interleaved)
-    pub bch: i32,
+    pub bch: u32,
 
     /// block count (all) (interleaved)
-    pub bc: i32,
+    pub bc: u32,
 
     /// block count vertical (non interleaved)
-    pub ncv: i32,
+    pub ncv: u32,
 
     /// block count horizontal (non interleaved)
-    pub nch: i32,
+    pub nch: u32,
 
     /// block count (all) (non interleaved)
-    pub nc: i32,
+    pub nc: u32,
 
     /// statistical identity
-    pub sid: i32,
+    pub sid: u32,
 
     /// jpeg internal id
     pub jid: u8,
@@ -53,16 +53,16 @@ impl Default for ComponentInfo {
     fn default() -> ComponentInfo {
         return ComponentInfo {
             q_table_index: 0xff,
-            sfv: -1,
-            sfh: -1,
-            mbs: -1,
-            bcv: -1,
-            bch: -1,
-            bc: -1,
-            ncv: -1,
-            nch: -1,
-            nc: -1,
-            sid: -1,
+            sfv: u32::MAX,
+            sfh: u32::MAX,
+            mbs: u32::MAX,
+            bcv: u32::MAX,
+            bch: u32::MAX,
+            bc: u32::MAX,
+            ncv: u32::MAX,
+            nch: u32::MAX,
+            nc: u32::MAX,
+            sid: u32::MAX,
             jid: 0xff,
             huff_dc: 0xff,
             huff_ac: 0xff,

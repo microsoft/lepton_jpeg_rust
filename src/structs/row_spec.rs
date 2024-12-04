@@ -8,12 +8,12 @@ use crate::consts::COLOR_CHANNEL_NUM_BLOCK_TYPES;
 use crate::structs::block_based_image::BlockBasedImage;
 
 pub struct RowSpec {
-    pub min_row_luma_y: i32,
-    pub next_row_luma_y: i32,
-    pub luma_y: i32,
+    pub min_row_luma_y: u32,
+    pub next_row_luma_y: u32,
+    pub luma_y: u32,
     pub component: usize,
-    pub curr_y: i32,
-    pub mcu_row_index: i32,
+    pub curr_y: u32,
+    pub mcu_row_index: u32,
     pub last_row_to_complete_mcu: bool,
     pub skip: bool,
     pub done: bool,
@@ -23,7 +23,7 @@ impl RowSpec {
     pub fn get_row_spec_from_index(
         decode_index: u32,
         image_data: &[BlockBasedImage],
-        mcuv: i32, // number of mcus
+        mcuv: u32, // number of mcus
         max_coded_heights: &[u32],
     ) -> RowSpec {
         assert!(
@@ -38,20 +38,20 @@ impl RowSpec {
         let mut mcu_multiple = 0;
 
         for i in 0..num_cmp {
-            heights.push(image_data[i].get_original_height() as u32);
-            component_multiple.push(heights[i] / mcuv as u32);
+            heights.push(image_data[i].get_original_height());
+            component_multiple.push(heights[i] / mcuv);
             mcu_multiple += component_multiple[i];
         }
 
         let mcu_row = decode_index / mcu_multiple;
-        let min_row_luma_y = (mcu_row * component_multiple[0]) as i32;
+        let min_row_luma_y = mcu_row * component_multiple[0];
         let mut retval = RowSpec {
             skip: false,
             done: false,
-            mcu_row_index: mcu_row as i32,
+            mcu_row_index: mcu_row,
             component: num_cmp,
             min_row_luma_y,
-            next_row_luma_y: min_row_luma_y + component_multiple[0] as i32,
+            next_row_luma_y: min_row_luma_y + component_multiple[0],
             luma_y: min_row_luma_y,
             curr_y: 0,
             last_row_to_complete_mcu: false,
@@ -63,11 +63,11 @@ impl RowSpec {
         loop {
             if place_within_scan < component_multiple[i] {
                 retval.component = i;
-                retval.curr_y = ((mcu_row * component_multiple[i]) + place_within_scan) as i32;
+                retval.curr_y = (mcu_row * component_multiple[i]) + place_within_scan;
                 retval.last_row_to_complete_mcu =
                     (place_within_scan + 1 == component_multiple[i]) && (i == 0);
 
-                if retval.curr_y >= max_coded_heights[i] as i32 {
+                if retval.curr_y >= max_coded_heights[i] {
                     retval.skip = true;
                     retval.done = true; // assume true, but if we find something that needs coding, set false
                     for j in 0..num_cmp - 1 {

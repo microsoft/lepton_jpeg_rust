@@ -16,11 +16,11 @@ use crate::structs::jpeg_header::JPegHeader;
 /// the image may only hold a subset of the components (specified by dpos_offset),
 /// but they can be merged
 pub struct BlockBasedImage {
-    block_width: i32,
+    block_width: u32,
 
-    original_height: i32,
+    original_height: u32,
 
-    dpos_offset: i32,
+    dpos_offset: u32,
 
     image: Vec<AlignedBlock>,
 }
@@ -32,22 +32,22 @@ impl BlockBasedImage {
     pub fn new(
         jpeg_header: &JPegHeader,
         component: usize,
-        luma_y_start: i32,
-        luma_y_end: i32,
+        luma_y_start: u32,
+        luma_y_end: u32,
     ) -> Self {
         let block_width = jpeg_header.cmp_info[component].bch;
         let original_height = jpeg_header.cmp_info[component].bcv;
         let max_size = block_width * original_height;
 
         let image_capcity = usize::try_from(
-            (i64::from(max_size) * i64::from(luma_y_end - luma_y_start)
-                + i64::from(jpeg_header.cmp_info[0].bcv - 1 /* round up */))
-                / i64::from(jpeg_header.cmp_info[0].bcv),
+            (u64::from(max_size) * u64::from(luma_y_end - luma_y_start)
+                + u64::from(jpeg_header.cmp_info[0].bcv - 1 /* round up */))
+                / u64::from(jpeg_header.cmp_info[0].bcv),
         )
         .unwrap();
 
-        let dpos_offset = i32::try_from(
-            i64::from(max_size) * i64::from(luma_y_start) / i64::from(jpeg_header.cmp_info[0].bcv),
+        let dpos_offset = u32::try_from(
+            u64::from(max_size) * u64::from(luma_y_start) / u64::from(jpeg_header.cmp_info[0].bcv),
         )
         .unwrap();
 
@@ -70,7 +70,7 @@ impl BlockBasedImage {
 
         for v in images {
             assert!(
-                v[index].dpos_offset == contents.len() as i32,
+                v[index].dpos_offset == contents.len() as u32,
                 "previous content should match new content"
             );
 
@@ -111,20 +111,20 @@ impl BlockBasedImage {
     }
 
     // blocks above the first line are never dereferenced
-    pub fn off_y(&self, y: i32) -> BlockContext {
+    pub fn off_y(&self, y: u32) -> BlockContext {
         return BlockContext::new(
             self.block_width * y,
-            self.block_width * (y - 1),
+            if y > 0 { self.block_width * (y - 1) } else { 0 },
             if (y & 1) != 0 { self.block_width } else { 0 },
             if (y & 1) != 0 { 0 } else { self.block_width },
         );
     }
 
-    pub fn get_block_width(&self) -> i32 {
+    pub fn get_block_width(&self) -> u32 {
         self.block_width
     }
 
-    pub fn get_original_height(&self) -> i32 {
+    pub fn get_original_height(&self) -> u32 {
         self.original_height
     }
 
@@ -133,7 +133,7 @@ impl BlockBasedImage {
     #[inline(always)]
     pub fn fill_up_to_dpos(
         &mut self,
-        dpos: i32,
+        dpos: u32,
         block_to_write: Option<AlignedBlock>,
     ) -> &mut AlignedBlock {
         // ensure that dpos_offset got set to the right value when we start writing
@@ -149,7 +149,7 @@ impl BlockBasedImage {
         if relative_offset < self.image.len() {
             // rewrite already written block
             if let Some(b) = block_to_write {
-                self.image[relative_offset as usize] = b;
+                self.image[relative_offset] = b;
             }
         } else {
             // need to extend the image length and add any necessary
@@ -166,14 +166,14 @@ impl BlockBasedImage {
             self.image.push(block_to_write.unwrap_or_default());
         }
 
-        return &mut self.image[relative_offset as usize];
+        return &mut self.image[relative_offset];
     }
 
-    pub fn set_block_data(&mut self, dpos: i32, block_data: AlignedBlock) {
+    pub fn set_block_data(&mut self, dpos: u32, block_data: AlignedBlock) {
         self.fill_up_to_dpos(dpos, Some(block_data));
     }
 
-    pub fn get_block(&self, dpos: i32) -> &AlignedBlock {
+    pub fn get_block(&self, dpos: u32) -> &AlignedBlock {
         if (dpos - self.dpos_offset) as usize >= self.image.len() {
             return &EMPTY;
         } else {
@@ -191,7 +191,7 @@ impl BlockBasedImage {
     }
 
     #[inline(always)]
-    pub fn get_block_mut(&mut self, dpos: i32) -> &mut AlignedBlock {
+    pub fn get_block_mut(&mut self, dpos: u32) -> &mut AlignedBlock {
         self.fill_up_to_dpos(dpos, None)
     }
 }

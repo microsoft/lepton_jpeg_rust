@@ -12,10 +12,10 @@ use crate::consts::COLOR_CHANNEL_NUM_BLOCK_TYPES;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThreadHandoff {
-    pub luma_y_start: i32,
-    pub luma_y_end: i32,
-    pub segment_offset_in_file: i32,
-    pub segment_size: i32,
+    pub luma_y_start: u32,
+    pub luma_y_end: u32,
+    pub segment_offset_in_file: u32,
+    pub segment_size: u32,
     pub overhang_byte: u8,
     pub num_overhang_bits: u8,
     pub last_dc: [i16; 4],
@@ -27,10 +27,10 @@ impl ThreadHandoff {
 
         for _i in 0..num_threads {
             let mut th = ThreadHandoff {
-                luma_y_start: data.read_u16::<LittleEndian>()? as i32,
+                luma_y_start: data.read_u16::<LittleEndian>()? as u32,
                 luma_y_end: 0,             // filled in later
                 segment_offset_in_file: 0, // not serialized
-                segment_size: data.read_i32::<LittleEndian>()?,
+                segment_size: data.read_u32::<LittleEndian>()?,
                 overhang_byte: data.read_u8()?,
                 num_overhang_bits: data.read_u8()?,
                 last_dc: [0; 4],
@@ -92,7 +92,7 @@ impl ThreadHandoff {
             overhang_byte: from.overhang_byte,
             num_overhang_bits: from.num_overhang_bits,
             luma_y_end: to.luma_y_end,
-            segment_size: ThreadHandoff::get_combine_thread_range_segment_size(from, to) as i32,
+            segment_size: ThreadHandoff::get_combine_thread_range_segment_size(from, to) as u32,
             last_dc: from.last_dc,
         };
 

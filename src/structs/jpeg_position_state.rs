@@ -16,19 +16,19 @@ pub struct JpegPositionState {
     cmp: usize,
 
     /// current minimum coded unit (a fraction of dpos)
-    mcu: i32,
+    mcu: u32,
 
     /// index of component
     csc: usize,
 
     /// offset within mcu
-    sub: i32,
+    sub: u32,
 
     /// current block position in image for this component
-    dpos: i32,
+    dpos: u32,
 
     /// number of blocks left until reset interval
-    rstw: i32,
+    rstw: u32,
 
     /// tracks long zero byte runs in progressive images
     pub eobrun: u16,
@@ -40,7 +40,7 @@ pub struct JpegPositionState {
 }
 
 impl JpegPositionState {
-    pub fn new(jf: &JPegHeader, mcu: i32) -> Self {
+    pub fn new(jf: &JPegHeader, mcu: u32) -> Self {
         let cmp = jf.cs_cmp[0];
         let mcumul = jf.cmp_info[cmp].sfv * jf.cmp_info[cmp].sfh;
 
@@ -61,17 +61,17 @@ impl JpegPositionState {
         return state;
     }
 
-    pub fn get_mcu(&self) -> i32 {
+    pub fn get_mcu(&self) -> u32 {
         self.mcu
     }
-    pub fn get_dpos(&self) -> i32 {
+    pub fn get_dpos(&self) -> u32 {
         self.dpos
     }
     pub fn get_cmp(&self) -> usize {
         self.cmp
     }
 
-    pub fn get_cumulative_reset_markers(&self, jf: &JPegHeader) -> i32 {
+    pub fn get_cumulative_reset_markers(&self, jf: &JPegHeader) -> u32 {
         if self.rstw != 0 {
             self.get_mcu() / jf.rsti
         } else {
@@ -129,7 +129,7 @@ impl JpegPositionState {
         }
 
         let mut sta = JPegDecodeStatus::DecodeInProgress; // status
-        let local_mcuh = jf.mcuh;
+        let local_mcuh = jf.mcuh.get();
         let mut local_mcu = self.mcu;
         let mut local_cmp = self.cmp;
 
@@ -202,18 +202,18 @@ impl JpegPositionState {
 
         // compare rst wait counter if needed
         if jf.rsti > 0 {
-            if i32::from(self.eobrun) > self.rstw {
+            if u32::from(self.eobrun) > self.rstw {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
                     "skip_eobrun: eob run extends passed end of reset interval",
                 )
                 .context();
             } else {
-                self.rstw -= i32::from(self.eobrun);
+                self.rstw -= u32::from(self.eobrun);
             }
         }
 
-        fn checked_add(a: i32, b: i32) -> Result<i32> {
+        fn checked_add(a: u32, b: u32) -> Result<u32> {
             a.checked_add(b)
                 .ok_or_else(|| LeptonError::new(ExitCode::UnsupportedJpeg, "integer overflow"))
         }
@@ -224,7 +224,7 @@ impl JpegPositionState {
         if cmp_info.bch != cmp_info.nch {
             self.dpos = checked_add(
                 self.dpos,
-                (((self.dpos % cmp_info.bch) + i32::from(self.eobrun)) / cmp_info.nch)
+                (((self.dpos % cmp_info.bch) + u32::from(self.eobrun)) / cmp_info.nch)
                     * (cmp_info.bch - cmp_info.nch),
             )
             .context()?;
@@ -237,7 +237,7 @@ impl JpegPositionState {
         }
 
         // skip blocks
-        self.dpos = checked_add(self.dpos, i32::from(self.eobrun)).context()?;
+        self.dpos = checked_add(self.dpos, u32::from(self.eobrun)).context()?;
 
         // reset eobrun
         self.eobrun = 0;

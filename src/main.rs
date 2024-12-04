@@ -113,14 +113,14 @@ Options:
     override_if(
         &mut pargs,
         "--max-width",
-        parse_i32,
+        parse_u32,
         &mut enabled_features.max_jpeg_width,
     )?;
 
     override_if(
         &mut pargs,
         "--max-height",
-        parse_i32,
+        parse_u32,
         &mut enabled_features.max_jpeg_height,
     )?;
 

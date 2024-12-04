@@ -151,7 +151,7 @@ use crate::structs::bit_reader::BitReader;
 // write a test pattern with an escape and see if it matches
 #[test]
 fn write_simple() {
-    let arr = [0x12 as u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
+    let arr = [0x12, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
 
     let mut b = BitWriter::new(1024);
 
@@ -178,7 +178,7 @@ fn roundtrip_bits() {
     {
         let mut b = BitWriter::new(1024);
         for i in 1..2048 {
-            b.write(i, u32_bit_length(i as u32) as u32);
+            b.write(i, u32_bit_length(i) as u32);
         }
 
         b.pad(0xff);

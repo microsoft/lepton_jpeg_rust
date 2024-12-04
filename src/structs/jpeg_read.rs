@@ -616,7 +616,7 @@ fn decode_ac_prg_fs<R: BufRead>(
         } else {
             // decode eobrun
             let s = l;
-            let n = bit_reader.read(u32::from(s))? as u16;
+            let n = bit_reader.read(u32::from(s))?;
             state.eobrun = decode_eobrun_bits(s, n);
 
             state.eobrun -= 1; // decrement eobrun ( for this one )
@@ -694,7 +694,7 @@ fn decode_ac_prg_sa<R: BufRead>(
             // decode eobrun
             eob = bpos;
             let s = l;
-            let n = bit_reader.read(u32::from(s))? as u16;
+            let n = bit_reader.read(u32::from(s))?;
             state.eobrun = decode_eobrun_bits(s, n);
 
             // since we hit EOB, the rest can be done with the zero block decoder

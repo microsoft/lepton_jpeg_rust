@@ -34,8 +34,8 @@ pub fn lepton_encode_row_range<W: Write>(
     writer: &mut W,
     _thread_id: i32,
     colldata: &TruncateComponents,
-    min_y: i32,
-    max_y: i32,
+    min_y: u32,
+    max_y: u32,
     is_last_thread: bool,
     full_file_compression: bool,
     features: &EnabledFeatures,
@@ -155,8 +155,8 @@ fn process_row<W: Write>(
     image_data: &BlockBasedImage,
     qt: &QuantizationTables,
     neighbor_summary_cache: &mut [NeighborSummary],
-    curr_y: i32,
-    component_size_in_block: i32,
+    curr_y: u32,
+    component_size_in_block: u32,
     features: &EnabledFeatures,
 ) -> Result<()> {
     let mut block_context = image_data.off_y(curr_y);

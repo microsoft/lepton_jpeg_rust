@@ -31,7 +31,7 @@ impl SimpleHashProvider for u32 {
 
 impl SimpleHashProvider for u64 {
     fn get_u64(&self) -> u64 {
-        return *self as u64;
+        return *self;
     }
 }
 
@@ -41,7 +41,7 @@ impl SimpleHash {
     }
 
     pub fn hash<T: SimpleHashProvider>(&mut self, v: T) {
-        self.hash = (Wrapping(self.hash as u64) * Wrapping(13u64) + Wrapping(v.get_u64())).0;
+        self.hash = (Wrapping(self.hash) * Wrapping(13u64) + Wrapping(v.get_u64())).0;
     }
 
     pub fn get(&self) -> u32 {
