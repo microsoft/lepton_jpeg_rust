@@ -142,8 +142,6 @@ pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
             sta = JPegDecodeStatus::DecodeInProgress;
         }
     }
-
-    reconstruct_info.scnc += 1; // increment scan counter
     Ok(())
 }
 
@@ -338,7 +336,6 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
         }
     }
 
-    reconstruct_info.scnc += 1; // increment scan counter
     Ok(())
 }
 

@@ -84,8 +84,20 @@ impl RestartSegmentCodingInfo {
 /// regarding information about possible truncation and RST markers.
 #[derive(Default, Clone, Debug)]
 pub struct ReconstructionInfo {
-    /// the maximum band in a truncated image
+    /// the maximum component in a truncated progressive image.
+    ///
+    /// This is meant to be used for progressive images but is not yet implemented.
+    pub max_cmp: u32,
+
+    /// the maximum band in a truncated progressive image
+    ///
+    /// This is meant to be used for progressive images but is not yet implemented.
     pub max_bpos: u32,
+
+    /// The maximum bit in a truncated progressive image.
+    ///
+    /// This is meant to be used for progressive images but is not yet implemented.
+    pub max_sah: u8,
 
     /// the maximum dpos in a truncated image
     pub max_dpos: [u32; 4],
@@ -95,12 +107,6 @@ pub struct ReconstructionInfo {
 
     /// the mask for padding out the bitstream when we get to the end of a reset block
     pub pad_bit: Option<u8>,
-
-    /// count of scans encountered so far
-    pub scnc: usize,
-
-    /// the maximum bit in a truncated image. This is not implemented or used for progressive images.
-    pub max_sah: u8,
 
     /// A list containing one entry for each scan segment.  Each entry contains the number of restart intervals
     /// within the corresponding scan segment.

@@ -103,6 +103,7 @@ pub fn jpeg_write_baseline_row_range(
                 image_data,
                 jpeg_header,
                 rinfo,
+                0,
             )
             .context()?;
         }
@@ -117,6 +118,7 @@ pub fn jpeg_write_entire_scan(
     image_data: &[BlockBasedImage],
     jpeg_header: &JPegHeader,
     rinfo: &ReconstructionInfo,
+    current_scan_index: usize,
 ) -> Result<Vec<u8>> {
     let max_coded_heights = rinfo.truncate_components.get_max_coded_heights();
 
@@ -151,6 +153,7 @@ pub fn jpeg_write_entire_scan(
                 image_data,
                 jpeg_header,
                 rinfo,
+                current_scan_index,
             )
             .context()?;
 
@@ -171,6 +174,7 @@ fn recode_one_mcu_row(
     framebuffer: &[BlockBasedImage],
     jf: &JPegHeader,
     rinfo: &ReconstructionInfo,
+    current_scan_index: usize,
 ) -> Result<bool> {
     let mut state = JpegPositionState::new(jf, mcu);
 
@@ -323,7 +327,7 @@ fn recode_one_mcu_row(
             if jf.rsti > 0 {
                 if rinfo.rst_cnt.len() == 0
                     || (!rinfo.rst_cnt_set)
-                    || cumulative_reset_markers < rinfo.rst_cnt[rinfo.scnc]
+                    || cumulative_reset_markers < rinfo.rst_cnt[current_scan_index]
                 {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
 

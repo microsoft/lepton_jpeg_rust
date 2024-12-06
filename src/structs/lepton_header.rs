@@ -36,9 +36,6 @@ pub struct LeptonHeader {
     /// garbage data (default value - empty segment - means no garbage data)
     pub garbage_data: Vec<u8>,
 
-    /// the maximum component in a truncated image
-    pub max_cmp: u32,
-
     pub rinfo: ReconstructionInfo,
 
     pub jpeg_file_size: u32,
@@ -305,7 +302,7 @@ impl LeptonHeader {
                 current_lepton_marker,
                 LEPTON_HEADER_EARLY_EOF_MARKER,
             ) {
-                self.max_cmp = header_reader.read_u32::<LittleEndian>()?;
+                self.rinfo.max_cmp = header_reader.read_u32::<LittleEndian>()?;
                 self.rinfo.max_bpos = header_reader.read_u32::<LittleEndian>()?;
                 self.rinfo.max_sah = u8::try_from(header_reader.read_u32::<LittleEndian>()?)?;
                 self.rinfo.max_dpos[0] = header_reader.read_u32::<LittleEndian>()?;
@@ -475,7 +472,7 @@ impl LeptonHeader {
             // EEE marker
             mrw.write_all(&LEPTON_HEADER_EARLY_EOF_MARKER)?;
 
-            mrw.write_u32::<LittleEndian>(self.max_cmp)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.max_cmp)?;
             mrw.write_u32::<LittleEndian>(self.rinfo.max_bpos)?;
             mrw.write_u32::<LittleEndian>(u32::from(self.rinfo.max_sah))?;
             mrw.write_u32::<LittleEndian>(self.rinfo.max_dpos[0])?;

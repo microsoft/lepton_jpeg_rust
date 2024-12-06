@@ -184,7 +184,6 @@ pub fn read_jpeg<R: BufRead + Seek>(
         &mut lp.rinfo,
     )
     .context()?;
-    lp.rinfo.scnc += 1;
 
     let mut end_scan = reader.stream_position()?.try_into().unwrap();
 
@@ -251,7 +250,6 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
             read_progressive_scan(&lp.jpeg_header, reader, &mut image_data[..], &mut lp.rinfo)
                 .context()?;
-            lp.rinfo.scnc += 1;
 
             if lp.rinfo.early_eof_encountered {
                 return err_exit_code(
@@ -482,7 +480,7 @@ fn prepare_to_decode_next_scan<R: Read>(
     );
 
     for i in 0..lp.jpeg_header.cs_cmpc {
-        lp.max_cmp = cmp::max(lp.max_cmp, lp.jpeg_header.cs_cmp[i] as u32);
+        lp.rinfo.max_cmp = cmp::max(lp.rinfo.max_cmp, lp.jpeg_header.cs_cmp[i] as u32);
     }
 
     return Ok(true);

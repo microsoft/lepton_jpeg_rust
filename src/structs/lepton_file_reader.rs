@@ -380,10 +380,12 @@ impl LeptonFileReader {
 
         let mut results = Vec::new();
         results.push(header);
+        let mut scnc = 0;
 
         loop {
             // progressive JPEG consists of scans followed by headers
-            let scan = jpeg_write_entire_scan(&merged[..], &lh.jpeg_header, &lh.rinfo).context()?;
+            let scan =
+                jpeg_write_entire_scan(&merged[..], &lh.jpeg_header, &lh.rinfo, scnc).context()?;
             results.push(scan);
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
@@ -397,7 +399,7 @@ impl LeptonFileReader {
             }
 
             // advance to next scan
-            lh.rinfo.scnc += 1;
+            scnc += 1;
         }
 
         Ok(DecoderState::AppendTrailer(results))
