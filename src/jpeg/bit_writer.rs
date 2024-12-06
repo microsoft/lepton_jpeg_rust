@@ -142,11 +142,11 @@ impl BitWriter {
 #[cfg(test)]
 use std::io::Cursor;
 
+#[cfg(test)]
+use super::bit_reader::BitReader;
 use crate::helpers::has_ff;
 #[cfg(test)]
 use crate::helpers::u32_bit_length;
-#[cfg(test)]
-use crate::structs::bit_reader::BitReader;
 
 // write a test pattern with an escape and see if it matches
 #[test]

@@ -7,7 +7,7 @@
 use bytemuck::cast;
 use wide::{i16x8, i32x8};
 
-use crate::structs::block_based_image::AlignedBlock;
+use crate::jpeg::block_based_image::AlignedBlock;
 
 const _W1: i32 = 2841; // 2048*sqrt(2)*cos(1*pi/16)
 const _W2: i32 = 2676; // 2048*sqrt(2)*cos(2*pi/16)

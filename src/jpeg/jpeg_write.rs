@@ -38,36 +38,42 @@ use wide::{i16x16, CmpEq};
 use crate::consts::{JPegDecodeStatus, JPegType};
 use crate::helpers::u16_bit_length;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
-use crate::structs::bit_writer::BitWriter;
-use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
-use crate::structs::jpeg_header::{HuffCodes, JPegEncodingInfo};
-use crate::structs::jpeg_position_state::JpegPositionState;
-use crate::structs::row_spec::RowSpec;
+
 use crate::{jpeg_code, Result};
 
-/// write a range of rows corresponding to the thread_handoff structure into the writer.
+use super::bit_writer::BitWriter;
+use super::block_based_image::{AlignedBlock, BlockBasedImage};
+use super::jpeg_header::{HuffCodes, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use super::jpeg_position_state::JpegPositionState;
+use super::row_spec::RowSpec;
+
+/// write a range of rows corresponding to the restart_info structure.
+/// Returns the encoded data as a buffer.
+///
 /// Only works with baseline non-progressive images.
 pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
-    overhang_byte: u8,
-    num_overhang_bits: u8,
-    luma_y_start: u32,
-    luma_y_end: u32,
-    mut last_dc: [i16; 4],
+    restart_info: &RestartSegmentCodingInfo,
     image_data: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jpeg_header: &JPegHeader,
+    rinfo: &ReconstructionInfo,
 ) -> Result<Vec<u8>> {
-    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+    let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
 
     let mut huffw = BitWriter::new(encoded_length);
-    huffw.reset_from_overhang_byte_and_num_bits(overhang_byte, u32::from(num_overhang_bits));
+    huffw.reset_from_overhang_byte_and_num_bits(
+        restart_info.overhang_byte,
+        u32::from(restart_info.num_overhang_bits),
+    );
+
+    let mut last_dc = restart_info.last_dc;
 
     let mut decode_index = 0;
     loop {
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
             image_data,
-            jenc.truncate_components.mcu_count_vertical,
+            rinfo.truncate_components.mcu_count_vertical,
             &max_coded_heights,
         );
 
@@ -81,21 +87,23 @@ pub fn jpeg_write_baseline_row_range(
             continue;
         }
 
-        if cur_row.min_row_luma_y < luma_y_start {
+        if cur_row.min_row_luma_y < restart_info.luma_y_start {
             continue;
         }
 
-        if cur_row.next_row_luma_y > luma_y_end {
+        if cur_row.next_row_luma_y > restart_info.luma_y_end {
             break; // we're done here
         }
 
         if cur_row.last_row_to_complete_mcu {
             recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
+                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
-                jenc,
+                jpeg_header,
+                rinfo,
+                0,
             )
             .context()?;
         }
@@ -104,13 +112,15 @@ pub fn jpeg_write_baseline_row_range(
     Ok(huffw.detach_buffer())
 }
 
-// writes an entire scan vs only a range of rows as above.
-// supports progressive encoding whereas the row range version does not
+/// writes an entire scan vs only a range of rows as above.
+/// supports progressive encoding whereas the row range version does not
 pub fn jpeg_write_entire_scan(
     image_data: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jpeg_header: &JPegHeader,
+    rinfo: &ReconstructionInfo,
+    current_scan_index: usize,
 ) -> Result<Vec<u8>> {
-    let max_coded_heights = jenc.truncate_components.get_max_coded_heights();
+    let max_coded_heights = rinfo.truncate_components.get_max_coded_heights();
 
     let mut last_dc = [0i16; 4];
 
@@ -121,7 +131,7 @@ pub fn jpeg_write_entire_scan(
         let cur_row = RowSpec::get_row_spec_from_index(
             decode_index,
             image_data,
-            jenc.truncate_components.mcu_count_vertical,
+            jpeg_header.mcuv.get(),
             &max_coded_heights,
         );
 
@@ -138,10 +148,12 @@ pub fn jpeg_write_entire_scan(
         if cur_row.last_row_to_complete_mcu {
             let r = recode_one_mcu_row(
                 &mut huffw,
-                cur_row.mcu_row_index * jenc.jpeg_header.mcuh.get(),
+                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
                 &mut last_dc,
                 image_data,
-                jenc,
+                jpeg_header,
+                rinfo,
+                current_scan_index,
             )
             .context()?;
 
@@ -160,10 +172,10 @@ fn recode_one_mcu_row(
     mcu: u32,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
-    jenc: &JPegEncodingInfo,
+    jf: &JPegHeader,
+    rinfo: &ReconstructionInfo,
+    current_scan_index: usize,
 ) -> Result<bool> {
-    let jf = &jenc.jpeg_header;
-
     let mut state = JpegPositionState::new(jf, mcu);
 
     let mut cumulative_reset_markers = state.get_cumulative_reset_markers(jf);
@@ -298,7 +310,7 @@ fn recode_one_mcu_row(
         }
 
         // pad huffman writer
-        huffw.pad(jenc.pad_bit.unwrap_or(0));
+        huffw.pad(rinfo.pad_bit.unwrap_or(0));
 
         assert!(
             huffw.has_no_remainder(),
@@ -313,9 +325,9 @@ fn recode_one_mcu_row(
 
             // status 1 means restart
             if jf.rsti > 0 {
-                if jenc.rst_cnt.len() == 0
-                    || (!jenc.rst_cnt_set)
-                    || cumulative_reset_markers < jenc.rst_cnt[jenc.scnc]
+                if rinfo.rst_cnt.len() == 0
+                    || (!rinfo.rst_cnt_set)
+                    || cumulative_reset_markers < rinfo.rst_cnt[current_scan_index]
                 {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
 
@@ -627,9 +639,9 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
 fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
     use std::io::Cursor;
 
-    use crate::structs::bit_reader::BitReader;
-    use crate::structs::jpeg_header::{generate_huff_table_from_distribution, HuffTree};
-    use crate::structs::jpeg_read::decode_block_seq;
+    use super::bit_reader::BitReader;
+    use super::jpeg_header::{generate_huff_table_from_distribution, HuffTree};
+    use super::jpeg_read::decode_block_seq;
 
     let mut bitwriter = BitWriter::new(1024);
 

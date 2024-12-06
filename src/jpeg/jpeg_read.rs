@@ -37,44 +37,47 @@ use std::io::{BufRead, Seek};
 
 use crate::consts::*;
 use crate::helpers::*;
-use crate::lepton_error::Result;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
-use crate::structs::bit_reader::BitReader;
-use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
-use crate::structs::jpeg_header::HuffTree;
-use crate::structs::jpeg_position_state::JpegPositionState;
-use crate::structs::lepton_header::LeptonHeader;
-use crate::structs::thread_handoff::ThreadHandoff;
+use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 
-pub fn read_scan<R: BufRead + Seek>(
-    lp: &mut LeptonHeader,
+use super::bit_reader::BitReader;
+use super::block_based_image::{AlignedBlock, BlockBasedImage};
+use super::jpeg_header::{HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use super::jpeg_position_state::JpegPositionState;
+
+/// Reads the scan from the JPEG file, writes the image data to the image_data array and
+/// partitions it into restart segments using the partition callback.
+///
+/// This only works for sequential JPEGs or the first scan in a progressive image.
+/// For subsequent scans, use the `read_progressive_scan`.
+pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
+    jf: &JPegHeader,
     reader: &mut R,
-    thread_handoff: &mut Vec<ThreadHandoff>,
+    partition: &mut FPARTITION,
     image_data: &mut [BlockBasedImage],
+    reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<()> {
     let mut bit_reader = BitReader::new(reader);
 
     // init variables for decoding
-    let mut state = JpegPositionState::new(&lp.jpeg_header, 0);
+    let mut state = JpegPositionState::new(jf, 0);
 
     let mut do_handoff = true;
 
     // JPEG imagedata decoding routines
     let mut sta = JPegDecodeStatus::DecodeInProgress;
     while sta != JPegDecodeStatus::ScanCompleted {
-        let jf = &lp.jpeg_header;
-
         // decoding for interleaved data
         state.reset_rstw(jf); // restart wait counter
 
         if jf.jpeg_type == JPegType::Sequential {
             sta = decode_baseline_rst(
                 &mut state,
-                lp,
-                thread_handoff,
+                partition,
                 &mut bit_reader,
                 image_data,
                 &mut do_handoff,
+                jf,
+                reconstruct_info,
             )
             .context()?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
@@ -86,16 +89,15 @@ pub fn read_scan<R: BufRead + Seek>(
             while sta == JPegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
-                // first time through, collect the handoffs although for progressive images the offsets
-                // won't mean much, but we do need to divide the scan into sections
-
+                // collect the handoffs although for progressive images
+                // we still split the scan into sections, but we don't partition the actual JPEG
+                // writes since they have to be done on a single thread in a loop for a progressive file.
+                //
+                // TODO: get rid of this and just chop up the scan into sections in Lepton code
                 if do_handoff {
-                    crystallize_thread_handoff(
-                        &state,
-                        lp,
-                        &mut bit_reader,
-                        thread_handoff,
-                        last_dc,
+                    partition(
+                        0,
+                        RestartSegmentCodingInfo::new(0, 0, [0; 4], state.get_mcu(), jf),
                     );
 
                     do_handoff = false;
@@ -114,7 +116,7 @@ pub fn read_scan<R: BufRead + Seek>(
                 let old_mcu = state.get_mcu();
                 sta = state.next_mcu_pos(jf);
 
-                if state.get_mcu() % lp.jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
+                if state.get_mcu() % jf.mcuh == 0 && old_mcu != state.get_mcu() {
                     do_handoff = true;
                 }
             }
@@ -129,7 +131,7 @@ pub fn read_scan<R: BufRead + Seek>(
         // if we saw a pad bit at the end of the block, then remember whether they were 1s or 0s. This
         // will be used later on to reconstruct the padding
         bit_reader
-            .read_and_verify_fill_bits(&mut lp.pad_bit)
+            .read_and_verify_fill_bits(&mut reconstruct_info.pad_bit)
             .context()?;
 
         // verify that we got the right RST code here since the above should do 1 mcu.
@@ -140,65 +142,32 @@ pub fn read_scan<R: BufRead + Seek>(
             sta = JPegDecodeStatus::DecodeInProgress;
         }
     }
-
-    lp.scnc += 1; // increment scan counter
     Ok(())
 }
 
-/// stores handoff information in vector for the current position. This should
-/// be enough information to independently restart encoding at this offset (at least for baseline images)
-fn crystallize_thread_handoff<R: BufRead + Seek>(
-    state: &JpegPositionState,
-    lp: &LeptonHeader,
-    bit_reader: &mut BitReader<R>,
-    thread_handoff: &mut Vec<ThreadHandoff>,
-    lastdc: [i16; 4],
-) {
-    let mcu_y = state.get_mcu() / lp.jpeg_header.mcuh;
-    let luma_mul = lp.jpeg_header.cmp_info[0].bcv / lp.jpeg_header.mcuv;
-
-    let (bits_already_read, byte_being_read) = bit_reader.overhang();
-
-    let pos = bit_reader.get_stream_position();
-
-    let retval = ThreadHandoff {
-        segment_offset_in_file: pos,
-        luma_y_start: luma_mul * mcu_y,
-        luma_y_end: luma_mul * (mcu_y + 1),
-        overhang_byte: byte_being_read,
-        num_overhang_bits: bits_already_read,
-        last_dc: lastdc,
-        segment_size: 0, // initialized later
-    };
-
-    thread_handoff.push(retval);
-}
-
-// reads subsequent scans for progressive images
+/// Reads a scan for progressive images where the image is encoded in multiple passes.
+/// Between each scan are a bunch of header than need to be parsed containing information
+/// like updated Huffman tables and quantization tables.
 pub fn read_progressive_scan<R: BufRead + Seek>(
-    lp: &mut LeptonHeader,
+    jf: &JPegHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
+    reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<()> {
     // track to see how far we got in progressive encoding in case of truncated images, however this
     // was never actually implemented in the original C++ code
-    lp.max_sah = max(
-        lp.max_sah,
-        max(lp.jpeg_header.cs_sal, lp.jpeg_header.cs_sah),
-    );
+    reconstruct_info.max_sah = max(reconstruct_info.max_sah, max(jf.cs_sal, jf.cs_sah));
 
     let mut bit_reader = BitReader::new(reader);
 
     // init variables for decoding
-    let mut state = JpegPositionState::new(&lp.jpeg_header, 0);
+    let mut state = JpegPositionState::new(jf, 0);
 
     // JPEG imagedata decoding routines
     let mut sta = JPegDecodeStatus::DecodeInProgress;
     while sta != JPegDecodeStatus::ScanCompleted {
-        let jf = &lp.jpeg_header;
-
         // decoding for interleaved data
-        state.reset_rstw(jf); // restart wait counter
+        state.reset_rstw(&jf); // restart wait counter
 
         if jf.cs_to == 0 {
             if jf.cs_sah == 0 {
@@ -355,7 +324,7 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
         // if we saw a pad bit at the end of the block, then remember whether they were 1s or 0s. This
         // will be used later on to reconstruct the padding
         bit_reader
-            .read_and_verify_fill_bits(&mut lp.pad_bit)
+            .read_and_verify_fill_bits(&mut reconstruct_info.pad_bit)
             .context()?;
 
         // verify that we got the right RST code here since the above should do 1 mcu.
@@ -367,43 +336,55 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
         }
     }
 
-    lp.scnc += 1; // increment scan counter
     Ok(())
 }
 
 /// reads an entire interval until the RST code
-fn decode_baseline_rst<R: BufRead + Seek>(
+fn decode_baseline_rst<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
     state: &mut JpegPositionState,
-    lp: &mut LeptonHeader,
-    thread_handoff: &mut Vec<ThreadHandoff>,
+    partition: &mut FPARTITION,
     bit_reader: &mut BitReader<R>,
     image_data: &mut [BlockBasedImage],
     do_handoff: &mut bool,
+    jpeg_header: &JPegHeader,
+    reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<JPegDecodeStatus> {
     // should have both AC and DC components
-    lp.jpeg_header.verify_huffman_table(true, true).context()?;
+    jpeg_header.verify_huffman_table(true, true).context()?;
 
     let mut sta = JPegDecodeStatus::DecodeInProgress;
     let mut lastdc = [0i16; 4]; // (re)set last DCs for diff coding
 
     while sta == JPegDecodeStatus::DecodeInProgress {
         if *do_handoff {
-            crystallize_thread_handoff(state, lp, bit_reader, thread_handoff, lastdc);
+            let (bits_already_read, byte_being_read) = bit_reader.overhang();
+
+            partition(
+                bit_reader.get_stream_position(),
+                RestartSegmentCodingInfo::new(
+                    byte_being_read,
+                    bits_already_read,
+                    lastdc,
+                    state.get_mcu(),
+                    &jpeg_header,
+                ),
+            );
 
             *do_handoff = false;
         }
 
         if !bit_reader.is_eof() {
-            lp.max_dpos[state.get_cmp()] = cmp::max(state.get_dpos(), lp.max_dpos[state.get_cmp()]);
             // record the max block read
+            reconstruct_info.max_dpos[state.get_cmp()] =
+                cmp::max(state.get_dpos(), reconstruct_info.max_dpos[state.get_cmp()]);
         }
 
         // decode block (throws on error)
         let mut block = [0i16; 64];
         let eob = decode_block_seq(
             bit_reader,
-            &lp.jpeg_header.get_huff_dc_tree(state.get_cmp()),
-            &lp.jpeg_header.get_huff_ac_tree(state.get_cmp()),
+            &jpeg_header.get_huff_dc_tree(state.get_cmp()),
+            &jpeg_header.get_huff_ac_tree(state.get_cmp()),
             &mut block,
         )?;
 
@@ -425,15 +406,15 @@ fn decode_baseline_rst<R: BufRead + Seek>(
 
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();
-        sta = state.next_mcu_pos(&lp.jpeg_header);
+        sta = state.next_mcu_pos(&jpeg_header);
 
-        if state.get_mcu() % lp.jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
+        if state.get_mcu() % jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
             *do_handoff = true;
         }
 
         if bit_reader.is_eof() {
             sta = JPegDecodeStatus::ScanCompleted;
-            lp.early_eof_encountered = true;
+            reconstruct_info.early_eof_encountered = true;
         }
     }
 
@@ -444,7 +425,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
 /// sequential block decoding routine
 /// </summary>
 #[inline(never)]
-pub fn decode_block_seq<R: BufRead>(
+pub(super) fn decode_block_seq<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     dctree: &HuffTree,
     actree: &HuffTree,

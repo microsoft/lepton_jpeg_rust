@@ -14,16 +14,16 @@ use wide::i32x8;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::u16_bit_length;
+use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::jpeg::row_spec::RowSpec;
+use crate::jpeg::truncate_components::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::metrics::Metrics;
-use crate::structs::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
 use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
-use crate::structs::row_spec::RowSpec;
-use crate::structs::truncate_components::*;
 use crate::structs::vpx_bool_reader::VPXBoolReader;
 use crate::Result;
 
@@ -135,7 +135,7 @@ fn decode_row_wrapper<R: Read>(
     component_size_in_blocks: u32,
     features: &EnabledFeatures,
 ) -> Result<()> {
-    let mut block_context = image_data.off_y(curr_y);
+    let mut block_context = BlockContext::off_y(curr_y, image_data);
 
     let block_width = image_data.get_block_width();
 

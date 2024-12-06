@@ -6,8 +6,8 @@
 
 use std::cmp;
 
-use crate::structs::component_info::*;
-use crate::structs::jpeg_header::JPegHeader;
+use super::component_info::ComponentInfo;
+use super::jpeg_header::JPegHeader;
 
 #[derive(Debug, Clone)]
 struct TrucateComponentsInfo {

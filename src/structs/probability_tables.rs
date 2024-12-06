@@ -9,7 +9,7 @@ use wide::{i16x8, i32x8, u16x8};
 
 use crate::consts::*;
 use crate::enabled_features;
-use crate::structs::block_based_image::AlignedBlock;
+use crate::jpeg::block_based_image::AlignedBlock;
 use crate::structs::block_context::NeighborData;
 use crate::structs::idct::*;
 use crate::structs::model::*;
