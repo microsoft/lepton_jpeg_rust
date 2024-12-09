@@ -17,9 +17,6 @@ pub const FIXED_HEADER_SIZE: usize = 28;
 
 #[derive(Debug, DefaultBoxed)]
 pub struct LeptonHeader {
-    /// raw jpeg header to be written back to the file when it is recreated
-    pub raw_jpeg_header: Vec<u8>,
-
     /// how far we have read into the raw header, since the header is divided
     /// into multiple chucks for each scan. For example, a progressive image
     /// would start with the jpeg image segments, followed by a SOS (start of scan)
@@ -30,11 +27,6 @@ pub struct LeptonHeader {
     pub thread_handoff: Vec<ThreadHandoff>,
 
     pub jpeg_header: JPegHeader,
-
-    pub rst_err: Vec<u8>,
-
-    /// garbage data (default value - empty segment - means no garbage data)
-    pub garbage_data: Vec<u8>,
 
     pub rinfo: ReconstructionInfo,
 
@@ -135,14 +127,14 @@ impl LeptonHeader {
         // limit reading to the compressed header
         let mut compressed_reader = reader.take(compressed_header_size as u64);
 
-        self.raw_jpeg_header = self
+        self.rinfo.raw_jpeg_header = self
             .read_lepton_compressed_header(&mut compressed_reader)
             .context()?;
 
         self.raw_jpeg_header_read_index = 0;
 
         {
-            let mut header_data_cursor = Cursor::new(&self.raw_jpeg_header[..]);
+            let mut header_data_cursor = Cursor::new(&self.rinfo.raw_jpeg_header[..]);
             self.jpeg_header
                 .parse(&mut header_data_cursor, &enabled_features)
                 .context()?;
@@ -167,7 +159,7 @@ impl LeptonHeader {
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
         if self.rinfo.early_eof_encountered {
             let mut max_last_segment_size = self.jpeg_file_size
-                - u32::try_from(self.garbage_data.len())?
+                - u32::try_from(self.rinfo.garbage_data.len())?
                 - u32::try_from(self.raw_jpeg_header_read_index)?
                 - u32::try_from(SOI.len())?;
 
@@ -195,7 +187,7 @@ impl LeptonHeader {
         enabled_features: &EnabledFeatures,
     ) -> Result<bool> {
         let mut header_cursor =
-            Cursor::new(&self.raw_jpeg_header[self.raw_jpeg_header_read_index..]);
+            Cursor::new(&self.rinfo.raw_jpeg_header[self.raw_jpeg_header_read_index..]);
 
         let result = self
             .jpeg_header
@@ -224,12 +216,12 @@ impl LeptonHeader {
         hdr_data.resize(hdrs, 0);
         header_reader.read_exact(&mut hdr_data)?;
 
-        if self.garbage_data.len() == 0 {
+        if self.rinfo.garbage_data.len() == 0 {
             // if we don't have any garbage, assume FFD9 EOI
 
             // kind of broken logic since this assumes a EOF even if there was a 0 byte garbage header
             // in the file, but this is what the file format is.
-            self.garbage_data.extend(EOI);
+            self.rinfo.garbage_data.extend(EOI);
         }
 
         // beginning here: recovery information (needed for exact JPEG recovery)
@@ -284,7 +276,7 @@ impl LeptonHeader {
 
                 header_reader.read_exact(&mut rst_err_data)?;
 
-                self.rst_err.append(&mut rst_err_data);
+                self.rinfo.rst_err.append(&mut rst_err_data);
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
                 LEPTON_HEADER_GARBAGE_MARKER,
@@ -297,7 +289,7 @@ impl LeptonHeader {
                 garbage_data_array.resize(garbage_size, 0);
 
                 header_reader.read_exact(&mut garbage_data_array)?;
-                self.garbage_data = garbage_data_array;
+                self.rinfo.garbage_data = garbage_data_array;
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
                 LEPTON_HEADER_EARLY_EOF_MARKER,
@@ -407,10 +399,10 @@ impl LeptonHeader {
         // marker: "HDR" + [size of header]
         mrw.write_all(&LEPTON_HEADER_MARKER)?;
 
-        mrw.write_u32::<LittleEndian>(self.raw_jpeg_header.len() as u32)?;
+        mrw.write_u32::<LittleEndian>(self.rinfo.raw_jpeg_header.len() as u32)?;
 
         // data: data from header
-        mrw.write_all(&self.raw_jpeg_header[..])?;
+        mrw.write_all(&self.rinfo.raw_jpeg_header[..])?;
 
         Ok(())
     }
@@ -452,13 +444,13 @@ impl LeptonHeader {
 
     fn write_lepton_jpeg_restart_errors_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
         // write number of false set RST markers per scan (if available) to file
-        if self.rst_err.len() > 0 {
+        if self.rinfo.rst_err.len() > 0 {
             // marker: "FRS" + [number of scans]
             mrw.write_all(&LEPTON_HEADER_JPG_RESTART_ERRORS_MARKER)?;
 
-            mrw.write_u32::<LittleEndian>(self.rst_err.len() as u32)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.rst_err.len() as u32)?;
 
-            mrw.write_all(&self.rst_err[..])?;
+            mrw.write_all(&self.rinfo.rst_err[..])?;
         }
 
         Ok(())
@@ -490,7 +482,7 @@ impl LeptonHeader {
         prefix_garbage: bool,
     ) -> Result<()> {
         // write garbage (if any) to file
-        if self.garbage_data.len() > 0 {
+        if self.rinfo.garbage_data.len() > 0 {
             // marker: "PGR/GRB" + [size of garbage]
             if prefix_garbage {
                 mrw.write_all(&LEPTON_HEADER_PREFIX_GARBAGE_MARKER)?;
@@ -498,70 +490,11 @@ impl LeptonHeader {
                 mrw.write_all(&LEPTON_HEADER_GARBAGE_MARKER)?;
             }
 
-            mrw.write_u32::<LittleEndian>(self.garbage_data.len() as u32)?;
-            mrw.write_all(&self.garbage_data[..])?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.garbage_data.len() as u32)?;
+            mrw.write_all(&self.rinfo.garbage_data[..])?;
         }
 
         Ok(())
-    }
-
-    pub fn parse_jpeg_header<R: Read>(
-        &mut self,
-        reader: &mut R,
-        enabled_features: &EnabledFeatures,
-    ) -> Result<bool> {
-        // the raw header in the lepton file can actually be spread across different sections
-        // seperated by the Start-of-Scan marker. We use the mirror to write out whatever
-        // data we parse until we hit the SOS
-
-        let mut output = Vec::new();
-        let mut output_cursor = Cursor::new(&mut output);
-
-        let mut mirror = Mirror::new(reader, &mut output_cursor);
-
-        if self
-            .jpeg_header
-            .parse(&mut mirror, enabled_features)
-            .context()?
-        {
-            // append the header if it was not the end of file marker
-            self.raw_jpeg_header.append(&mut output);
-            return Ok(true);
-        } else {
-            // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
-            // but we don't want the EOI since that goes into the garbage data.
-            if output.len() > 2 {
-                self.raw_jpeg_header.extend(&output[0..output.len() - 2]);
-            }
-
-            return Ok(false);
-        }
-    }
-}
-
-// internal utility we use to collect the header that we read for later
-struct Mirror<'a, R, W> {
-    read: &'a mut R,
-    output: &'a mut W,
-    amount_written: usize,
-}
-
-impl<'a, R, W> Mirror<'a, R, W> {
-    pub fn new(read: &'a mut R, output: &'a mut W) -> Self {
-        Mirror {
-            read,
-            output,
-            amount_written: 0,
-        }
-    }
-}
-
-impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.read.read(buf)?;
-        self.output.write_all(&buf[..n])?;
-        self.amount_written += n;
-        Ok(n)
     }
 }
 
@@ -655,13 +588,15 @@ fn parse_and_write_header() {
     assert_eq!(lh.encoder_version, other.encoder_version);
 
     assert_eq!(lh.jpeg_file_size, other.jpeg_file_size);
-    assert_eq!(lh.raw_jpeg_header, other.raw_jpeg_header);
+    assert_eq!(lh.rinfo.raw_jpeg_header, other.rinfo.raw_jpeg_header);
     assert_eq!(lh.thread_handoff, other.thread_handoff);
 }
 
 #[cfg(test)]
 fn make_minimal_lepton_header() -> Box<LeptonHeader> {
     // minimal jpeg that will pass the validity read tests
+
+    use crate::jpeg::jpeg_header::parse_jpeg_header;
     let min_jpeg = [
         0xffu8, 0xe0, // APP0
         0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00,
@@ -686,8 +621,13 @@ fn make_minimal_lepton_header() -> Box<LeptonHeader> {
     lh.jpeg_file_size = 123;
     lh.uncompressed_lepton_header_size = Some(156);
 
-    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
-        .unwrap();
+    parse_jpeg_header(
+        &mut Cursor::new(min_jpeg),
+        &enabled_features,
+        &mut lh.jpeg_header,
+        &mut lh.rinfo,
+    )
+    .unwrap();
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
         luma_y_end: 1,

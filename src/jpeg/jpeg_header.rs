@@ -32,7 +32,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use std::io::Read;
+use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
 use crate::consts::JPegType;
@@ -124,6 +124,71 @@ pub struct ReconstructionInfo {
 
     /// information about how to truncate the image if it was partially written
     pub truncate_components: TruncateComponents,
+
+    /// trailing RST marking information
+    pub rst_err: Vec<u8>,
+
+    /// raw jpeg header to be written back to the file when it is recreated
+    pub raw_jpeg_header: Vec<u8>,
+
+    /// garbage data (default value - empty segment - means no garbage data)
+    pub garbage_data: Vec<u8>,
+}
+
+pub fn parse_jpeg_header<R: Read>(
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+    jpeg_header: &mut JPegHeader,
+    rinfo: &mut ReconstructionInfo,
+) -> Result<bool> {
+    // the raw header in the lepton file can actually be spread across different sections
+    // seperated by the Start-of-Scan marker. We use the mirror to write out whatever
+    // data we parse until we hit the SOS
+
+    let mut output = Vec::new();
+    let mut output_cursor = Cursor::new(&mut output);
+
+    let mut mirror = Mirror::new(reader, &mut output_cursor);
+
+    if jpeg_header.parse(&mut mirror, enabled_features).context()? {
+        // append the header if it was not the end of file marker
+        rinfo.raw_jpeg_header.append(&mut output);
+        return Ok(true);
+    } else {
+        // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
+        // but we don't want the EOI since that goes into the garbage data.
+        if output.len() > 2 {
+            rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
+        }
+
+        return Ok(false);
+    }
+}
+
+// internal utility we use to collect the header that we read for later
+struct Mirror<'a, R, W> {
+    read: &'a mut R,
+    output: &'a mut W,
+    amount_written: usize,
+}
+
+impl<'a, R, W> Mirror<'a, R, W> {
+    pub fn new(read: &'a mut R, output: &'a mut W) -> Self {
+        Mirror {
+            read,
+            output,
+            amount_written: 0,
+        }
+    }
+}
+
+impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.read.read(buf)?;
+        self.output.write_all(&buf[..n])?;
+        self.amount_written += n;
+        Ok(n)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

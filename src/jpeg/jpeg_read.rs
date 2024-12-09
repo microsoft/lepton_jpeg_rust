@@ -33,16 +33,45 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use std::cmp::{self, max};
-use std::io::{BufRead, Seek};
+use std::io::{BufRead, Read, Seek};
 
-use crate::consts::*;
 use crate::helpers::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::{consts::*, EnabledFeatures};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
-use super::jpeg_header::{HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use super::jpeg_header::{
+    parse_jpeg_header, HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
+};
 use super::jpeg_position_state::JpegPositionState;
+
+// false means we hit the end of file marker
+pub fn prepare_to_decode_next_scan<R: Read>(
+    jpeg_header: &mut JPegHeader,
+    rinfo: &mut ReconstructionInfo,
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+) -> Result<bool> {
+    // parse the header and store it in the raw_jpeg_header
+    if !parse_jpeg_header(reader, enabled_features, jpeg_header, rinfo).context()? {
+        return Ok(false);
+    }
+
+    rinfo.max_bpos = cmp::max(rinfo.max_bpos, u32::from(jpeg_header.cs_to));
+
+    // FIXME: not sure why only first bit of csSah is examined but 4 bits of it are stored
+    rinfo.max_sah = cmp::max(
+        rinfo.max_sah,
+        cmp::max(jpeg_header.cs_sal, jpeg_header.cs_sah),
+    );
+
+    for i in 0..jpeg_header.cs_cmpc {
+        rinfo.max_cmp = cmp::max(rinfo.max_cmp, jpeg_header.cs_cmp[i] as u32);
+    }
+
+    return Ok(true);
+}
 
 /// Reads the scan from the JPEG file, writes the image data to the image_data array and
 /// partitions it into restart segments using the partition callback.

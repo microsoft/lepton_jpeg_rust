@@ -253,9 +253,10 @@ impl LeptonFileReader {
                     // Blit any trailing header data.
                     // Run this logic even if early_eof_encountered to be compatible with C++ version.
                     results.push(
-                        self.lh.raw_jpeg_header[self.lh.raw_jpeg_header_read_index..].to_vec(),
+                        self.lh.rinfo.raw_jpeg_header[self.lh.raw_jpeg_header_read_index..]
+                            .to_vec(),
                     );
-                    results.push(mem::take(&mut self.lh.garbage_data));
+                    results.push(mem::take(&mut self.lh.rinfo.garbage_data));
 
                     self.state = DecoderState::ReturnResults(0, mem::take(results));
                 }
@@ -315,7 +316,7 @@ impl LeptonFileReader {
         let mut header = Vec::new();
         header.write_all(&SOI)?;
         header
-            .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
+            .write_all(&lh.rinfo.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
             .context()?;
 
         results.insert(0, header);
@@ -325,7 +326,7 @@ impl LeptonFileReader {
         //
         // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
         // data to store any extra RST codes or whatever else might be at the end of the file.
-        if lh.rst_err.len() > 0 {
+        if lh.rinfo.rst_err.len() > 0 {
             let mut markers = Vec::new();
 
             let cumulative_reset_markers = if lh.jpeg_header.rsti != 0 {
@@ -334,15 +335,15 @@ impl LeptonFileReader {
                 0
             } as u8;
 
-            for i in 0..lh.rst_err[0] {
+            for i in 0..lh.rinfo.rst_err[0] {
                 let rst = jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7);
                 markers.push(0xFF);
                 markers.push(rst);
             }
 
             let expected_total_length = results.iter().map(|x| x.len()).sum::<usize>()
-                + lh.garbage_data.len()
-                + (lh.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
+                + lh.rinfo.garbage_data.len()
+                + (lh.rinfo.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
 
             if expected_total_length < lh.jpeg_file_size as usize {
                 // figure out how much extra space we have, since C++ files can have
@@ -375,7 +376,7 @@ impl LeptonFileReader {
         let mut header = Vec::new();
         header.write_all(&SOI)?;
         header
-            .write_all(&lh.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
+            .write_all(&lh.rinfo.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
             .context()?;
 
         let mut results = Vec::new();
@@ -392,7 +393,7 @@ impl LeptonFileReader {
             let old_pos = lh.raw_jpeg_header_read_index;
             let result = lh.advance_next_header_segment(enabled_features).context()?;
 
-            results.push(lh.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
+            results.push(lh.rinfo.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
 
             if !result {
                 break;
@@ -606,6 +607,7 @@ impl LeptonFileReader {
 // test serializing and deserializing header
 #[test]
 fn parse_and_write_header() {
+    use crate::jpeg::jpeg_header::parse_jpeg_header;
     use std::io::Read;
 
     // minimal jpeg that will pass the validity read tests
@@ -633,8 +635,13 @@ fn parse_and_write_header() {
     lh.jpeg_file_size = 123;
     lh.uncompressed_lepton_header_size = Some(140);
 
-    lh.parse_jpeg_header(&mut Cursor::new(min_jpeg), &enabled_features)
-        .unwrap();
+    parse_jpeg_header(
+        &mut Cursor::new(min_jpeg),
+        &enabled_features,
+        &mut lh.jpeg_header,
+        &mut lh.rinfo,
+    )
+    .unwrap();
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
         luma_y_end: 1,

@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::cmp;
-use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -16,7 +16,7 @@ use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JPegHeader;
-use crate::jpeg::jpeg_read::{read_first_scan, read_progressive_scan};
+use crate::jpeg::jpeg_read::{prepare_to_decode_next_scan, read_first_scan, read_progressive_scan};
 use crate::jpeg::truncate_components::TruncateComponents;
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -128,7 +128,9 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     get_git_revision(&mut lp);
 
-    if !prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
+    if !prepare_to_decode_next_scan(&mut lp.jpeg_header, &mut lp.rinfo, reader, enabled_features)
+        .context()?
+    {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
 
@@ -220,8 +222,8 @@ pub fn read_jpeg<R: BufRead + Seek>(
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
             // even if early EOF was set to true.
             reader.seek(SeekFrom::Current(-2))?;
-            lp.garbage_data.resize(2, 0);
-            reader.read_exact(&mut lp.garbage_data)?;
+            lp.rinfo.garbage_data.resize(2, 0);
+            reader.read_exact(&mut lp.rinfo.garbage_data)?;
 
             // take these two last bytes off the last segment. For some reason the C++/CS version only chop of one byte
             // and then fix up the broken file later in the decoder. The following logic will create a valid file
@@ -232,7 +234,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
         }
 
         // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
-        reader.read_to_end(&mut lp.garbage_data).context()?;
+        reader.read_to_end(&mut lp.rinfo.garbage_data).context()?;
     } else {
         assert!(lp.jpeg_header.jpeg_type == JPegType::Progressive);
 
@@ -245,7 +247,14 @@ pub fn read_jpeg<R: BufRead + Seek>(
         }
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
-        while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
+        while prepare_to_decode_next_scan(
+            &mut lp.jpeg_header,
+            &mut lp.rinfo,
+            reader,
+            enabled_features,
+        )
+        .context()?
+        {
             callback(&lp.jpeg_header);
 
             read_progressive_scan(&lp.jpeg_header, reader, &mut image_data[..], &mut lp.rinfo)
@@ -264,12 +273,12 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
         // since prepare_to_decode_next_scan consumes the EOI,
         // we need to add it to the beginning of the garbage data (if there is any)
-        lp.garbage_data = Vec::from(EOI);
+        lp.rinfo.garbage_data = Vec::from(EOI);
 
         // append the rest of the file to the buffer
-        if reader.read_to_end(&mut lp.garbage_data).context()? == 0 {
+        if reader.read_to_end(&mut lp.rinfo.garbage_data).context()? == 0 {
             // no need to record EOI garbage data if there wasn't anything read
-            lp.garbage_data.clear();
+            lp.rinfo.garbage_data.clear();
         }
     }
 
@@ -458,32 +467,6 @@ fn get_number_of_threads_for_encoding(
     }
 
     return num_threads;
-}
-
-// false means we hit the end of file marker
-fn prepare_to_decode_next_scan<R: Read>(
-    lp: &mut LeptonHeader,
-    reader: &mut R,
-    enabled_features: &EnabledFeatures,
-) -> Result<bool> {
-    // parse the header and store it in the raw_jpeg_header
-    if !lp.parse_jpeg_header(reader, enabled_features).context()? {
-        return Ok(false);
-    }
-
-    lp.rinfo.max_bpos = cmp::max(lp.rinfo.max_bpos, u32::from(lp.jpeg_header.cs_to));
-
-    // FIXME: not sure why only first bit of csSah is examined but 4 bits of it are stored
-    lp.rinfo.max_sah = cmp::max(
-        lp.rinfo.max_sah,
-        cmp::max(lp.jpeg_header.cs_sal, lp.jpeg_header.cs_sah),
-    );
-
-    for i in 0..lp.jpeg_header.cs_cmpc {
-        lp.rinfo.max_cmp = cmp::max(lp.rinfo.max_cmp, lp.jpeg_header.cs_cmp[i] as u32);
-    }
-
-    return Ok(true);
 }
 
 fn set_segment_size_in_row_thread_handoffs(
