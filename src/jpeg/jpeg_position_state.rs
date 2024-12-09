@@ -8,7 +8,7 @@ use crate::consts::{JPegDecodeStatus, JPegType};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::{LeptonError, Result};
 
-use crate::structs::jpeg_header::{HuffCodes, JPegHeader};
+use super::jpeg_header::{HuffCodes, JPegHeader};
 
 /// used to keep track of position while encoding or decoding a jpeg
 pub struct JpegPositionState {

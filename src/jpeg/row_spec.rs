@@ -5,7 +5,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 use crate::consts::COLOR_CHANNEL_NUM_BLOCK_TYPES;
-use crate::structs::block_based_image::BlockBasedImage;
+
+use super::block_based_image::BlockBasedImage;
 
 pub struct RowSpec {
     pub min_row_luma_y: u32,

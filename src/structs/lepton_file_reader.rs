@@ -15,12 +15,12 @@ use log::warn;
 
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
+use crate::jpeg::block_based_image::BlockBasedImage;
+use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
-use crate::structs::block_based_image::BlockBasedImage;
-use crate::structs::jpeg_header::JPegEncodingInfo;
-use crate::structs::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
@@ -83,7 +83,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
         &lh,
         &enabled_features,
         4,
-        |_thread_handoff, image_data, _lh| {
+        |_thread_handoff, image_data, _, _| {
             // just return the image data directly to be merged together
             return Ok(image_data);
         },
@@ -380,10 +380,12 @@ impl LeptonFileReader {
 
         let mut results = Vec::new();
         results.push(header);
+        let mut scnc = 0;
 
         loop {
             // progressive JPEG consists of scans followed by headers
-            let scan = jpeg_write_entire_scan(&merged[..], &JPegEncodingInfo::new(lh)).context()?;
+            let scan =
+                jpeg_write_entire_scan(&merged[..], &lh.jpeg_header, &lh.rinfo, scnc).context()?;
             results.push(scan);
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
@@ -397,7 +399,7 @@ impl LeptonFileReader {
             }
 
             // advance to next scan
-            lh.scnc += 1;
+            scnc += 1;
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -416,7 +418,7 @@ impl LeptonFileReader {
                 lh,
                 enabled_features,
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
-                |_thread_handoff, image_data, _lh| {
+                |_thread_handoff, image_data, _, _| {
                     // just return the image data directly to be merged together
                     return Ok(image_data);
                 },
@@ -429,16 +431,21 @@ impl LeptonFileReader {
                 &lh,
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
-                |thread_handoff, image_data, jenc| {
+                |thread_handoff, image_data, jpeg_header, rinfo| {
+                    let restart_info = RestartSegmentCodingInfo {
+                        overhang_byte: thread_handoff.overhang_byte,
+                        num_overhang_bits: thread_handoff.num_overhang_bits,
+                        luma_y_start: thread_handoff.luma_y_start,
+                        luma_y_end: thread_handoff.luma_y_end,
+                        last_dc: thread_handoff.last_dc,
+                    };
+
                     let mut result_buffer = jpeg_write_baseline_row_range(
                         thread_handoff.segment_size as usize,
-                        thread_handoff.overhang_byte,
-                        thread_handoff.num_overhang_bits,
-                        thread_handoff.luma_y_start,
-                        thread_handoff.luma_y_end,
-                        thread_handoff.last_dc,
+                        &restart_info,
                         &image_data,
-                        jenc,
+                        &jpeg_header,
+                        &rinfo,
                     )
                     .context()?;
 
@@ -504,16 +511,18 @@ impl LeptonFileReader {
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,
-            jenc: &JPegEncodingInfo,
+            jpeg_header: &JPegHeader,
+            rinfo: &ReconstructionInfo,
         ) -> Result<P>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
-        let qt = lh.jpeg_header.construct_quantization_tables()?;
+        let qt = QuantizationTables::construct_quantization_tables(&lh.jpeg_header)?;
 
         let features = features.clone();
 
-        let jenc = JPegEncodingInfo::new(lh);
-
         let thread_handoff = lh.thread_handoff.clone();
+
+        let jpeg_header = lh.jpeg_header.clone();
+        let rinfo = lh.rinfo.clone();
 
         let multiplex_reader_state = MultiplexReaderState::new(
             thread_handoff.len(),
@@ -521,7 +530,8 @@ impl LeptonFileReader {
             features.max_threads as usize,
             move |thread_id, reader| -> Result<(Metrics, P)> {
                 Self::run_lepton_decoder_processor(
-                    &jenc,
+                    &jpeg_header,
+                    &rinfo,
                     &thread_handoff[thread_id],
                     thread_id == thread_handoff.len() - 1,
                     &qt,
@@ -537,25 +547,31 @@ impl LeptonFileReader {
 
     /// the logic of a decoder thread. Takes a range of rows
     fn run_lepton_decoder_processor<P>(
-        jenc: &JPegEncodingInfo,
+        jpeg_header: &JPegHeader,
+        rinfo: &ReconstructionInfo,
         thread_handoff: &ThreadHandoff,
         is_last_thread: bool,
         qt: &[QuantizationTables],
         reader: &mut MultiplexReader,
         features: &EnabledFeatures,
-        process: fn(&ThreadHandoff, Vec<BlockBasedImage>, &JPegEncodingInfo) -> Result<P>,
+        process: fn(
+            &ThreadHandoff,
+            Vec<BlockBasedImage>,
+            &JPegHeader,
+            &ReconstructionInfo,
+        ) -> Result<P>,
     ) -> Result<(Metrics, P)> {
         let cpu_time = CpuTimeMeasure::new();
 
         let mut image_data = Vec::new();
-        for i in 0..jenc.jpeg_header.cmpc {
+        for i in 0..jpeg_header.cmpc {
             image_data.push(BlockBasedImage::new(
-                &jenc.jpeg_header,
+                &jpeg_header,
                 i,
                 thread_handoff.luma_y_start,
                 if is_last_thread {
                     // if this is the last thread, then the image should extend all the way to the bottom
-                    jenc.jpeg_header.cmp_info[0].bcv
+                    jpeg_header.cmp_info[0].bcv
                 } else {
                     thread_handoff.luma_y_end
                 },
@@ -567,7 +583,7 @@ impl LeptonFileReader {
         metrics.merge_from(
             lepton_decode_row_range(
                 &qt,
-                &jenc.truncate_components,
+                &rinfo.truncate_components,
                 &mut image_data,
                 reader,
                 thread_handoff.luma_y_start,
@@ -579,7 +595,7 @@ impl LeptonFileReader {
             .context()?,
         );
 
-        let process_result = process(thread_handoff, image_data, &jenc)?;
+        let process_result = process(thread_handoff, image_data, jpeg_header, rinfo)?;
 
         metrics.record_cpu_worker_time(cpu_time.elapsed());
 

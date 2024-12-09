@@ -9,8 +9,8 @@ use log::info;
 use wide::{i16x8, CmpEq};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
-use crate::structs::block_context::BlockContext;
-use crate::structs::jpeg_header::JPegHeader;
+
+use super::jpeg_header::JPegHeader;
 
 /// holds the 8x8 blocks for a given component. Since we do multithreaded encoding,
 /// the image may only hold a subset of the components (specified by dpos_offset),
@@ -107,16 +107,6 @@ impl BlockBasedImage {
             self.image.len(),
             self.image.capacity(),
             self.dpos_offset
-        );
-    }
-
-    // blocks above the first line are never dereferenced
-    pub fn off_y(&self, y: u32) -> BlockContext {
-        return BlockContext::new(
-            self.block_width * y,
-            if y > 0 { self.block_width * (y - 1) } else { 0 },
-            if (y & 1) != 0 { self.block_width } else { 0 },
-            if (y & 1) != 0 { 0 } else { self.block_width },
         );
     }
 
