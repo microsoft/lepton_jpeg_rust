@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::cmp;
-use std::io::{BufRead, Cursor, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Seek, Write};
 use std::time::Instant;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -16,7 +16,7 @@ use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JPegHeader;
-use crate::jpeg::jpeg_read::{prepare_to_decode_next_scan, read_first_scan, read_progressive_scan};
+use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -128,78 +128,44 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     get_git_revision(&mut lp);
 
-    if !prepare_to_decode_next_scan(&mut lp.jpeg_header, &mut lp.rinfo, reader, enabled_features)
-        .context()?
-    {
-        return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
-    }
+    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
 
-    callback(&lp.jpeg_header);
+    let (image_data, partitions, scan_length) = read_jpeg_file(
+        reader,
+        &mut lp.jpeg_header,
+        &mut lp.rinfo,
+        enabled_features,
+        callback,
+    )?;
 
-    if !enabled_features.progressive && lp.jpeg_header.jpeg_type == JPegType::Progressive {
+    if partitions.len() == 0 {
         return err_exit_code(
-            ExitCode::ProgressiveUnsupported,
-            "file is progressive, but this is disabled",
+            ExitCode::UnsupportedJpeg,
+            "no partitions found in JPEG file",
         )
         .context();
-    }
-
-    if lp.jpeg_header.cmpc > COLOR_CHANNEL_NUM_BLOCK_TYPES {
-        return err_exit_code(
-            ExitCode::Unsupported4Colors,
-            " can't support this kind of image",
-        )
-        .context();
-    }
-
-    lp.rinfo.truncate_components.init(&lp.jpeg_header);
-    let mut image_data = Vec::<BlockBasedImage>::new();
-    for i in 0..lp.jpeg_header.cmpc {
-        // constructor takes height in proportion to the component[0]
-        image_data.push(BlockBasedImage::new(
-            &lp.jpeg_header,
-            i,
-            0,
-            lp.jpeg_header.cmp_info[0].bcv,
-        ));
     }
 
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
-    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
-    read_first_scan(
-        &lp.jpeg_header,
-        reader,
-        &mut |segment_offset_in_file, restart_info| {
-            let retval = ThreadHandoff {
-                segment_offset_in_file: segment_offset_in_file,
-                luma_y_start: restart_info.luma_y_start,
-                luma_y_end: restart_info.luma_y_end,
-                overhang_byte: restart_info.overhang_byte,
-                num_overhang_bits: restart_info.num_overhang_bits,
-                last_dc: restart_info.last_dc,
-                segment_size: 0, // initialized later
-            };
 
-            thread_handoff.push(retval);
-        },
-        &mut image_data[..],
-        &mut lp.rinfo,
-    )
-    .context()?;
+    for i in 0..partitions.len() {
+        let (segment_offset, r) = &partitions[i];
 
-    let mut end_scan = reader.stream_position()?.try_into().unwrap();
+        let segment_size = if i == partitions.len() - 1 {
+            scan_length - segment_offset
+        } else {
+            partitions[i + 1].0 - segment_offset
+        };
 
-    // need at least two bytes of scan data
-    if start_scan + 2 > end_scan || thread_handoff.len() == 0 {
-        return err_exit_code(
-            ExitCode::UnsupportedJpeg,
-            "couldnt find any sections to encode",
-        )
-        .context();
-    }
-
-    for i in 0..thread_handoff.len() {
-        thread_handoff[i].segment_offset_in_file += start_scan;
+        thread_handoff.push(ThreadHandoff {
+            segment_offset_in_file: segment_offset + start_scan,
+            luma_y_start: r.luma_y_start,
+            luma_y_end: r.luma_y_end,
+            overhang_byte: r.overhang_byte,
+            num_overhang_bits: r.num_overhang_bits,
+            last_dc: r.last_dc,
+            segment_size,
+        });
 
         #[cfg(feature = "detailed_tracing")]
         info!(
@@ -212,77 +178,6 @@ pub fn read_jpeg<R: BufRead + Seek>(
         );
     }
 
-    if lp.jpeg_header.jpeg_type == JPegType::Sequential {
-        if lp.rinfo.early_eof_encountered {
-            lp.rinfo
-                .truncate_components
-                .set_truncation_bounds(&lp.jpeg_header, lp.rinfo.max_dpos);
-
-            // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
-            // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
-            // even if early EOF was set to true.
-            reader.seek(SeekFrom::Current(-2))?;
-            lp.rinfo.garbage_data.resize(2, 0);
-            reader.read_exact(&mut lp.rinfo.garbage_data)?;
-
-            // take these two last bytes off the last segment. For some reason the C++/CS version only chop of one byte
-            // and then fix up the broken file later in the decoder. The following logic will create a valid file
-            // that the C++ and CS version will still decode properly without the fixup logic.
-            let len = thread_handoff.len();
-            thread_handoff[len - 1].segment_size =
-                thread_handoff[len - 1].segment_size.saturating_sub(2);
-        }
-
-        // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
-        reader.read_to_end(&mut lp.rinfo.garbage_data).context()?;
-    } else {
-        assert!(lp.jpeg_header.jpeg_type == JPegType::Progressive);
-
-        if lp.rinfo.early_eof_encountered {
-            return err_exit_code(
-                ExitCode::UnsupportedJpeg,
-                "truncation is only supported for baseline images",
-            )
-            .context();
-        }
-
-        // for progressive images, loop around reading headers and decoding until we a complete image_data
-        while prepare_to_decode_next_scan(
-            &mut lp.jpeg_header,
-            &mut lp.rinfo,
-            reader,
-            enabled_features,
-        )
-        .context()?
-        {
-            callback(&lp.jpeg_header);
-
-            read_progressive_scan(&lp.jpeg_header, reader, &mut image_data[..], &mut lp.rinfo)
-                .context()?;
-
-            if lp.rinfo.early_eof_encountered {
-                return err_exit_code(
-                    ExitCode::UnsupportedJpeg,
-                    "truncation is only supported for baseline images",
-                )
-                .context();
-            }
-        }
-
-        end_scan = reader.stream_position()? as u32;
-
-        // since prepare_to_decode_next_scan consumes the EOI,
-        // we need to add it to the beginning of the garbage data (if there is any)
-        lp.rinfo.garbage_data = Vec::from(EOI);
-
-        // append the rest of the file to the buffer
-        if reader.read_to_end(&mut lp.rinfo.garbage_data).context()? == 0 {
-            // no need to record EOI garbage data if there wasn't anything read
-            lp.rinfo.garbage_data.clear();
-        }
-    }
-
-    set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan);
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
@@ -467,21 +362,6 @@ fn get_number_of_threads_for_encoding(
     }
 
     return num_threads;
-}
-
-fn set_segment_size_in_row_thread_handoffs(
-    thread_handoffs: &mut [ThreadHandoff],
-    entropy_data_end_offset_in_file: u32,
-) {
-    if thread_handoffs.len() != 0 {
-        for i in 0..thread_handoffs.len() - 1 {
-            thread_handoffs[i].segment_size = thread_handoffs[i + 1].segment_offset_in_file
-                - thread_handoffs[i].segment_offset_in_file;
-        }
-
-        thread_handoffs[thread_handoffs.len() - 1].segment_size = entropy_data_end_offset_in_file
-            - thread_handoffs[thread_handoffs.len() - 1].segment_offset_in_file;
-    }
 }
 
 #[test]

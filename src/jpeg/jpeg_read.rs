@@ -33,7 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use std::cmp::{self, max};
-use std::io::{BufRead, Read, Seek};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 
 use crate::helpers::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -46,8 +46,122 @@ use super::jpeg_header::{
 };
 use super::jpeg_position_state::JpegPositionState;
 
+pub fn read_jpeg_file<R: BufRead + Seek>(
+    reader: &mut R,
+    jpeg_header: &mut JPegHeader,
+    rinfo: &mut ReconstructionInfo,
+    enabled_features: &EnabledFeatures,
+    callback: fn(&JPegHeader),
+) -> Result<(
+    Vec<BlockBasedImage>,
+    Vec<(u32, RestartSegmentCodingInfo)>,
+    u32,
+)> {
+    if !prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
+        return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
+    }
+    callback(jpeg_header);
+    if !enabled_features.progressive && jpeg_header.jpeg_type == JPegType::Progressive {
+        return err_exit_code(
+            ExitCode::ProgressiveUnsupported,
+            "file is progressive, but this is disabled",
+        )
+        .context();
+    }
+    if jpeg_header.cmpc > COLOR_CHANNEL_NUM_BLOCK_TYPES {
+        return err_exit_code(
+            ExitCode::Unsupported4Colors,
+            " can't support this kind of image",
+        )
+        .context();
+    }
+    rinfo.truncate_components.init(jpeg_header);
+    let mut image_data = Vec::<BlockBasedImage>::new();
+    for i in 0..jpeg_header.cmpc {
+        // constructor takes height in proportion to the component[0]
+        image_data.push(BlockBasedImage::new(
+            &jpeg_header,
+            i,
+            0,
+            jpeg_header.cmp_info[0].bcv,
+        ));
+    }
+    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
+    let mut partitions = Vec::new();
+    read_first_scan(
+        &jpeg_header,
+        reader,
+        &mut partitions,
+        &mut image_data[..],
+        rinfo,
+    )
+    .context()?;
+    let mut end_scan = reader.stream_position()?.try_into().unwrap();
+
+    if start_scan + 2 > end_scan {
+        return err_exit_code(ExitCode::UnsupportedJpeg, "no scan data found in JPEG file")
+            .context();
+    }
+    if jpeg_header.jpeg_type == JPegType::Sequential {
+        if rinfo.early_eof_encountered {
+            rinfo
+                .truncate_components
+                .set_truncation_bounds(&jpeg_header, rinfo.max_dpos);
+
+            // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
+            // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
+            // even if early EOF was set to true.
+            reader.seek(SeekFrom::Current(-2))?;
+            rinfo.garbage_data.resize(2, 0);
+            reader.read_exact(&mut rinfo.garbage_data)?;
+        }
+
+        // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
+        reader.read_to_end(&mut rinfo.garbage_data).context()?;
+    } else {
+        assert!(jpeg_header.jpeg_type == JPegType::Progressive);
+
+        if rinfo.early_eof_encountered {
+            return err_exit_code(
+                ExitCode::UnsupportedJpeg,
+                "truncation is only supported for baseline images",
+            )
+            .context();
+        }
+
+        // for progressive images, loop around reading headers and decoding until we a complete image_data
+        while prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
+            callback(&jpeg_header);
+
+            read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
+
+            if rinfo.early_eof_encountered {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "truncation is only supported for baseline images",
+                )
+                .context();
+            }
+        }
+
+        end_scan = reader.stream_position()? as u32;
+
+        // since prepare_to_decode_next_scan consumes the EOI,
+        // we need to add it to the beginning of the garbage data (if there is any)
+        rinfo.garbage_data = Vec::from(EOI);
+
+        // append the rest of the file to the buffer
+        if reader.read_to_end(&mut rinfo.garbage_data).context()? == 0 {
+            // no need to record EOI garbage data if there wasn't anything read
+            rinfo.garbage_data.clear();
+        }
+    }
+
+    Ok((image_data, partitions, end_scan - start_scan))
+}
+
 // false means we hit the end of file marker
-pub fn prepare_to_decode_next_scan<R: Read>(
+fn prepare_to_decode_next_scan<R: Read>(
     jpeg_header: &mut JPegHeader,
     rinfo: &mut ReconstructionInfo,
     reader: &mut R,
@@ -78,10 +192,10 @@ pub fn prepare_to_decode_next_scan<R: Read>(
 ///
 /// This only works for sequential JPEGs or the first scan in a progressive image.
 /// For subsequent scans, use the `read_progressive_scan`.
-pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
+fn read_first_scan<R: BufRead + Seek>(
     jf: &JPegHeader,
     reader: &mut R,
-    partition: &mut FPARTITION,
+    partitions: &mut Vec<(u32, RestartSegmentCodingInfo)>,
     image_data: &mut [BlockBasedImage],
     reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<()> {
@@ -101,12 +215,12 @@ pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
         if jf.jpeg_type == JPegType::Sequential {
             sta = decode_baseline_rst(
                 &mut state,
-                partition,
                 &mut bit_reader,
                 image_data,
                 &mut do_handoff,
                 jf,
                 reconstruct_info,
+                partitions,
             )
             .context()?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
@@ -124,10 +238,10 @@ pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
                 //
                 // TODO: get rid of this and just chop up the scan into sections in Lepton code
                 if do_handoff {
-                    partition(
+                    partitions.push((
                         0,
                         RestartSegmentCodingInfo::new(0, 0, [0; 4], state.get_mcu(), jf),
-                    );
+                    ));
 
                     do_handoff = false;
                 }
@@ -177,7 +291,7 @@ pub fn read_first_scan<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
 /// Reads a scan for progressive images where the image is encoded in multiple passes.
 /// Between each scan are a bunch of header than need to be parsed containing information
 /// like updated Huffman tables and quantization tables.
-pub fn read_progressive_scan<R: BufRead + Seek>(
+fn read_progressive_scan<R: BufRead + Seek>(
     jf: &JPegHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
@@ -369,14 +483,14 @@ pub fn read_progressive_scan<R: BufRead + Seek>(
 }
 
 /// reads an entire interval until the RST code
-fn decode_baseline_rst<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentCodingInfo)>(
+fn decode_baseline_rst<R: BufRead + Seek>(
     state: &mut JpegPositionState,
-    partition: &mut FPARTITION,
     bit_reader: &mut BitReader<R>,
     image_data: &mut [BlockBasedImage],
     do_handoff: &mut bool,
     jpeg_header: &JPegHeader,
     reconstruct_info: &mut ReconstructionInfo,
+    partitions: &mut Vec<(u32, RestartSegmentCodingInfo)>,
 ) -> Result<JPegDecodeStatus> {
     // should have both AC and DC components
     jpeg_header.verify_huffman_table(true, true).context()?;
@@ -388,7 +502,7 @@ fn decode_baseline_rst<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
         if *do_handoff {
             let (bits_already_read, byte_being_read) = bit_reader.overhang();
 
-            partition(
+            partitions.push((
                 bit_reader.get_stream_position(),
                 RestartSegmentCodingInfo::new(
                     byte_being_read,
@@ -397,7 +511,7 @@ fn decode_baseline_rst<R: BufRead + Seek, FPARTITION: FnMut(u32, RestartSegmentC
                     state.get_mcu(),
                     &jpeg_header,
                 ),
-            );
+            ));
 
             *do_handoff = false;
         }
