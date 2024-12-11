@@ -39,9 +39,10 @@ use crate::consts::JPegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::{jpeg_code, LeptonError};
+use crate::LeptonError;
 
 use super::component_info::ComponentInfo;
+use super::jpeg_code;
 use super::truncate_components::TruncateComponents;
 
 /// Information required to partition the coding the JPEG huffman encoded stream of a scan

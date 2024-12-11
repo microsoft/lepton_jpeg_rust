@@ -10,6 +10,7 @@
 mod bit_reader;
 mod bit_writer;
 mod component_info;
+pub mod jpeg_code;
 mod jpeg_position_state;
 
 pub mod block_based_image;

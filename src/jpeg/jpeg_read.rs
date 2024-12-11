@@ -41,6 +41,7 @@ use crate::{consts::*, EnabledFeatures};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
+use super::jpeg_code;
 use super::jpeg_header::{
     parse_jpeg_header, HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
 };
@@ -56,11 +57,20 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
     Vec<BlockBasedImage>,
     Vec<(u32, RestartSegmentCodingInfo)>,
     u32,
+    u32,
 )> {
+    let mut startheader = [0u8; 2];
+    reader.read_exact(&mut startheader)?;
+    if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
+        return err_exit_code(ExitCode::UnsupportedJpeg, "header invalid");
+    }
+
     if !prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
+
     callback(jpeg_header);
+
     if !enabled_features.progressive && jpeg_header.jpeg_type == JPegType::Progressive {
         return err_exit_code(
             ExitCode::ProgressiveUnsupported,
@@ -68,6 +78,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         )
         .context();
     }
+
     if jpeg_header.cmpc > COLOR_CHANNEL_NUM_BLOCK_TYPES {
         return err_exit_code(
             ExitCode::Unsupported4Colors,
@@ -75,6 +86,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         )
         .context();
     }
+
     rinfo.truncate_components.init(jpeg_header);
     let mut image_data = Vec::<BlockBasedImage>::new();
     for i in 0..jpeg_header.cmpc {
@@ -86,6 +98,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
             jpeg_header.cmp_info[0].bcv,
         ));
     }
+
     let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
     let mut partitions = Vec::new();
     read_first_scan(
@@ -102,6 +115,15 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         return err_exit_code(ExitCode::UnsupportedJpeg, "no scan data found in JPEG file")
             .context();
     }
+
+    if partitions.len() == 0 {
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "no scan information found in JPEG file",
+        )
+        .context();
+    }
+
     if jpeg_header.jpeg_type == JPegType::Sequential {
         if rinfo.early_eof_encountered {
             rinfo
@@ -111,7 +133,8 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
             // even if early EOF was set to true.
-            reader.seek(SeekFrom::Current(-2))?;
+            end_scan = reader.seek(SeekFrom::Current(-2))?.try_into().unwrap();
+
             rinfo.garbage_data.resize(2, 0);
             reader.read_exact(&mut rinfo.garbage_data)?;
         }
@@ -157,7 +180,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         }
     }
 
-    Ok((image_data, partitions, end_scan - start_scan))
+    Ok((image_data, partitions, start_scan, end_scan))
 }
 
 // false means we hit the end of file marker

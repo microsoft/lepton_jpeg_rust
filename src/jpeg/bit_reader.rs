@@ -6,9 +6,10 @@
 
 use std::io::{BufRead, Seek};
 
+use super::jpeg_code;
 use crate::helpers::has_ff;
 use crate::lepton_error::{err_exit_code, ExitCode};
-use crate::{jpeg_code, LeptonError};
+use crate::LeptonError;
 
 // Implemenation of bit reader on top of JPEG data stream as read by a reader
 pub struct BitReader<R> {

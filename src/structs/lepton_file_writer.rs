@@ -18,7 +18,6 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JPegHeader;
 use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
-use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
@@ -117,20 +116,11 @@ pub fn read_jpeg<R: BufRead + Seek>(
     enabled_features: &EnabledFeatures,
     callback: fn(&JPegHeader),
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
-    let var_name = [0u8; 2];
-    let mut startheader = var_name;
-    reader.read_exact(&mut startheader)?;
-    if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
-        return err_exit_code(ExitCode::UnsupportedJpeg, "header invalid");
-    }
-
     let mut lp = LeptonHeader::default_boxed();
 
     get_git_revision(&mut lp);
 
-    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
-
-    let (image_data, partitions, scan_length) = read_jpeg_file(
+    let (image_data, partitions, start_scan, end_scan) = read_jpeg_file(
         reader,
         &mut lp.jpeg_header,
         &mut lp.rinfo,
@@ -138,21 +128,13 @@ pub fn read_jpeg<R: BufRead + Seek>(
         callback,
     )?;
 
-    if partitions.len() == 0 {
-        return err_exit_code(
-            ExitCode::UnsupportedJpeg,
-            "no partitions found in JPEG file",
-        )
-        .context();
-    }
-
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
 
     for i in 0..partitions.len() {
         let (segment_offset, r) = &partitions[i];
 
         let segment_size = if i == partitions.len() - 1 {
-            scan_length - segment_offset
+            (end_scan - start_scan) - segment_offset
         } else {
             partitions[i + 1].0 - segment_offset
         };
