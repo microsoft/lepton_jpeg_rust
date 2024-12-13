@@ -18,10 +18,12 @@ use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
 use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
+use crate::structs::lepton_file_writer::read_jpeg;
 use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
@@ -607,41 +609,25 @@ impl LeptonFileReader {
 // test serializing and deserializing header
 #[test]
 fn parse_and_write_header() {
-    use crate::jpeg::jpeg_header::parse_jpeg_header;
     use std::io::Read;
 
-    // minimal jpeg that will pass the validity read tests
-    let min_jpeg = [
-        0xffu8, 0xe0, // APP0
-        0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00,
-        0x00, 0xff, 0xdb, // DQT
-        0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03, 0x02, 0x02, 0x02, 0x03, 0x03,
-        0x03, 0x03, 0x04, 0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08, 0x06, 0x06, 0x05, 0x06, 0x09,
-        0x08, 0x0a, 0x0a, 0x09, 0x08, 0x09, 0x09, 0x0a, 0x0c, 0x0f, 0x0c, 0x0a, 0x0b, 0x0e, 0x0b,
-        0x09, 0x09, 0x0d, 0x11, 0x0d, 0x0e, 0x0f, 0x10, 0x10, 0x11, 0x10, 0x0a, 0x0c, 0x12, 0x13,
-        0x12, 0x10, 0x13, 0x0f, 0x10, 0x10, 0x10, 0xff, 0xC1, 0x00, 0x0b, 0x08, 0x00,
-        0x10, // width
-        0x00, 0x10, // height
-        0x01, // cmpc
-        0x01, // Jid
-        0x11, // sfv / sfh
-        0x00, 0xff, 0xda, // SOS
-        0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd2, 0xcf, 0x20, 0xff, 0xd9, // EOI
-    ];
-
-    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    let min_jpeg = read_file("tiny", ".jpg");
 
     let mut lh = LeptonHeader::default_boxed();
-    lh.jpeg_file_size = 123;
-    lh.uncompressed_lepton_header_size = Some(140);
+    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    parse_jpeg_header(
+    lh.jpeg_file_size = min_jpeg.len() as u32;
+    lh.uncompressed_lepton_header_size = Some(752);
+
+    let (_image_data, _partitions, _start_scan, _end_scan) = read_jpeg_file(
         &mut Cursor::new(min_jpeg),
-        &enabled_features,
         &mut lh.jpeg_header,
         &mut lh.rinfo,
+        &enabled_features,
+        |_| {},
     )
     .unwrap();
+
     lh.thread_handoff.push(ThreadHandoff {
         luma_y_start: 0,
         luma_y_end: 1,
