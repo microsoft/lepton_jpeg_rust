@@ -18,12 +18,10 @@ use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
 use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
-use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
-use crate::structs::lepton_file_writer::read_jpeg;
 use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
@@ -609,6 +607,7 @@ impl LeptonFileReader {
 // test serializing and deserializing header
 #[test]
 fn parse_and_write_header() {
+    use crate::jpeg::jpeg_read::read_jpeg_file;
     use std::io::Read;
 
     let min_jpeg = read_file("tiny", ".jpg");
