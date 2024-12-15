@@ -120,7 +120,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
 
     get_git_revision(&mut lp);
 
-    let (image_data, partitions, start_scan, end_scan) = read_jpeg_file(
+    let (image_data, partitions, end_scan) = read_jpeg_file(
         reader,
         &mut lp.jpeg_header,
         &mut lp.rinfo,
@@ -134,19 +134,19 @@ pub fn read_jpeg<R: BufRead + Seek>(
         let (segment_offset, r) = &partitions[i];
 
         let segment_size = if i == partitions.len() - 1 {
-            (end_scan - start_scan) - segment_offset
+            end_scan - segment_offset
         } else {
             partitions[i + 1].0 - segment_offset
         };
 
         thread_handoff.push(ThreadHandoff {
-            segment_offset_in_file: segment_offset + start_scan,
+            segment_offset_in_file: (*segment_offset).try_into().unwrap(),
             luma_y_start: r.luma_y_start,
             luma_y_end: r.luma_y_end,
             overhang_byte: r.overhang_byte,
             num_overhang_bits: r.num_overhang_bits,
             last_dc: r.last_dc,
-            segment_size,
+            segment_size: segment_size.try_into().unwrap(),
         });
 
         #[cfg(feature = "detailed_tracing")]

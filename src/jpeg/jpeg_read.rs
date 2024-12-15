@@ -47,29 +47,48 @@ use super::jpeg_header::{
 };
 use super::jpeg_position_state::JpegPositionState;
 
+/// Reads a JPEG file from the provided reader and returns the image data. This function is
+/// designed to return all the information needed to reconstruct the a bit-level identical
+/// JPEG file.
+///
+/// In some cases this will not be possible, for example if a JPEG contains certain coding errors
+/// that are non-standard, in which case the function will return an error.
+///
+/// The callback function is called with the JPEG header information after it has been parsed, and
+/// is useful for debugging or logging purposes. Progressive images will contain multiple scans and
+/// call the callback multiple times.
+///
+/// Non-progressive images support the idea of truncating the image (since this happens frequently)
+/// where the bitstream is cut off at an arbitrary point. We assume that all subsequent data is zero,
+/// but remember enough to reconstruct the bitstream until there.
+///
+/// There is also the concept of "garbage data" which is what comes after the scan data but is not
+/// recognized as a header. This garbage data should be appeneded to the end of the file.
 pub fn read_jpeg_file<R: BufRead + Seek>(
     reader: &mut R,
     jpeg_header: &mut JPegHeader,
     rinfo: &mut ReconstructionInfo,
     enabled_features: &EnabledFeatures,
-    callback: fn(&JPegHeader),
+    on_header_callback: fn(&JPegHeader),
 ) -> Result<(
     Vec<BlockBasedImage>,
-    Vec<(u32, RestartSegmentCodingInfo)>,
-    u32,
-    u32,
+    Vec<(u64, RestartSegmentCodingInfo)>,
+    u64,
 )> {
     let mut startheader = [0u8; 2];
-    reader.read_exact(&mut startheader)?;
+    reader.read(&mut startheader)?;
     if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
-        return err_exit_code(ExitCode::UnsupportedJpeg, "header invalid");
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "jpeg must start with with 0xff 0xd8",
+        );
     }
 
     if !prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
     }
 
-    callback(jpeg_header);
+    on_header_callback(jpeg_header);
 
     if !enabled_features.progressive && jpeg_header.jpeg_type == JPegType::Progressive {
         return err_exit_code(
@@ -82,7 +101,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
     if jpeg_header.cmpc > COLOR_CHANNEL_NUM_BLOCK_TYPES {
         return err_exit_code(
             ExitCode::Unsupported4Colors,
-            " can't support this kind of image",
+            "doesn't support 4 color channels",
         )
         .context();
     }
@@ -99,7 +118,8 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         ));
     }
 
-    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
+    let start_scan_position = reader.stream_position()?;
+
     let mut partitions = Vec::new();
     read_first_scan(
         &jpeg_header,
@@ -109,9 +129,9 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         rinfo,
     )
     .context()?;
-    let mut end_scan = reader.stream_position()?.try_into().unwrap();
+    let mut end_scan_position = reader.stream_position()?;
 
-    if start_scan + 2 > end_scan {
+    if start_scan_position + 2 > end_scan_position {
         return err_exit_code(ExitCode::UnsupportedJpeg, "no scan data found in JPEG file")
             .context();
     }
@@ -133,7 +153,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
             // even if early EOF was set to true.
-            end_scan = reader.seek(SeekFrom::Current(-2))?.try_into().unwrap();
+            end_scan_position = reader.seek(SeekFrom::Current(-2))?.try_into().unwrap();
 
             rinfo.garbage_data.resize(2, 0);
             reader.read_exact(&mut rinfo.garbage_data)?;
@@ -154,7 +174,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
         while prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
-            callback(&jpeg_header);
+            on_header_callback(&jpeg_header);
 
             read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
 
@@ -167,7 +187,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
             }
         }
 
-        end_scan = reader.stream_position()? as u32;
+        end_scan_position = reader.stream_position()?;
 
         // since prepare_to_decode_next_scan consumes the EOI,
         // we need to add it to the beginning of the garbage data (if there is any)
@@ -180,7 +200,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         }
     }
 
-    Ok((image_data, partitions, start_scan, end_scan))
+    Ok((image_data, partitions, end_scan_position))
 }
 
 // false means we hit the end of file marker
@@ -218,7 +238,7 @@ fn prepare_to_decode_next_scan<R: Read>(
 fn read_first_scan<R: BufRead + Seek>(
     jf: &JPegHeader,
     reader: &mut R,
-    partitions: &mut Vec<(u32, RestartSegmentCodingInfo)>,
+    partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
     image_data: &mut [BlockBasedImage],
     reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<()> {
@@ -513,7 +533,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
     do_handoff: &mut bool,
     jpeg_header: &JPegHeader,
     reconstruct_info: &mut ReconstructionInfo,
-    partitions: &mut Vec<(u32, RestartSegmentCodingInfo)>,
+    partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
 ) -> Result<JPegDecodeStatus> {
     // should have both AC and DC components
     jpeg_header.verify_huffman_table(true, true).context()?;
@@ -526,7 +546,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
             let (bits_already_read, byte_being_read) = bit_reader.overhang();
 
             partitions.push((
-                bit_reader.get_stream_position(),
+                bit_reader.stream_position(),
                 RestartSegmentCodingInfo::new(
                     byte_being_read,
                     bits_already_read,

@@ -618,7 +618,7 @@ fn parse_and_write_header() {
     lh.jpeg_file_size = min_jpeg.len() as u32;
     lh.uncompressed_lepton_header_size = Some(752);
 
-    let (_image_data, _partitions, _start_scan, _end_scan) = read_jpeg_file(
+    let (_image_data, _partitions, _end_scan) = read_jpeg_file(
         &mut Cursor::new(min_jpeg),
         &mut lh.jpeg_header,
         &mut lh.rinfo,

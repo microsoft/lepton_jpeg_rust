@@ -18,18 +18,20 @@ pub struct BitReader<R> {
     bits_left: u32,
     cpos: u32,
     eof: bool,
-    start_offset: u64,
     truncated_ff: bool,
     read_ahead_bytes: u32,
 }
 
 impl<R: BufRead + Seek> BitReader<R> {
-    pub fn get_stream_position(&mut self) -> u32 {
+    /// Returns the current position in the stream, which corresponds the byte that has
+    /// unread bits in it.
+    ///
+    /// If the last byte was a 0xff, then the position is the byte before
+    /// the 0xff.
+    pub fn stream_position(&mut self) -> u64 {
         self.undo_read_ahead();
 
-        let pos: u32 = (self.inner.stream_position().unwrap() - self.start_offset)
-            .try_into()
-            .unwrap();
+        let pos = self.inner.stream_position().unwrap();
 
         if self.bits_left > 0 && !self.eof {
             if self.bits as u8 == 0xff && !self.truncated_ff {
@@ -42,16 +44,13 @@ impl<R: BufRead + Seek> BitReader<R> {
         }
     }
 
-    pub fn new(mut inner: R) -> Self {
-        let start_offset = inner.stream_position().unwrap();
-
+    pub fn new(inner: R) -> Self {
         BitReader {
             inner: inner,
             bits: 0,
             bits_left: 0,
             cpos: 0,
             eof: false,
-            start_offset,
             truncated_ff: false,
             read_ahead_bytes: 0,
         }
@@ -306,11 +305,11 @@ fn read_simple() {
 
     assert_eq!(1, b.read(4).unwrap());
     assert_eq!((4, 0x10), b.overhang());
-    assert_eq!(0, b.get_stream_position());
+    assert_eq!(0, b.stream_position());
 
     assert_eq!(2, b.read(4).unwrap());
     assert_eq!((0, 0), b.overhang()); // byte is aligned should be no overhang
-    assert_eq!(1, b.get_stream_position());
+    assert_eq!(1, b.stream_position());
 
     assert_eq!(3, b.read(4).unwrap());
     assert_eq!(4, b.read(4).unwrap());
@@ -320,20 +319,20 @@ fn read_simple() {
 
     assert_eq!(0x9f, b.read(8).unwrap());
     assert_eq!((4, 0xf0), b.overhang());
-    assert_eq!(5, b.get_stream_position()); // should be at the beginning of the escape code
+    assert_eq!(5, b.stream_position()); // should be at the beginning of the escape code
 
     assert_eq!(0xfe, b.read(8).unwrap());
     assert_eq!((4, 0xe0), b.overhang());
-    assert_eq!(7, b.get_stream_position()); // now we are after the escape code
+    assert_eq!(7, b.stream_position()); // now we are after the escape code
 
     assert_eq!(0xe, b.read(4).unwrap());
     assert_eq!((0, 0), b.overhang());
-    assert_eq!(8, b.get_stream_position()); // now we read everything and should be at the end of the stream
+    assert_eq!(8, b.stream_position()); // now we read everything and should be at the end of the stream
 
     // read an empty byte passed the end of the stream.. should be zero and trigger EOF
     assert_eq!(0, b.read(8).unwrap());
     assert_eq!(true, b.is_eof());
-    assert_eq!(8, b.get_stream_position()); // still at the same position
+    assert_eq!(8, b.stream_position()); // still at the same position
 }
 
 // what happens when a file has 0xff as the last character (assume that it is an escaped 0xff)
@@ -343,23 +342,23 @@ fn read_truncate_ff() {
 
     let mut b = BitReader::new(Cursor::new(&arr));
 
-    assert_eq!(0, b.get_stream_position());
+    assert_eq!(0, b.stream_position());
 
     assert_eq!(0x1, b.read(4).unwrap());
-    assert_eq!(0, b.get_stream_position());
+    assert_eq!(0, b.stream_position());
 
     assert_eq!(0x2f, b.read(8).unwrap());
     assert_eq!((4, 0xf0), b.overhang());
-    assert_eq!(1, b.get_stream_position());
+    assert_eq!(1, b.stream_position());
 
     // 4 bits left, not EOF yet
     assert_eq!(false, b.is_eof());
 
     assert_eq!(0xf, b.read(4).unwrap());
     assert_eq!(false, b.is_eof()); // now we are at the end really
-    assert_eq!(2, b.get_stream_position());
+    assert_eq!(2, b.stream_position());
 
     assert_eq!(0, b.read(4).unwrap());
     assert_eq!(true, b.is_eof());
-    assert_eq!(2, b.get_stream_position());
+    assert_eq!(2, b.stream_position());
 }
