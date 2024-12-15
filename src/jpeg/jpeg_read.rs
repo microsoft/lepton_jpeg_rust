@@ -48,11 +48,12 @@ use super::jpeg_header::{
 use super::jpeg_position_state::JpegPositionState;
 
 /// Reads a JPEG file from the provided reader and returns the image data. This function is
-/// designed to return all the information needed to reconstruct the a bit-level identical
+/// designed to return all the information needed to reconstruct a bit-level identical
 /// JPEG file.
 ///
 /// In some cases this will not be possible, for example if a JPEG contains certain coding errors
-/// that are non-standard, in which case the function will return an error.
+/// that are non-standard, in which case the function will return an error. This doesn't mean the JPEG
+/// is corrupt, just that it is not supported for identical reconstruction.
 ///
 /// The callback function is called with the JPEG header information after it has been parsed, and
 /// is useful for debugging or logging purposes. Progressive images will contain multiple scans and
