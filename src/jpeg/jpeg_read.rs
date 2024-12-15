@@ -55,6 +55,12 @@ use super::jpeg_position_state::JpegPositionState;
 /// that are non-standard, in which case the function will return an error. This doesn't mean the JPEG
 /// is corrupt, just that it is not supported for identical reconstruction.
 ///
+/// The function returns the image data as a vector of `BlockBasedImage`, which contain the
+/// DCT coefficients for each block in the image (we do perform a DCT, this this would be lossy).
+/// In addition, we return a vector of `RestartSegmentCodingInfo` which contains the information
+/// need to reconstruct a portion of the JPEG file starting at the given offset. This is useful
+/// for baseline images where we can split the image into sections and decode them in parallel.
+///
 /// The callback function is called with the JPEG header information after it has been parsed, and
 /// is useful for debugging or logging purposes. Progressive images will contain multiple scans and
 /// call the callback multiple times.
