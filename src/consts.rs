@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use crate::jpeg::jpeg_code;
+
 #[derive(PartialEq, Debug)]
 pub enum JPegDecodeStatus {
     DecodeInProgress,
@@ -86,8 +88,8 @@ pub const SMALL_FILE_BYTES_PER_ENCDOING_THREAD: usize = 125000;
 pub const MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT: usize = 16; // Number of threads minus 1 should fit in 4 bits
 
 //pub const SingleFFByte : [u8;1] = [ 0xFF ];
-pub const EOI: [u8; 2] = [0xFF, crate::jpeg_code::EOI]; // EOI segment
-pub const SOI: [u8; 2] = [0xFF, crate::jpeg_code::SOI]; // SOI segment
+pub const EOI: [u8; 2] = [0xFF, jpeg_code::EOI]; // EOI segment
+pub const SOI: [u8; 2] = [0xFF, jpeg_code::SOI]; // SOI segment
 pub const LEPTON_FILE_HEADER: [u8; 2] = [0xcf, 0x84]; // the tau symbol for a tau lepton in utf-8
 pub const LEPTON_HEADER_BASELINE_JPEG_TYPE: [u8; 1] = [b'Z'];
 pub const LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE: [u8; 1] = [b'X'];

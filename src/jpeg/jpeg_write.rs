@@ -39,10 +39,11 @@ use crate::consts::{JPegDecodeStatus, JPegType};
 use crate::helpers::u16_bit_length;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 
-use crate::{jpeg_code, Result};
+use crate::Result;
 
 use super::bit_writer::BitWriter;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
+use super::jpeg_code;
 use super::jpeg_header::{HuffCodes, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
