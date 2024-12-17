@@ -124,12 +124,12 @@ impl<W: Write> VPXBoolWriter<W> {
                 self.carry();
             }
 
-            // Append six bytes at a time to the buffer. Faster to add all
-            // 8 and then shrink the buffer than add 6 that creates a temporary buffer.
+            // Append six bytes at a time to the buffer.
             if needs_to_grow(&self.buffer, 8) {
                 // avoid inlining slow path to allocate more memory that happens almost never
                 put_6bytes(&mut self.buffer, v_aligned);
             } else {
+                // Faster to add all 8 and then shrink the buffer than add 6 that creates a temporary buffer.
                 let b = v_aligned.to_be_bytes();
                 self.buffer.extend_from_slice(&b);
                 self.buffer.truncate(self.buffer.len() - 2);
