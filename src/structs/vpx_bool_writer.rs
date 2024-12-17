@@ -24,6 +24,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 
 use std::io::{Result, Write};
 
+use crate::helpers::needs_to_grow;
 use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;
@@ -112,23 +113,33 @@ impl<W: Write> VPXBoolWriter<W> {
 
         // check whether we cannot put next bit into stream
         if tmp_value & (u64::MAX << 57) != 0 {
-            let mut stream_bits = 64 - tmp_value.leading_zeros() - 2;
-            // 62 >= stream_bits >= 56
+            // calculate the number of unaligned bits left after we remove 56 bits
+            let unaligned_bits = tmp_value.leading_zeros() + 2;
 
-            if tmp_value & (1 << stream_bits) != 0 {
+            // shift align so that the top 6 bytes are ones we want to write, if there
+            // was an overflow it get rotated down to the bottom bit
+            let v_aligned = tmp_value.rotate_left(unaligned_bits);
+
+            if (v_aligned & 1) != 0 {
                 self.carry();
             }
 
-            for _stream_bytes in 0..6 {
-                stream_bits -= 8;
-                self.buffer.push((tmp_value >> stream_bits) as u8);
+            // Append six bytes at a time to the buffer. Faster to add all
+            // 8 and then shrink the buffer than add 6 that creates a temporary buffer.
+            if needs_to_grow(&self.buffer, 8) {
+                // avoid inlining slow path to allocate more memory that happens almost never
+                put_6bytes(&mut self.buffer, v_aligned);
+            } else {
+                let b = v_aligned.to_be_bytes();
+                self.buffer.extend_from_slice(&b);
+                self.buffer.truncate(self.buffer.len() - 2);
             }
 
-            tmp_value &= (1 << stream_bits) - 1;
-            tmp_value |= 1 << (stream_bits + 1);
-            // 14 >= stream_bits >= 8
+            // mask the remaining bits and put them back to where they were
+            // adding the marker bit to the top
+            tmp_value = ((v_aligned & 0xffff) | 0x20000/*marker bit*/) >> unaligned_bits;
         }
-        // 55 >= stream_bits >= 8
+
         (tmp_value, tmp_range)
     }
 
@@ -136,7 +147,10 @@ impl<W: Write> VPXBoolWriter<W> {
     /// of the first stream byte - then `carry` cannot be invoked on empty `buffer`,
     /// and after the stream beginning `flush_non_final_data` keeps carry-terminating
     /// byte sequence (one non-255-byte before any number of 255-bytes) inside the `buffer`.
-    #[inline(always)]
+    ///
+    /// Cold to keep this out of the inner loop since carries are pretty rare
+    #[cold]
+    #[inline(never)]
     fn carry(&mut self) {
         let mut x = self.buffer.len() - 1;
 
@@ -308,6 +322,13 @@ impl<W: Write> VPXBoolWriter<W> {
 
         Ok(())
     }
+}
+
+#[cold]
+#[inline(never)]
+fn put_6bytes(buffer: &mut Vec<u8>, v: u64) {
+    let b = v.to_be_bytes();
+    buffer.extend_from_slice(b[0..6].as_ref());
 }
 
 #[cfg(test)]

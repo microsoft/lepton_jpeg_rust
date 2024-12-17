@@ -161,6 +161,14 @@ pub fn calc_sign_index(val: i16) -> usize {
     }
 }
 
+/// This checks to see if a vector can fit additional elements without growing,
+/// but does it in such a way that the optimizer understands that a subsequent
+/// push or extend will not need to grow the vector.
+#[inline(always)]
+pub fn needs_to_grow<T>(v: &Vec<T>, additional: usize) -> bool {
+    additional > v.capacity().wrapping_sub(v.len())
+}
+
 #[cfg(test)]
 pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
     use rand_chacha::rand_core::SeedableRng;
