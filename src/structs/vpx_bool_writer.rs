@@ -113,18 +113,18 @@ impl<W: Write> VPXBoolWriter<W> {
 
         // check whether we cannot put next bit into stream
         if tmp_value & (u64::MAX << 57) != 0 {
-            // calculate the number of unaligned bits left after we remove 56 bits
-            let unaligned_bits = tmp_value.leading_zeros() + 2;
+            // calculate the number of bits left over after we remove 48 (6 bytes) bits
+            let leftover_bits = tmp_value.leading_zeros() + 2;
 
             // shift align so that the top 6 bytes are ones we want to write, if there
             // was an overflow it get rotated down to the bottom bit
-            let v_aligned = tmp_value.rotate_left(unaligned_bits);
+            let v_aligned = tmp_value.rotate_left(leftover_bits);
 
             if (v_aligned & 1) != 0 {
                 self.carry();
             }
 
-            // Append six bytes at a time to the buffer.
+            // Append the top six bytes of the u64 into buffer in big endian so that the top byte goes first.
             if needs_to_grow(&self.buffer, 8) {
                 // avoid inlining slow path to allocate more memory that happens almost never
                 put_6bytes(&mut self.buffer, v_aligned);
@@ -135,9 +135,9 @@ impl<W: Write> VPXBoolWriter<W> {
                 self.buffer.truncate(self.buffer.len() - 2);
             }
 
-            // mask the remaining bits and put them back to where they were
+            // mask the remaining bits (<= 16) and put them back to where they were
             // adding the marker bit to the top
-            tmp_value = ((v_aligned & 0xffff) | 0x20000/*marker bit*/) >> unaligned_bits;
+            tmp_value = ((v_aligned & 0xffff) | 0x20000/*marker bit*/) >> leftover_bits;
         }
 
         (tmp_value, tmp_range)
