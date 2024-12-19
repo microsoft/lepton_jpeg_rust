@@ -113,11 +113,17 @@ impl<W: Write> VPXBoolWriter<W> {
 
         // check whether we cannot put next bit into stream
         if tmp_value & (u64::MAX << 57) != 0 {
-            // calculate the number of bits left over after we remove 48 (6 bytes) bits
+            // calculate the number odd bits left over after we remove:
+            // - 48 bits (6 bytes) flushed to buffer
+            // - 8 bits need to keep for coding accuracy (since probability resolution is 8 bits)
+            // - 1 bit for marker
+            // - 1 bit for overflow
+            //
+            // leftover_bits will always be <= 8
             let leftover_bits = tmp_value.leading_zeros() + 2;
 
             // shift align so that the top 6 bytes are ones we want to write, if there
-            // was an overflow it get rotated down to the bottom bit
+            // was an overflow it gets rotated down to the bottom bit
             let v_aligned = tmp_value.rotate_left(leftover_bits);
 
             if (v_aligned & 1) != 0 {
@@ -135,7 +141,7 @@ impl<W: Write> VPXBoolWriter<W> {
                 self.buffer.truncate(self.buffer.len() - 2);
             }
 
-            // mask the remaining bits (<= 16) and put them back to where they were
+            // mask the remaining bits (between 8 and 16) and put them back to where they were
             // adding the marker bit to the top
             tmp_value = ((v_aligned & 0xffff) | 0x20000/*marker bit*/) >> leftover_bits;
         }
