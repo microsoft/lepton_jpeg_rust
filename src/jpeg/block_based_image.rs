@@ -10,7 +10,7 @@ use wide::{i16x8, CmpEq};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
 
-use super::jpeg_header::JPegHeader;
+use super::jpeg_header::JpegHeader;
 
 /// holds the 8x8 blocks for a given component. Since we do multithreaded encoding,
 /// the image may only hold a subset of the components (specified by dpos_offset),
@@ -30,7 +30,7 @@ static EMPTY: AlignedBlock = AlignedBlock { raw_data: [0; 64] };
 impl BlockBasedImage {
     // constructs new block image for the given y-coordinate range
     pub fn new(
-        jpeg_header: &JPegHeader,
+        jpeg_header: &JpegHeader,
         component: usize,
         luma_y_start: u32,
         luma_y_end: u32,

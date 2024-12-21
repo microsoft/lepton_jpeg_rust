@@ -32,16 +32,17 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-use std::io::Read;
+use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
-use crate::consts::JPegType;
+use crate::consts::JpegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::{jpeg_code, LeptonError};
+use crate::LeptonError;
 
 use super::component_info::ComponentInfo;
+use super::jpeg_code;
 use super::truncate_components::TruncateComponents;
 
 /// Information required to partition the coding the JPEG huffman encoded stream of a scan
@@ -65,7 +66,7 @@ impl RestartSegmentCodingInfo {
         num_overhang_bits: u8,
         last_dc: [i16; 4],
         mcu: u32,
-        jf: &JPegHeader,
+        jf: &JpegHeader,
     ) -> Self {
         let mcu_y = mcu / jf.mcuh;
         let luma_mul = jf.cmp_info[0].bcv / jf.mcuv;
@@ -124,6 +125,71 @@ pub struct ReconstructionInfo {
 
     /// information about how to truncate the image if it was partially written
     pub truncate_components: TruncateComponents,
+
+    /// trailing RST marking information
+    pub rst_err: Vec<u8>,
+
+    /// raw jpeg header to be written back to the file when it is recreated
+    pub raw_jpeg_header: Vec<u8>,
+
+    /// garbage data (default value - empty segment - means no garbage data)
+    pub garbage_data: Vec<u8>,
+}
+
+pub fn parse_jpeg_header<R: Read>(
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+    jpeg_header: &mut JpegHeader,
+    rinfo: &mut ReconstructionInfo,
+) -> Result<bool> {
+    // the raw header in the lepton file can actually be spread across different sections
+    // seperated by the Start-of-Scan marker. We use the mirror to write out whatever
+    // data we parse until we hit the SOS
+
+    let mut output = Vec::new();
+    let mut output_cursor = Cursor::new(&mut output);
+
+    let mut mirror = Mirror::new(reader, &mut output_cursor);
+
+    if jpeg_header.parse(&mut mirror, enabled_features).context()? {
+        // append the header if it was not the end of file marker
+        rinfo.raw_jpeg_header.append(&mut output);
+        return Ok(true);
+    } else {
+        // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
+        // but we don't want the EOI since that goes into the garbage data.
+        if output.len() > 2 {
+            rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
+        }
+
+        return Ok(false);
+    }
+}
+
+// internal utility we use to collect the header that we read for later
+struct Mirror<'a, R, W> {
+    read: &'a mut R,
+    output: &'a mut W,
+    amount_written: usize,
+}
+
+impl<'a, R, W> Mirror<'a, R, W> {
+    pub fn new(read: &'a mut R, output: &'a mut W) -> Self {
+        Mirror {
+            read,
+            output,
+            amount_written: 0,
+        }
+    }
+}
+
+impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.read.read(buf)?;
+        self.output.write_all(&buf[..n])?;
+        self.amount_written += n;
+        Ok(n)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -349,7 +415,7 @@ impl HuffTree {
 
 /// JPEG information parsed out of segments found before the image segment
 #[derive(Debug, Clone)]
-pub struct JPegHeader {
+pub struct JpegHeader {
     /// quantization tables 4 x 64
     pub q_tables: [[u16; 64]; 4],
 
@@ -374,7 +440,7 @@ pub struct JPegHeader {
     /// height of image
     pub img_height: u32,
 
-    pub jpeg_type: JPegType,
+    pub jpeg_type: JpegType,
 
     /// max horizontal sample factor
     pub sfhm: u32,
@@ -419,9 +485,9 @@ enum ParseSegmentResult {
     SOS,
 }
 
-impl Default for JPegHeader {
+impl Default for JpegHeader {
     fn default() -> Self {
-        return JPegHeader {
+        return JpegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
@@ -435,7 +501,7 @@ impl Default for JPegHeader {
             cmpc: 0,
             img_width: 0,
             img_height: 0,
-            jpeg_type: JPegType::Unknown,
+            jpeg_type: JpegType::Unknown,
             sfhm: 0,
             sfvm: 0,
             mcuv: NonZeroU32::MIN,
@@ -452,7 +518,7 @@ impl Default for JPegHeader {
     }
 }
 
-impl JPegHeader {
+impl JpegHeader {
     #[inline(always)]
     pub(super) fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
@@ -510,7 +576,7 @@ impl JPegHeader {
             if (self.cmp_info[cmp].sfv == 0)
                 || (self.cmp_info[cmp].sfh == 0)
                 || (self.q_tables[usize::from(self.cmp_info[cmp].q_table_index)][0] == 0)
-                || (self.jpeg_type == JPegType::Unknown)
+                || (self.jpeg_type == JpegType::Unknown)
             {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
@@ -819,7 +885,7 @@ impl JPegHeader {
             jpeg_code::SOF1| // SOF1 segment, coding process: extended sequential DCT
             jpeg_code::SOF2 =>  // SOF2 segment, coding process: progressive DCT
             {
-                if self.jpeg_type != JPegType::Unknown
+                if self.jpeg_type != JpegType::Unknown
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image cannot have multiple SOF blocks");
                 }
@@ -827,11 +893,11 @@ impl JPegHeader {
                 // set JPEG coding type
                 if btype == jpeg_code::SOF2
                 {
-                    self.jpeg_type = JPegType::Progressive;
+                    self.jpeg_type = JpegType::Progressive;
                 }
                 else
                 {
-                    self.jpeg_type = JPegType::Sequential;
+                    self.jpeg_type = JpegType::Sequential;
                 }
 
                 ensure_space(segment,hpos, 6).context()?;
