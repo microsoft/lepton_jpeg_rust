@@ -43,7 +43,7 @@ use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_code;
 use super::jpeg_header::{
-    parse_jpeg_header, HuffTree, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
+    parse_jpeg_header, HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
 };
 use super::jpeg_position_state::JpegPositionState;
 
@@ -73,10 +73,10 @@ use super::jpeg_position_state::JpegPositionState;
 /// recognized as a header. This garbage data should be appeneded to the end of the file.
 pub fn read_jpeg_file<R: BufRead + Seek>(
     reader: &mut R,
-    jpeg_header: &mut JPegHeader,
+    jpeg_header: &mut JpegHeader,
     rinfo: &mut ReconstructionInfo,
     enabled_features: &EnabledFeatures,
-    on_header_callback: fn(&JPegHeader),
+    on_header_callback: fn(&JpegHeader),
 ) -> Result<(
     Vec<BlockBasedImage>,
     Vec<(u64, RestartSegmentCodingInfo)>,
@@ -92,12 +92,12 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
     }
 
     if !prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
-        return err_exit_code(ExitCode::UnsupportedJpeg, "JPeg does not contain scans");
+        return err_exit_code(ExitCode::UnsupportedJpeg, "Jpeg does not contain scans");
     }
 
     on_header_callback(jpeg_header);
 
-    if !enabled_features.progressive && jpeg_header.jpeg_type == JPegType::Progressive {
+    if !enabled_features.progressive && jpeg_header.jpeg_type == JpegType::Progressive {
         return err_exit_code(
             ExitCode::ProgressiveUnsupported,
             "file is progressive, but this is disabled",
@@ -151,7 +151,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         .context();
     }
 
-    if jpeg_header.jpeg_type == JPegType::Sequential {
+    if jpeg_header.jpeg_type == JpegType::Sequential {
         if rinfo.early_eof_encountered {
             rinfo
                 .truncate_components
@@ -169,7 +169,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
         reader.read_to_end(&mut rinfo.garbage_data).context()?;
     } else {
-        assert!(jpeg_header.jpeg_type == JPegType::Progressive);
+        assert!(jpeg_header.jpeg_type == JpegType::Progressive);
 
         if rinfo.early_eof_encountered {
             return err_exit_code(
@@ -212,7 +212,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
 
 // false means we hit the end of file marker
 fn prepare_to_decode_next_scan<R: Read>(
-    jpeg_header: &mut JPegHeader,
+    jpeg_header: &mut JpegHeader,
     rinfo: &mut ReconstructionInfo,
     reader: &mut R,
     enabled_features: &EnabledFeatures,
@@ -243,7 +243,7 @@ fn prepare_to_decode_next_scan<R: Read>(
 /// This only works for sequential JPEGs or the first scan in a progressive image.
 /// For subsequent scans, use the `read_progressive_scan`.
 fn read_first_scan<R: BufRead + Seek>(
-    jf: &JPegHeader,
+    jf: &JpegHeader,
     reader: &mut R,
     partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
     image_data: &mut [BlockBasedImage],
@@ -257,12 +257,12 @@ fn read_first_scan<R: BufRead + Seek>(
     let mut do_handoff = true;
 
     // JPEG imagedata decoding routines
-    let mut sta = JPegDecodeStatus::DecodeInProgress;
-    while sta != JPegDecodeStatus::ScanCompleted {
+    let mut sta = JpegDecodeStatus::DecodeInProgress;
+    while sta != JpegDecodeStatus::ScanCompleted {
         // decoding for interleaved data
         state.reset_rstw(jf); // restart wait counter
 
-        if jf.jpeg_type == JPegType::Sequential {
+        if jf.jpeg_type == JpegType::Sequential {
             sta = decode_baseline_rst(
                 &mut state,
                 &mut bit_reader,
@@ -279,7 +279,7 @@ fn read_first_scan<R: BufRead + Seek>(
 
             let mut last_dc = [0i16; 4];
 
-            while sta == JPegDecodeStatus::DecodeInProgress {
+            while sta == JpegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
                 // collect the handoffs although for progressive images
@@ -329,10 +329,10 @@ fn read_first_scan<R: BufRead + Seek>(
 
         // verify that we got the right RST code here since the above should do 1 mcu.
         // If we didn't then we won't re-encode the file binary identical so there's no point in continuing
-        if sta == JPegDecodeStatus::RestartIntervalExpired {
+        if sta == JpegDecodeStatus::RestartIntervalExpired {
             bit_reader.verify_reset_code().context()?;
 
-            sta = JPegDecodeStatus::DecodeInProgress;
+            sta = JpegDecodeStatus::DecodeInProgress;
         }
     }
     Ok(())
@@ -342,7 +342,7 @@ fn read_first_scan<R: BufRead + Seek>(
 /// Between each scan are a bunch of header than need to be parsed containing information
 /// like updated Huffman tables and quantization tables.
 fn read_progressive_scan<R: BufRead + Seek>(
-    jf: &JPegHeader,
+    jf: &JpegHeader,
     reader: &mut R,
     image_data: &mut [BlockBasedImage],
     reconstruct_info: &mut ReconstructionInfo,
@@ -357,8 +357,8 @@ fn read_progressive_scan<R: BufRead + Seek>(
     let mut state = JpegPositionState::new(jf, 0);
 
     // JPEG imagedata decoding routines
-    let mut sta = JPegDecodeStatus::DecodeInProgress;
-    while sta != JPegDecodeStatus::ScanCompleted {
+    let mut sta = JpegDecodeStatus::DecodeInProgress;
+    while sta != JpegDecodeStatus::ScanCompleted {
         // decoding for interleaved data
         state.reset_rstw(&jf); // restart wait counter
 
@@ -374,7 +374,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
             // only need DC
             jf.verify_huffman_table(true, false).context()?;
 
-            while sta == JPegDecodeStatus::DecodeInProgress {
+            while sta == JpegDecodeStatus::DecodeInProgress {
                 let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
                 // ---> progressive DC encoding <---
@@ -419,7 +419,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                 // ---> succesive approximation first stage <---
                 let mut block = [0; 64];
 
-                while sta == JPegDecodeStatus::DecodeInProgress {
+                while sta == JpegDecodeStatus::DecodeInProgress {
                     let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
                     if state.eobrun == 0 {
@@ -452,7 +452,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                     sta = state.skip_eobrun(&jf).context()?;
 
                     // proceed only if no error encountered
-                    if sta == JPegDecodeStatus::DecodeInProgress {
+                    if sta == JpegDecodeStatus::DecodeInProgress {
                         sta = state.next_mcu_pos(jf);
                     }
                 }
@@ -461,7 +461,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
 
                 let mut block = [0; 64];
 
-                while sta == JPegDecodeStatus::DecodeInProgress {
+                while sta == JpegDecodeStatus::DecodeInProgress {
                     let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
 
                     for bpos in jf.cs_from..jf.cs_to + 1 {
@@ -522,10 +522,10 @@ fn read_progressive_scan<R: BufRead + Seek>(
 
         // verify that we got the right RST code here since the above should do 1 mcu.
         // If we didn't then we won't re-encode the file binary identical so there's no point in continuing
-        if sta == JPegDecodeStatus::RestartIntervalExpired {
+        if sta == JpegDecodeStatus::RestartIntervalExpired {
             bit_reader.verify_reset_code().context()?;
 
-            sta = JPegDecodeStatus::DecodeInProgress;
+            sta = JpegDecodeStatus::DecodeInProgress;
         }
     }
 
@@ -538,17 +538,17 @@ fn decode_baseline_rst<R: BufRead + Seek>(
     bit_reader: &mut BitReader<R>,
     image_data: &mut [BlockBasedImage],
     do_handoff: &mut bool,
-    jpeg_header: &JPegHeader,
+    jpeg_header: &JpegHeader,
     reconstruct_info: &mut ReconstructionInfo,
     partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
-) -> Result<JPegDecodeStatus> {
+) -> Result<JpegDecodeStatus> {
     // should have both AC and DC components
     jpeg_header.verify_huffman_table(true, true).context()?;
 
-    let mut sta = JPegDecodeStatus::DecodeInProgress;
+    let mut sta = JpegDecodeStatus::DecodeInProgress;
     let mut lastdc = [0i16; 4]; // (re)set last DCs for diff coding
 
-    while sta == JPegDecodeStatus::DecodeInProgress {
+    while sta == JpegDecodeStatus::DecodeInProgress {
         if *do_handoff {
             let (bits_already_read, byte_being_read) = bit_reader.overhang();
 
@@ -606,7 +606,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         }
 
         if bit_reader.is_eof() {
-            sta = JPegDecodeStatus::ScanCompleted;
+            sta = JpegDecodeStatus::ScanCompleted;
             reconstruct_info.early_eof_encountered = true;
         }
     }

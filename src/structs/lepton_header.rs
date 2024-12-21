@@ -8,7 +8,7 @@ use flate2::Compression;
 
 use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
-use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo};
+use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::EnabledFeatures;
@@ -26,7 +26,7 @@ pub struct LeptonHeader {
 
     pub thread_handoff: Vec<ThreadHandoff>,
 
-    pub jpeg_header: JPegHeader,
+    pub jpeg_header: JpegHeader,
 
     pub rinfo: ReconstructionInfo,
 
@@ -348,7 +348,7 @@ impl LeptonHeader {
         writer.write_all(&LEPTON_FILE_HEADER)?;
         writer.write_u8(LEPTON_VERSION)?;
 
-        if self.jpeg_header.jpeg_type == JPegType::Progressive {
+        if self.jpeg_header.jpeg_type == JpegType::Progressive {
             writer.write_all(&LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE)?;
         } else {
             writer.write_all(&LEPTON_HEADER_BASELINE_JPEG_TYPE)?;

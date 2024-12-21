@@ -6,7 +6,7 @@
 
 use crate::consts::*;
 use crate::helpers::*;
-use crate::jpeg::jpeg_header::JPegHeader;
+use crate::jpeg::jpeg_header::JpegHeader;
 use crate::lepton_error::err_exit_code;
 use crate::{ExitCode, Result};
 
@@ -21,7 +21,7 @@ pub struct QuantizationTables {
 }
 
 impl QuantizationTables {
-    pub fn new(jpeg_header: &JPegHeader, component: usize) -> Self {
+    pub fn new(jpeg_header: &JpegHeader, component: usize) -> Self {
         Self::new_from_table(
             &jpeg_header.q_tables[usize::from(jpeg_header.cmp_info[component].q_table_index)],
         )
@@ -65,7 +65,7 @@ impl QuantizationTables {
 
     /// constructs the quantization table based on the jpeg header
     pub fn construct_quantization_tables(
-        jpeg_header: &JPegHeader,
+        jpeg_header: &JpegHeader,
     ) -> Result<Vec<QuantizationTables>> {
         let mut quantization_tables = Vec::new();
         for i in 0..jpeg_header.cmpc {

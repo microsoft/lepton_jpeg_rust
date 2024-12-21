@@ -7,7 +7,7 @@
 use std::cmp;
 
 use super::component_info::ComponentInfo;
-use super::jpeg_header::JPegHeader;
+use super::jpeg_header::JpegHeader;
 
 #[derive(Debug, Clone)]
 struct TrucateComponentsInfo {
@@ -39,7 +39,7 @@ impl Default for TruncateComponents {
 }
 
 impl TruncateComponents {
-    pub fn init(&mut self, jpeg_header: &JPegHeader) {
+    pub fn init(&mut self, jpeg_header: &JpegHeader) {
         self.mcu_count_horizontal = jpeg_header.mcuh.get();
         self.mcu_count_vertical = jpeg_header.mcuv.get();
         self.components_count = jpeg_header.cmpc;
@@ -61,7 +61,7 @@ impl TruncateComponents {
         return retval;
     }
 
-    pub fn set_truncation_bounds(&mut self, jpeg_header: &JPegHeader, max_d_pos: [u32; 4]) {
+    pub fn set_truncation_bounds(&mut self, jpeg_header: &JpegHeader, max_d_pos: [u32; 4]) {
         for i in 0..self.components_count {
             TruncateComponents::set_block_count_d_pos(
                 &mut self.trunc_info[i],

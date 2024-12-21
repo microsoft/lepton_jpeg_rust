@@ -17,7 +17,7 @@ use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
-use crate::jpeg::jpeg_header::{JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
@@ -414,7 +414,7 @@ impl LeptonFileReader {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
         }
-        Ok(if lh.jpeg_header.jpeg_type == JPegType::Progressive {
+        Ok(if lh.jpeg_header.jpeg_type == JpegType::Progressive {
             let mux = Self::run_lepton_decoder_threads(
                 lh,
                 enabled_features,
@@ -512,7 +512,7 @@ impl LeptonFileReader {
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,
-            jpeg_header: &JPegHeader,
+            jpeg_header: &JpegHeader,
             rinfo: &ReconstructionInfo,
         ) -> Result<P>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
@@ -548,7 +548,7 @@ impl LeptonFileReader {
 
     /// the logic of a decoder thread. Takes a range of rows
     fn run_lepton_decoder_processor<P>(
-        jpeg_header: &JPegHeader,
+        jpeg_header: &JpegHeader,
         rinfo: &ReconstructionInfo,
         thread_handoff: &ThreadHandoff,
         is_last_thread: bool,
@@ -558,7 +558,7 @@ impl LeptonFileReader {
         process: fn(
             &ThreadHandoff,
             Vec<BlockBasedImage>,
-            &JPegHeader,
+            &JpegHeader,
             &ReconstructionInfo,
         ) -> Result<P>,
     ) -> Result<(Metrics, P)> {

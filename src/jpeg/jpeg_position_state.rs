@@ -4,11 +4,11 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use crate::consts::{JPegDecodeStatus, JPegType};
+use crate::consts::{JpegDecodeStatus, JpegType};
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 use crate::{LeptonError, Result};
 
-use super::jpeg_header::{HuffCodes, JPegHeader};
+use super::jpeg_header::{HuffCodes, JpegHeader};
 
 /// used to keep track of position while encoding or decoding a jpeg
 pub struct JpegPositionState {
@@ -40,7 +40,7 @@ pub struct JpegPositionState {
 }
 
 impl JpegPositionState {
-    pub fn new(jf: &JPegHeader, mcu: u32) -> Self {
+    pub fn new(jf: &JpegHeader, mcu: u32) -> Self {
         let cmp = jf.cs_cmp[0];
         let mcumul = jf.cmp_info[cmp].sfv * jf.cmp_info[cmp].sfh;
 
@@ -71,7 +71,7 @@ impl JpegPositionState {
         self.cmp
     }
 
-    pub fn get_cumulative_reset_markers(&self, jf: &JPegHeader) -> u32 {
+    pub fn get_cumulative_reset_markers(&self, jf: &JpegHeader) -> u32 {
         if self.rstw != 0 {
             self.get_mcu() / jf.rsti
         } else {
@@ -79,7 +79,7 @@ impl JpegPositionState {
         }
     }
 
-    pub fn reset_rstw(&mut self, jf: &JPegHeader) {
+    pub fn reset_rstw(&mut self, jf: &JpegHeader) {
         self.rstw = jf.rsti;
 
         // eobruns don't span reset intervals
@@ -87,7 +87,7 @@ impl JpegPositionState {
     }
 
     /// calculates next position (non interleaved)
-    fn next_mcu_pos_noninterleaved(&mut self, jf: &JPegHeader) -> JPegDecodeStatus {
+    fn next_mcu_pos_noninterleaved(&mut self, jf: &JpegHeader) -> JpegDecodeStatus {
         // increment position
         self.dpos += 1;
 
@@ -104,31 +104,31 @@ impl JpegPositionState {
         }
 
         // now we've updated dpos, update the current MCU to be a fraction of that
-        if jf.jpeg_type == JPegType::Sequential {
+        if jf.jpeg_type == JpegType::Sequential {
             self.mcu = self.dpos / (cmp_info.sfv * cmp_info.sfh);
         }
 
         // check position
         if self.dpos >= cmp_info.bc {
-            return JPegDecodeStatus::ScanCompleted;
+            return JpegDecodeStatus::ScanCompleted;
         } else if jf.rsti > 0 {
             self.rstw -= 1;
             if self.rstw == 0 {
-                return JPegDecodeStatus::RestartIntervalExpired;
+                return JpegDecodeStatus::RestartIntervalExpired;
             }
         }
 
-        return JPegDecodeStatus::DecodeInProgress;
+        return JpegDecodeStatus::DecodeInProgress;
     }
 
     /// calculates next position for MCU
-    pub fn next_mcu_pos(&mut self, jf: &JPegHeader) -> JPegDecodeStatus {
+    pub fn next_mcu_pos(&mut self, jf: &JpegHeader) -> JpegDecodeStatus {
         // if there is just one component, go the simple route
         if jf.cs_cmpc == 1 {
             return self.next_mcu_pos_noninterleaved(jf);
         }
 
-        let mut sta = JPegDecodeStatus::DecodeInProgress; // status
+        let mut sta = JpegDecodeStatus::DecodeInProgress; // status
         let local_mcuh = jf.mcuh.get();
         let mut local_mcu = self.mcu;
         let mut local_cmp = self.cmp;
@@ -152,11 +152,11 @@ impl JpegPositionState {
                 local_mcu = self.mcu;
 
                 if local_mcu >= jf.mcuc {
-                    sta = JPegDecodeStatus::ScanCompleted;
+                    sta = JpegDecodeStatus::ScanCompleted;
                 } else if jf.rsti > 0 {
                     self.rstw -= 1;
                     if self.rstw == 0 {
-                        sta = JPegDecodeStatus::RestartIntervalExpired;
+                        sta = JpegDecodeStatus::RestartIntervalExpired;
                     }
                 }
             } else {
@@ -193,11 +193,11 @@ impl JpegPositionState {
     }
 
     /// skips the eobrun, calculates next position
-    pub fn skip_eobrun(&mut self, jf: &JPegHeader) -> Result<JPegDecodeStatus> {
+    pub fn skip_eobrun(&mut self, jf: &JpegHeader) -> Result<JpegDecodeStatus> {
         assert!(jf.cs_cmpc == 1, "this code only works for non-interleved");
 
         if (self.eobrun) == 0 {
-            return Ok(JPegDecodeStatus::DecodeInProgress);
+            return Ok(JpegDecodeStatus::DecodeInProgress);
         }
 
         // compare rst wait counter if needed
@@ -244,7 +244,7 @@ impl JpegPositionState {
 
         // check position to see if we are done decoding
         if self.dpos == cmp_info.bc {
-            Ok(JPegDecodeStatus::ScanCompleted)
+            Ok(JpegDecodeStatus::ScanCompleted)
         } else if self.dpos > cmp_info.bc {
             err_exit_code(
                 ExitCode::UnsupportedJpeg,
@@ -252,9 +252,9 @@ impl JpegPositionState {
             )
             .context()
         } else if jf.rsti > 0 && self.rstw == 0 {
-            Ok(JPegDecodeStatus::RestartIntervalExpired)
+            Ok(JpegDecodeStatus::RestartIntervalExpired)
         } else {
-            Ok(JPegDecodeStatus::DecodeInProgress)
+            Ok(JpegDecodeStatus::DecodeInProgress)
         }
     }
 

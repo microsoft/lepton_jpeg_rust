@@ -7,14 +7,14 @@
 use crate::jpeg::jpeg_code;
 
 #[derive(PartialEq, Debug)]
-pub enum JPegDecodeStatus {
+pub enum JpegDecodeStatus {
     DecodeInProgress,
     RestartIntervalExpired,
     ScanCompleted,
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
-pub enum JPegType {
+pub enum JpegType {
     Unknown,
     Sequential,
     Progressive,

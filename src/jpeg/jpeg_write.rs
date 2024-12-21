@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 use bytemuck::{cast, cast_ref};
 use wide::{i16x16, CmpEq};
 
-use crate::consts::{JPegDecodeStatus, JPegType};
+use crate::consts::{JpegDecodeStatus, JpegType};
 use crate::helpers::u16_bit_length;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
 
@@ -44,7 +44,7 @@ use crate::Result;
 use super::bit_writer::BitWriter;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_code;
-use super::jpeg_header::{HuffCodes, JPegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
+use super::jpeg_header::{HuffCodes, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
 
@@ -56,7 +56,7 @@ pub fn jpeg_write_baseline_row_range(
     encoded_length: usize,
     restart_info: &RestartSegmentCodingInfo,
     image_data: &[BlockBasedImage],
-    jpeg_header: &JPegHeader,
+    jpeg_header: &JpegHeader,
     rinfo: &ReconstructionInfo,
 ) -> Result<Vec<u8>> {
     let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
@@ -117,7 +117,7 @@ pub fn jpeg_write_baseline_row_range(
 /// supports progressive encoding whereas the row range version does not
 pub fn jpeg_write_entire_scan(
     image_data: &[BlockBasedImage],
-    jpeg_header: &JPegHeader,
+    jpeg_header: &JpegHeader,
     rinfo: &ReconstructionInfo,
     current_scan_index: usize,
 ) -> Result<Vec<u8>> {
@@ -173,7 +173,7 @@ fn recode_one_mcu_row(
     mcu: u32,
     lastdc: &mut [i16],
     framebuffer: &[BlockBasedImage],
-    jf: &JPegHeader,
+    jf: &JpegHeader,
     rinfo: &ReconstructionInfo,
     current_scan_index: usize,
 ) -> Result<bool> {
@@ -187,15 +187,15 @@ fn recode_one_mcu_row(
     // JPEG imagedata encoding routines
     while !end_of_row {
         // (re)set status
-        let mut sta = JPegDecodeStatus::DecodeInProgress;
+        let mut sta = JpegDecodeStatus::DecodeInProgress;
 
         // ---> sequential interleaved encoding <---
-        while sta == JPegDecodeStatus::DecodeInProgress {
+        while sta == JpegDecodeStatus::DecodeInProgress {
             let current_block = framebuffer[state.get_cmp()].get_block(state.get_dpos());
 
             let old_mcu = state.get_mcu();
 
-            if jf.jpeg_type == JPegType::Sequential {
+            if jf.jpeg_type == JpegType::Sequential {
                 // unzigzag
                 let mut block = current_block.zigzag_from_transposed();
 
@@ -271,7 +271,7 @@ fn recode_one_mcu_row(
                     sta = state.next_mcu_pos(jf);
 
                     // encode remaining eobrun (iff end of mcu or scan)
-                    if sta != JPegDecodeStatus::DecodeInProgress {
+                    if sta != JpegDecodeStatus::DecodeInProgress {
                         encode_eobrun(huffw, jf.get_huff_ac_codes(state.get_cmp()), &mut state);
                     }
                 } else {
@@ -292,7 +292,7 @@ fn recode_one_mcu_row(
                     sta = state.next_mcu_pos(jf);
 
                     // encode remaining eobrun and correction bits (iff end of mcu or scan)
-                    if sta != JPegDecodeStatus::DecodeInProgress {
+                    if sta != JpegDecodeStatus::DecodeInProgress {
                         encode_eobrun(huffw, jf.get_huff_ac_codes(state.get_cmp()), &mut state);
 
                         // encode remaining correction bits
@@ -303,7 +303,7 @@ fn recode_one_mcu_row(
 
             if old_mcu != state.get_mcu() && state.get_mcu() % jf.mcuh == 0 {
                 end_of_row = true;
-                if sta == JPegDecodeStatus::DecodeInProgress {
+                if sta == JpegDecodeStatus::DecodeInProgress {
                     // completed only MCU aligned row, not reset interval so don't emit anything special
                     return Ok(false);
                 }
@@ -319,10 +319,10 @@ fn recode_one_mcu_row(
         );
 
         // evaluate status
-        if sta == JPegDecodeStatus::ScanCompleted {
+        if sta == JpegDecodeStatus::ScanCompleted {
             return Ok(true); // leave decoding loop, everything is done here
         } else {
-            assert!(sta == JPegDecodeStatus::RestartIntervalExpired);
+            assert!(sta == JpegDecodeStatus::RestartIntervalExpired);
 
             // status 1 means restart
             if jf.rsti > 0 {

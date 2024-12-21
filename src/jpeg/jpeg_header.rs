@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
-use crate::consts::JPegType;
+use crate::consts::JpegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -66,7 +66,7 @@ impl RestartSegmentCodingInfo {
         num_overhang_bits: u8,
         last_dc: [i16; 4],
         mcu: u32,
-        jf: &JPegHeader,
+        jf: &JpegHeader,
     ) -> Self {
         let mcu_y = mcu / jf.mcuh;
         let luma_mul = jf.cmp_info[0].bcv / jf.mcuv;
@@ -139,7 +139,7 @@ pub struct ReconstructionInfo {
 pub fn parse_jpeg_header<R: Read>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    jpeg_header: &mut JPegHeader,
+    jpeg_header: &mut JpegHeader,
     rinfo: &mut ReconstructionInfo,
 ) -> Result<bool> {
     // the raw header in the lepton file can actually be spread across different sections
@@ -415,7 +415,7 @@ impl HuffTree {
 
 /// JPEG information parsed out of segments found before the image segment
 #[derive(Debug, Clone)]
-pub struct JPegHeader {
+pub struct JpegHeader {
     /// quantization tables 4 x 64
     pub q_tables: [[u16; 64]; 4],
 
@@ -440,7 +440,7 @@ pub struct JPegHeader {
     /// height of image
     pub img_height: u32,
 
-    pub jpeg_type: JPegType,
+    pub jpeg_type: JpegType,
 
     /// max horizontal sample factor
     pub sfhm: u32,
@@ -485,9 +485,9 @@ enum ParseSegmentResult {
     SOS,
 }
 
-impl Default for JPegHeader {
+impl Default for JpegHeader {
     fn default() -> Self {
-        return JPegHeader {
+        return JpegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
@@ -501,7 +501,7 @@ impl Default for JPegHeader {
             cmpc: 0,
             img_width: 0,
             img_height: 0,
-            jpeg_type: JPegType::Unknown,
+            jpeg_type: JpegType::Unknown,
             sfhm: 0,
             sfvm: 0,
             mcuv: NonZeroU32::MIN,
@@ -518,7 +518,7 @@ impl Default for JPegHeader {
     }
 }
 
-impl JPegHeader {
+impl JpegHeader {
     #[inline(always)]
     pub(super) fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
@@ -576,7 +576,7 @@ impl JPegHeader {
             if (self.cmp_info[cmp].sfv == 0)
                 || (self.cmp_info[cmp].sfh == 0)
                 || (self.q_tables[usize::from(self.cmp_info[cmp].q_table_index)][0] == 0)
-                || (self.jpeg_type == JPegType::Unknown)
+                || (self.jpeg_type == JpegType::Unknown)
             {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
@@ -885,7 +885,7 @@ impl JPegHeader {
             jpeg_code::SOF1| // SOF1 segment, coding process: extended sequential DCT
             jpeg_code::SOF2 =>  // SOF2 segment, coding process: progressive DCT
             {
-                if self.jpeg_type != JPegType::Unknown
+                if self.jpeg_type != JpegType::Unknown
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, "image cannot have multiple SOF blocks");
                 }
@@ -893,11 +893,11 @@ impl JPegHeader {
                 // set JPEG coding type
                 if btype == jpeg_code::SOF2
                 {
-                    self.jpeg_type = JPegType::Progressive;
+                    self.jpeg_type = JpegType::Progressive;
                 }
                 else
                 {
-                    self.jpeg_type = JPegType::Sequential;
+                    self.jpeg_type = JpegType::Sequential;
                 }
 
                 ensure_space(segment,hpos, 6).context()?;

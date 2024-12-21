@@ -15,7 +15,7 @@ use log::info;
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
-use crate::jpeg::jpeg_header::JPegHeader;
+use crate::jpeg::jpeg_header::JpegHeader;
 use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
@@ -114,7 +114,7 @@ pub fn encode_lepton_wrapper_verify(
 pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    callback: fn(&JPegHeader),
+    callback: fn(&JpegHeader),
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lp = LeptonHeader::default_boxed();
 
@@ -204,7 +204,7 @@ fn get_git_revision(lp: &mut LeptonHeader) {
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
 fn run_lepton_encoder_threads<W: Write + Seek>(
-    jpeg_header: &JPegHeader,
+    jpeg_header: &JpegHeader,
     colldata: &TruncateComponents,
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
