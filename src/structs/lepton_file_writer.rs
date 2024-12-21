@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::cmp;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -14,21 +14,22 @@ use log::info;
 
 use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
+use crate::jpeg::block_based_image::BlockBasedImage;
+use crate::jpeg::jpeg_header::JPegHeader;
+use crate::jpeg::jpeg_read::{read_first_scan, read_progressive_scan};
+use crate::jpeg::truncate_components::TruncateComponents;
 use crate::jpeg_code;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
-use crate::structs::block_based_image::BlockBasedImage;
-use crate::structs::jpeg_header::JPegHeader;
-use crate::structs::jpeg_read::{read_progressive_scan, read_scan};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::lepton_file_reader::decode_lepton_file;
 use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
+use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::structs::truncate_components::TruncateComponents;
 
 /// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
+pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -39,7 +40,7 @@ pub fn encode_lepton_wrapper<R: Read + Seek, W: Write + Seek>(
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
-        &lp.truncate_components,
+        &lp.rinfo.truncate_components,
         writer,
         &lp.thread_handoff[..],
         image_data,
@@ -111,7 +112,7 @@ pub fn encode_lepton_wrapper_verify(
 ///
 /// The callback is called for each jpeg header that is parsed, which
 /// is currently only used by the dump utility for debugging purposes.
-pub fn read_jpeg<R: Read + Seek>(
+pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
     callback: fn(&JPegHeader),
@@ -149,7 +150,7 @@ pub fn read_jpeg<R: Read + Seek>(
         .context();
     }
 
-    lp.truncate_components.init(&lp.jpeg_header);
+    lp.rinfo.truncate_components.init(&lp.jpeg_header);
     let mut image_data = Vec::<BlockBasedImage>::new();
     for i in 0..lp.jpeg_header.cmpc {
         // constructor takes height in proportion to the component[0]
@@ -162,11 +163,29 @@ pub fn read_jpeg<R: Read + Seek>(
     }
 
     let mut thread_handoff = Vec::<ThreadHandoff>::new();
-    let start_scan = reader.stream_position()? as i32;
-    read_scan(&mut lp, reader, &mut thread_handoff, &mut image_data[..]).context()?;
-    lp.scnc += 1;
+    let start_scan: u32 = reader.stream_position()?.try_into().unwrap();
+    read_first_scan(
+        &lp.jpeg_header,
+        reader,
+        &mut |segment_offset_in_file, restart_info| {
+            let retval = ThreadHandoff {
+                segment_offset_in_file: segment_offset_in_file,
+                luma_y_start: restart_info.luma_y_start,
+                luma_y_end: restart_info.luma_y_end,
+                overhang_byte: restart_info.overhang_byte,
+                num_overhang_bits: restart_info.num_overhang_bits,
+                last_dc: restart_info.last_dc,
+                segment_size: 0, // initialized later
+            };
 
-    let mut end_scan = reader.stream_position()? as i32;
+            thread_handoff.push(retval);
+        },
+        &mut image_data[..],
+        &mut lp.rinfo,
+    )
+    .context()?;
+
+    let mut end_scan = reader.stream_position()?.try_into().unwrap();
 
     // need at least two bytes of scan data
     if start_scan + 2 > end_scan || thread_handoff.len() == 0 {
@@ -192,9 +211,10 @@ pub fn read_jpeg<R: Read + Seek>(
     }
 
     if lp.jpeg_header.jpeg_type == JPegType::Sequential {
-        if lp.early_eof_encountered {
-            lp.truncate_components
-                .set_truncation_bounds(&lp.jpeg_header, lp.max_dpos);
+        if lp.rinfo.early_eof_encountered {
+            lp.rinfo
+                .truncate_components
+                .set_truncation_bounds(&lp.jpeg_header, lp.rinfo.max_dpos);
 
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
@@ -207,7 +227,8 @@ pub fn read_jpeg<R: Read + Seek>(
             // and then fix up the broken file later in the decoder. The following logic will create a valid file
             // that the C++ and CS version will still decode properly without the fixup logic.
             let len = thread_handoff.len();
-            thread_handoff[len - 1].segment_size -= 2;
+            thread_handoff[len - 1].segment_size =
+                thread_handoff[len - 1].segment_size.saturating_sub(2);
         }
 
         // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
@@ -215,7 +236,7 @@ pub fn read_jpeg<R: Read + Seek>(
     } else {
         assert!(lp.jpeg_header.jpeg_type == JPegType::Progressive);
 
-        if lp.early_eof_encountered {
+        if lp.rinfo.early_eof_encountered {
             return err_exit_code(
                 ExitCode::UnsupportedJpeg,
                 "truncation is only supported for baseline images",
@@ -227,10 +248,10 @@ pub fn read_jpeg<R: Read + Seek>(
         while prepare_to_decode_next_scan(&mut lp, reader, enabled_features).context()? {
             callback(&lp.jpeg_header);
 
-            read_progressive_scan(&mut lp, reader, &mut image_data[..]).context()?;
-            lp.scnc += 1;
+            read_progressive_scan(&lp.jpeg_header, reader, &mut image_data[..], &mut lp.rinfo)
+                .context()?;
 
-            if lp.early_eof_encountered {
+            if lp.rinfo.early_eof_encountered {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
                     "truncation is only supported for baseline images",
@@ -239,7 +260,7 @@ pub fn read_jpeg<R: Read + Seek>(
             }
         }
 
-        end_scan = reader.stream_position()? as i32;
+        end_scan = reader.stream_position()? as u32;
 
         // since prepare_to_decode_next_scan consumes the EOI,
         // we need to add it to the beginning of the garbage data (if there is any)
@@ -252,7 +273,7 @@ pub fn read_jpeg<R: Read + Seek>(
         }
     }
 
-    set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan as i32);
+    set_segment_size_in_row_thread_handoffs(&mut thread_handoff[..], end_scan);
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
@@ -314,7 +335,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     );
 
     // Prepare quantization tables
-    let quantization_tables = jpeg_header.construct_quantization_tables()?;
+    let quantization_tables = QuantizationTables::construct_quantization_tables(jpeg_header)?;
 
     let colldata = colldata.clone();
     let thread_handoffs = thread_handoffs.to_vec();
@@ -379,7 +400,7 @@ fn split_row_handoffs_to_threads(
 
     info!("Number of threads: {0}", num_threads);
 
-    let mut selected_splits = Vec::with_capacity(num_threads as usize);
+    let mut selected_splits = Vec::with_capacity(num_threads);
 
     if num_threads == 1 {
         // Single thread execution - no split, run on the whole range
@@ -450,16 +471,16 @@ fn prepare_to_decode_next_scan<R: Read>(
         return Ok(false);
     }
 
-    lp.max_bpos = cmp::max(lp.max_bpos, lp.jpeg_header.cs_to as i32);
+    lp.rinfo.max_bpos = cmp::max(lp.rinfo.max_bpos, u32::from(lp.jpeg_header.cs_to));
 
     // FIXME: not sure why only first bit of csSah is examined but 4 bits of it are stored
-    lp.max_sah = cmp::max(
-        lp.max_sah,
+    lp.rinfo.max_sah = cmp::max(
+        lp.rinfo.max_sah,
         cmp::max(lp.jpeg_header.cs_sal, lp.jpeg_header.cs_sah),
     );
 
     for i in 0..lp.jpeg_header.cs_cmpc {
-        lp.max_cmp = cmp::max(lp.max_cmp, lp.jpeg_header.cs_cmp[i] as i32);
+        lp.rinfo.max_cmp = cmp::max(lp.rinfo.max_cmp, lp.jpeg_header.cs_cmp[i] as u32);
     }
 
     return Ok(true);
@@ -467,7 +488,7 @@ fn prepare_to_decode_next_scan<R: Read>(
 
 fn set_segment_size_in_row_thread_handoffs(
     thread_handoffs: &mut [ThreadHandoff],
-    entropy_data_end_offset_in_file: i32,
+    entropy_data_end_offset_in_file: u32,
 ) {
     if thread_handoffs.len() != 0 {
         for i in 0..thread_handoffs.len() - 1 {

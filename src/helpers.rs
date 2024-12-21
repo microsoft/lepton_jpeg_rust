@@ -91,14 +91,40 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
     return true;
 }
 
+/// returns true if the 64 bit value contains an 0xff byte.
+/// Uses fancy bit manipulation to avoid branches.
+#[inline(always)]
+pub fn has_ff(v: u64) -> bool {
+    (v & 0x8080808080808080 & !v.wrapping_add(0x0101010101010101)) != 0
+}
+
 #[inline(always)]
 pub const fn devli(s: u8, value: u16) -> i16 {
-    if s == 0 {
+    let shifted = 1 << s;
+
+    if value & (shifted >> 1) != 0 {
         value as i16
-    } else if value < (1 << (s as u16 - 1)) {
-        value as i16 + (-1 << s as i16) + 1
     } else {
-        value as i16
+        value.wrapping_add(2).wrapping_add(!shifted) as i16
+    }
+}
+
+/// check to make sure the behavior hasn't changed even with the optimization
+#[test]
+fn devli_test() {
+    for s in 0u8..15 {
+        for value in 0..(1 << s) {
+            assert_eq!(
+                devli(s, value) as i16,
+                if s == 0 {
+                    value as i16
+                } else if value < (1 << (s as u16 - 1)) {
+                    value as i16 + (-1 << s as i16) + 1
+                } else {
+                    value as i16
+                }
+            );
+        }
     }
 }
 

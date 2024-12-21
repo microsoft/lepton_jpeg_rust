@@ -231,7 +231,7 @@ fn test_all_probabilities() {
             continue;
         }
 
-        let mut new_f = Branch { counts: i as u16 };
+        let mut new_f = Branch { counts: i };
 
         for _k in 0..10 {
             old_f.record_obs_and_update(false);

@@ -8,10 +8,10 @@ pub struct EnabledFeatures {
     pub reject_dqts_with_zeros: bool,
 
     /// maximum jpeg width
-    pub max_jpeg_width: i32,
+    pub max_jpeg_width: u32,
 
     // maximum jpeg height
-    pub max_jpeg_height: i32,
+    pub max_jpeg_height: u32,
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
     pub use_16bit_dc_estimate: bool,
@@ -53,8 +53,8 @@ impl EnabledFeatures {
         Self {
             progressive: true,
             reject_dqts_with_zeros: false,
-            max_jpeg_height: i32::MAX,
-            max_jpeg_width: i32::MAX,
+            max_jpeg_height: u32::MAX,
+            max_jpeg_width: u32::MAX,
             use_16bit_dc_estimate: false,
             use_16bit_adv_predict: false,
             accept_invalid_dht: true,
@@ -70,8 +70,8 @@ impl EnabledFeatures {
         Self {
             progressive: true,
             reject_dqts_with_zeros: false,
-            max_jpeg_height: i32::MAX,
-            max_jpeg_width: i32::MAX,
+            max_jpeg_height: u32::MAX,
+            max_jpeg_width: u32::MAX,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: true,

@@ -6,22 +6,21 @@
 
 use bytemuck::{cast, cast_ref};
 use log::info;
-use unroll::unroll_for_loops;
-use wide::i16x8;
+use wide::{i16x8, CmpEq};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
-use crate::structs::block_context::BlockContext;
-use crate::structs::jpeg_header::JPegHeader;
+
+use super::jpeg_header::JPegHeader;
 
 /// holds the 8x8 blocks for a given component. Since we do multithreaded encoding,
 /// the image may only hold a subset of the components (specified by dpos_offset),
 /// but they can be merged
 pub struct BlockBasedImage {
-    block_width: i32,
+    block_width: u32,
 
-    original_height: i32,
+    original_height: u32,
 
-    dpos_offset: i32,
+    dpos_offset: u32,
 
     image: Vec<AlignedBlock>,
 }
@@ -33,22 +32,22 @@ impl BlockBasedImage {
     pub fn new(
         jpeg_header: &JPegHeader,
         component: usize,
-        luma_y_start: i32,
-        luma_y_end: i32,
+        luma_y_start: u32,
+        luma_y_end: u32,
     ) -> Self {
         let block_width = jpeg_header.cmp_info[component].bch;
         let original_height = jpeg_header.cmp_info[component].bcv;
         let max_size = block_width * original_height;
 
         let image_capcity = usize::try_from(
-            (i64::from(max_size) * i64::from(luma_y_end - luma_y_start)
-                + i64::from(jpeg_header.cmp_info[0].bcv - 1 /* round up */))
-                / i64::from(jpeg_header.cmp_info[0].bcv),
+            (u64::from(max_size) * u64::from(luma_y_end - luma_y_start)
+                + u64::from(jpeg_header.cmp_info[0].bcv - 1 /* round up */))
+                / u64::from(jpeg_header.cmp_info[0].bcv),
         )
         .unwrap();
 
-        let dpos_offset = i32::try_from(
-            i64::from(max_size) * i64::from(luma_y_start) / i64::from(jpeg_header.cmp_info[0].bcv),
+        let dpos_offset = u32::try_from(
+            u64::from(max_size) * u64::from(luma_y_start) / u64::from(jpeg_header.cmp_info[0].bcv),
         )
         .unwrap();
 
@@ -71,7 +70,7 @@ impl BlockBasedImage {
 
         for v in images {
             assert!(
-                v[index].dpos_offset == contents.len() as i32,
+                v[index].dpos_offset == contents.len() as u32,
                 "previous content should match new content"
             );
 
@@ -111,46 +110,60 @@ impl BlockBasedImage {
         );
     }
 
-    // blocks above the first line are never dereferenced
-    pub fn off_y(&self, y: i32) -> BlockContext {
-        return BlockContext::new(
-            self.block_width * y,
-            self.block_width * (y - 1),
-            if (y & 1) != 0 { self.block_width } else { 0 },
-            if (y & 1) != 0 { 0 } else { self.block_width },
-        );
-    }
-
-    pub fn get_block_width(&self) -> i32 {
+    pub fn get_block_width(&self) -> u32 {
         self.block_width
     }
 
-    pub fn get_original_height(&self) -> i32 {
+    pub fn get_original_height(&self) -> u32 {
         self.original_height
     }
 
-    fn fill_up_to_dpos(&mut self, dpos: i32) {
-        // set our dpos the first time we get set, since we should be seeing our data in order
+    /// ensure that the image is filled up to a given dpos with blank blocks and optionally
+    /// write a block at the given position.
+    #[inline(always)]
+    pub fn fill_up_to_dpos(
+        &mut self,
+        dpos: u32,
+        block_to_write: Option<AlignedBlock>,
+    ) -> &mut AlignedBlock {
+        // ensure that dpos_offset got set to the right value when we start writing
         if self.image.len() == 0 {
-            assert!(self.dpos_offset == dpos);
+            debug_assert!(self.dpos_offset == dpos);
         }
 
-        assert!(dpos >= self.dpos_offset);
+        // should never underflow otherwise we are writing to the wrong part of the image
+        let relative_offset = (dpos as usize)
+            .checked_sub(self.dpos_offset as usize)
+            .unwrap();
 
-        while self.image.len() <= (dpos - self.dpos_offset) as usize {
-            if self.image.len() >= self.image.capacity() {
-                panic!("out of memory");
+        if relative_offset < self.image.len() {
+            // rewrite already written block
+            if let Some(b) = block_to_write {
+                self.image[relative_offset] = b;
             }
-            self.image.push(AlignedBlock { raw_data: [0; 64] });
+        } else {
+            // need to extend the image length and add any necessary
+            // zero blocks to fill the gap.
+            assert!(
+                relative_offset < self.image.capacity(),
+                "capacity should be set to the exact image size to avoid reallocations"
+            );
+
+            // optimizer realizes that this is memset
+            self.image
+                .resize_with(relative_offset, || AlignedBlock::default());
+
+            self.image.push(block_to_write.unwrap_or_default());
         }
+
+        return &mut self.image[relative_offset];
     }
 
-    pub fn set_block_data(&mut self, dpos: i32, block_data: &AlignedBlock) {
-        self.fill_up_to_dpos(dpos);
-        *self.image[(dpos - self.dpos_offset) as usize].get_block_mut() = *block_data.get_block();
+    pub fn set_block_data(&mut self, dpos: u32, block_data: AlignedBlock) {
+        self.fill_up_to_dpos(dpos, Some(block_data));
     }
 
-    pub fn get_block(&self, dpos: i32) -> &AlignedBlock {
+    pub fn get_block(&self, dpos: u32) -> &AlignedBlock {
         if (dpos - self.dpos_offset) as usize >= self.image.len() {
             return &EMPTY;
         } else {
@@ -167,9 +180,9 @@ impl BlockBasedImage {
         self.image.push(block);
     }
 
-    pub fn get_block_mut(&mut self, dpos: i32) -> &mut AlignedBlock {
-        self.fill_up_to_dpos(dpos);
-        return &mut self.image[(dpos - self.dpos_offset) as usize];
+    #[inline(always)]
+    pub fn get_block_mut(&mut self, dpos: u32) -> &mut AlignedBlock {
+        self.fill_up_to_dpos(dpos, None)
     }
 }
 
@@ -189,47 +202,68 @@ impl Default for AlignedBlock {
 }
 
 impl AlignedBlock {
+    #[inline(always)]
     pub fn new(block: [i16; 64]) -> Self {
         AlignedBlock { raw_data: block }
     }
 
-    #[allow(dead_code)]
+    #[inline(always)]
     pub fn as_i16x8(&self, index: usize) -> i16x8 {
         let v: &[i16x8; 8] = cast_ref(&self.raw_data);
         v[index]
     }
 
     #[allow(dead_code)]
+    #[inline(always)]
     pub fn transpose(&self) -> AlignedBlock {
         return AlignedBlock::new(cast(i16x8::transpose(cast(*self.get_block()))));
     }
 
+    #[inline(always)]
     pub fn get_dc(&self) -> i16 {
         return self.raw_data[0];
     }
 
+    #[inline(always)]
     pub fn set_dc(&mut self, value: i16) {
         self.raw_data[0] = value
     }
 
-    /// gets underlying array of 64 coefficients (guaranteed to be 32-byte aligned)
-    #[unroll_for_loops]
-    pub fn zigzag_from_transposed(&self) -> AlignedBlock {
-        let mut block = AlignedBlock::default();
-        for i in 0..64 {
-            block.raw_data[i] = self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[i])];
+    #[inline(always)]
+    pub fn zigzag_to_transposed(a: [i16; 64]) -> AlignedBlock {
+        AlignedBlock {
+            raw_data: [
+                a[0], a[2], a[3], a[9], a[10], a[20], a[21], a[35], a[1], a[4], a[8], a[11], a[19],
+                a[22], a[34], a[36], a[5], a[7], a[12], a[18], a[23], a[33], a[37], a[48], a[6],
+                a[13], a[17], a[24], a[32], a[38], a[47], a[49], a[14], a[16], a[25], a[31], a[39],
+                a[46], a[50], a[57], a[15], a[26], a[30], a[40], a[45], a[51], a[56], a[58], a[27],
+                a[29], a[41], a[44], a[52], a[55], a[59], a[62], a[28], a[42], a[43], a[53], a[54],
+                a[60], a[61], a[63],
+            ],
         }
-        return block;
     }
 
-    // used for debugging
-    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn zigzag_from_transposed(&self) -> AlignedBlock {
+        let a = self.raw_data;
+        AlignedBlock {
+            raw_data: [
+                a[0], a[8], a[1], a[2], a[9], a[16], a[24], a[17], a[10], a[3], a[4], a[11], a[18],
+                a[25], a[32], a[40], a[33], a[26], a[19], a[12], a[5], a[6], a[13], a[20], a[27],
+                a[34], a[41], a[48], a[56], a[49], a[42], a[35], a[28], a[21], a[14], a[7], a[15],
+                a[22], a[29], a[36], a[43], a[50], a[57], a[58], a[51], a[44], a[37], a[30], a[23],
+                a[31], a[38], a[45], a[52], a[59], a[60], a[53], a[46], a[39], a[47], a[54], a[61],
+                a[62], a[55], a[63],
+            ],
+        }
+    }
+
+    #[inline(always)]
     pub fn get_block(&self) -> &[i16; 64] {
         return &self.raw_data;
     }
 
-    // used for debugging
-    #[allow(dead_code)]
+    #[inline(always)]
     pub fn get_block_mut(&mut self) -> &mut [i16; 64] {
         return &mut self.raw_data;
     }
@@ -244,33 +278,43 @@ impl AlignedBlock {
         return sum;
     }
 
+    #[inline(always)]
     pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
-        let mut num_non_zeros7x7: u8 = 0;
-        for index in 9..64 {
-            if index & 0x7 != 0 && self.raw_data[index] != 0 {
-                num_non_zeros7x7 += 1;
-            }
+        /// counts a row of non-zero values in the 7x7 block
+        #[inline(always)]
+        fn count_non_zeros_7x7_row(v: i16x8) -> i16x8 {
+            !v.cmp_eq(i16x8::ZERO) & i16x8::new([0, 1, 1, 1, 1, 1, 1, 1])
         }
 
-        return num_non_zeros7x7;
+        let mut sum = i16x8::ZERO;
+        for i in 1..8 {
+            sum += count_non_zeros_7x7_row(self.as_i16x8(i));
+        }
+
+        return sum.reduce_add() as u8;
     }
 
+    #[inline(always)]
     pub fn get_coefficient(&self, index: usize) -> i16 {
         return self.raw_data[index];
     }
 
+    #[inline(always)]
     pub fn set_coefficient(&mut self, index: usize, v: i16) {
         self.raw_data[index] = v;
     }
 
+    #[inline(always)]
     pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
         self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
     }
 
+    #[inline(always)]
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
         return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];
     }
 
+    #[inline(always)]
     pub fn from_stride(&self, offset: usize, stride: usize) -> i16x8 {
         return i16x8::new([
             self.raw_data[offset],
