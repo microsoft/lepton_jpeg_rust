@@ -59,7 +59,7 @@ impl<R: BufRead + Seek> BitReader<R> {
 
 impl<R: BufRead> BitReader<R> {
     #[inline(always)]
-    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u16> {
+    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u32> {
         if bits_to_read == 0 {
             return Ok(0);
         }
@@ -69,7 +69,7 @@ impl<R: BufRead> BitReader<R> {
         }
 
         let retval =
-            (self.bits >> (self.bits_left - bits_to_read) & ((1 << bits_to_read) - 1)) as u16;
+            ((self.bits >> (self.bits_left - bits_to_read)) as u32) & ((1 << bits_to_read) - 1);
         self.bits_left -= bits_to_read;
         return Ok(retval);
     }
@@ -224,7 +224,7 @@ impl<R: BufRead> BitReader<R> {
                 }
                 Some(x) => {
                     // if we already saw a padding, then it should match
-                    let expected = u16::from(x) & all_one;
+                    let expected = u32::from(x) & all_one;
                     if actual != expected {
                         return err_exit_code(ExitCode::InvalidPadding, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
                     }

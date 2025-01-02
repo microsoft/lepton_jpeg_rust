@@ -683,7 +683,7 @@ fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -
     let mut node: u16 = 0;
 
     while node < 256 {
-        node = ctree.node[usize::from(node)][usize::from(bit_reader.read(1)?)];
+        node = ctree.node[usize::from(node)][bit_reader.read(1)? as usize];
     }
 
     if node == 0xffff {
@@ -740,9 +740,9 @@ fn read_coef<R: BufRead>(
     // analyse code
     if hc != 0 {
         let z = usize::from(lbits(hc, 4));
-        let literal_bits = rbits(hc, 4);
+        let literal_bits = u32::from(rbits(hc, 4));
 
-        let value = bit_reader.read(u32::from(literal_bits))?;
+        let value = bit_reader.read(literal_bits)?;
         Ok(Some((z, devli(literal_bits, value))))
     } else {
         Ok(None)
@@ -773,8 +773,8 @@ fn decode_ac_prg_fs<R: BufRead>(
         if (l == 15) || (r > 0) {
             // decode run/level combination
             let mut z = l;
-            let s = r;
-            let n = bit_reader.read(u32::from(s))?;
+            let s = u32::from(r);
+            let n = bit_reader.read(s)?;
             if (z + bpos) > to {
                 return err_exit_code(ExitCode::UnsupportedJpeg, "run is too long");
             }
@@ -791,7 +791,7 @@ fn decode_ac_prg_fs<R: BufRead>(
             // decode eobrun
             let s = l;
             let n = bit_reader.read(u32::from(s))?;
-            state.eobrun = decode_eobrun_bits(s, n);
+            state.eobrun = decode_eobrun_bits(s, n) as u16;
 
             state.eobrun -= 1; // decrement eobrun ( for this one )
 
@@ -869,7 +869,7 @@ fn decode_ac_prg_sa<R: BufRead>(
             eob = bpos;
             let s = l;
             let n = bit_reader.read(u32::from(s))?;
-            state.eobrun = decode_eobrun_bits(s, n);
+            state.eobrun = decode_eobrun_bits(s, n) as u16;
 
             // since we hit EOB, the rest can be done with the zero block decoder
             decode_eobrun_sa(bit_reader, block, state, bpos, to)?;
@@ -906,6 +906,6 @@ fn decode_eobrun_sa<R: BufRead>(
 
 /// decoding for decoding eobrun lengths. The encoding chops off the most significant
 /// bit since it is always 1, so we need to add it back.
-fn decode_eobrun_bits(s: u8, n: u16) -> u16 {
+fn decode_eobrun_bits(s: u8, n: u32) -> u32 {
     n + (1 << s)
 }

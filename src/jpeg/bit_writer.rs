@@ -271,7 +271,7 @@ fn roundtrip_randombits() {
                     );
 
                     assert_eq!(
-                        code,
+                        code as u32,
                         r.read(numbits as u32).unwrap(),
                         "read unexpected result"
                     );
