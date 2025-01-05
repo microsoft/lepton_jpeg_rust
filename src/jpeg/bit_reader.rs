@@ -123,7 +123,7 @@ impl<R: BufRead> BitReader<R> {
                 while bytes_left >= 2 {
                     if v & 0xff == 0xff {
                         if v & 0xff00 != 0 {
-                            // escape sequence or reset marker, just exit the loop and let fill_register handle it
+                            // reset marker or end of scan, just exit the loop and let fill_register handle it
                             break;
                         }
 
