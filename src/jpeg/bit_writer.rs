@@ -266,7 +266,7 @@ fn roundtrip_randombits() {
 
                     assert_eq!(
                         expected_peek_byte & mask,
-                        peekcode & mask,
+                        (peekcode as u8) & mask,
                         "peek unexpected result"
                     );
 

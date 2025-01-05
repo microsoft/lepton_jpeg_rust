@@ -678,7 +678,8 @@ pub(super) fn decode_block_seq<R: BufRead>(
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
-#[inline(always)]
+#[cold]
+#[inline(never)]
 fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
     let mut node: u16 = 0;
 
@@ -693,6 +694,7 @@ fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -
     }
 }
 
+#[inline(always)]
 fn read_dc<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i16> {
     let (z, coef) = read_coef(bit_reader, tree)?.unwrap_or((0, 0));
     if z != 0 {
@@ -710,32 +712,7 @@ fn read_coef<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,
 ) -> Result<Option<(usize, i16)>> {
-    // if the code we found is smaller or equal to the number of bits left, take the shortcut
-    let hc;
-
-    loop {
-        // peek ahead to see if we can decode the symbol immediately
-        // given what has already been read into the bitreader
-        let (peek_value, peek_len) = bit_reader.peek();
-
-        // use lookup table to figure out the first code in this byte and how long it is
-        let (code, code_len) = tree.peek_code[peek_value as usize];
-
-        if u32::from(code_len) <= peek_len {
-            // found code directly, so advance by the number of bits immediately
-            hc = code;
-            bit_reader.advance(u32::from(code_len));
-            break;
-        } else if peek_len < 8 {
-            // peek code works with up to 8 bits at a time. If we had less
-            // than this, then we need to read more bits into the bitreader
-            bit_reader.fill_register(8)?;
-        } else {
-            // take slow path since we have a code that is bigger than 8 bits (but pretty rare)
-            hc = next_huff_code(bit_reader, tree)?;
-            break;
-        }
-    }
+    let hc = read_code(bit_reader, tree)?;
 
     // analyse code
     if hc != 0 {
@@ -746,6 +723,23 @@ fn read_coef<R: BufRead>(
         Ok(Some((z, devli(literal_bits, value))))
     } else {
         Ok(None)
+    }
+}
+
+#[inline(always)]
+fn read_code<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<u8> {
+    bit_reader.optimistic_fill();
+    let (peek_value, peek_len) = bit_reader.peek();
+    let (code, code_len) = tree.peek_code[peek_value as usize];
+
+    if u32::from(code_len) <= peek_len {
+        // found code directly, so advance by the number of bits immediately
+        bit_reader.advance(u32::from(code_len));
+
+        Ok(code)
+    } else {
+        // take slow path since we have a code that is bigger than 8 bits (but pretty rare)
+        next_huff_code(bit_reader, tree)
     }
 }
 
@@ -764,7 +758,7 @@ fn decode_ac_prg_fs<R: BufRead>(
     let mut bpos = from;
     while bpos <= to {
         // decode next
-        let hc = next_huff_code(bit_reader, actree)?;
+        let hc = read_code(bit_reader, actree)?;
 
         let l = lbits(hc, 4);
         let r = rbits(hc, 4);
@@ -820,7 +814,7 @@ fn decode_ac_prg_sa<R: BufRead>(
     // decode AC succesive approximation bits
     while bpos <= to {
         // decode next
-        let hc = next_huff_code(bit_reader, actree)?;
+        let hc = read_code(bit_reader, actree)?;
 
         let l = lbits(hc, 4);
         let r = rbits(hc, 4);

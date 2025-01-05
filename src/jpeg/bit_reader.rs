@@ -8,7 +8,7 @@ use std::io::{BufRead, Seek};
 
 use super::jpeg_code;
 use crate::helpers::has_ff;
-use crate::lepton_error::{err_exit_code, ExitCode};
+use crate::lepton_error::{err_exit_code, ExitCode, Result};
 use crate::LeptonError;
 
 // Implemenation of bit reader on top of JPEG data stream as read by a reader
@@ -59,13 +59,9 @@ impl<R: BufRead + Seek> BitReader<R> {
 
 impl<R: BufRead> BitReader<R> {
     #[inline(always)]
-    pub fn read(&mut self, bits_to_read: u32) -> std::io::Result<u32> {
-        if bits_to_read == 0 {
-            return Ok(0);
-        }
-
+    pub fn read(&mut self, bits_to_read: u32) -> Result<u32> {
         if self.bits_left < bits_to_read {
-            self.fill_register(bits_to_read)?;
+            self.fill_register_slow(bits_to_read)?;
         }
 
         let retval =
@@ -75,9 +71,9 @@ impl<R: BufRead> BitReader<R> {
     }
 
     #[inline(always)]
-    pub fn peek(&self) -> (u8, u32) {
+    pub fn peek(&self) -> (u32, u32) {
         (
-            ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u8,
+            ((self.bits.wrapping_shl(64 - self.bits_left)) >> 56) as u32,
             self.bits_left,
         )
     }
@@ -87,44 +83,95 @@ impl<R: BufRead> BitReader<R> {
         self.bits_left -= bits;
     }
 
+    /// Fills the register as much as possible with the current buffer in
+    /// a non-destructive manner. This requires the BufRead implementation to
+    /// have enough space available.
     #[inline(always)]
-    pub fn fill_register(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
+    pub fn optimistic_fill(&mut self) {
+        if self.bits_left < 8 {
+            self.optimistic_fill_slow();
+        }
+    }
+
+    /// Assuming that there are less than 8 bits in our buffer, fill the rest of the buffer
+    /// with as many bits as possible, leaving the possibility of unwinding via the undo_read_ahead
+    /// function in certain corner cases.
+    #[inline(never)]
+    #[cold]
+    fn optimistic_fill_slow(&mut self) {
+        // for correctness, we need to have less than 8 bits left, otherwise we can't
+        // consume the read_ahead_bytes and successfully undo the read_ahead if we have to.
+        debug_assert!(self.bits_left < 8);
+
         // first consume the read_ahead bytes that we have now consumed
         // (otherwise we wouldn't have been called)
         self.inner.consume(self.read_ahead_bytes as usize);
 
-        let fb = self.inner.fill_buf()?;
+        if let Ok(fb) = self.inner.fill_buf() {
+            // if we have 8 bytes and there is no 0xff in them, then we can just read the bits directly as big endian
+            if fb.len() < 8 {
+                self.read_ahead_bytes = 0;
+                return;
+            }
 
-        // if we have 8 bytes and there is no 0xff in them, then we can just read the bits directly as big endian
-        let mut v;
-        if fb.len() < 8 || {
-            v = u64::from_le_bytes(fb[..8].try_into().unwrap());
-            has_ff(v)
-        } {
-            self.read_ahead_bytes = 0;
-            return self.fill_register_slow(bits_to_read);
+            let mut v = u64::from_le_bytes(fb[..8].try_into().unwrap());
+            if has_ff(v) {
+                // this is the expensive path, but rarer where there are 0xff bytes in the buffer
+                let mut bytes_left = 8;
+                self.read_ahead_bytes = 0;
+
+                while bytes_left >= 2 {
+                    if v & 0xff == 0xff {
+                        if v & 0xff00 != 0 {
+                            // escape sequence or reset marker, just exit the loop and let fill_register handle it
+                            break;
+                        }
+
+                        self.bits = (self.bits << 8) | 0xff;
+                        self.bits_left += 8;
+                        self.read_ahead_bytes += 2;
+
+                        v >>= 16;
+                        bytes_left -= 2;
+                    } else {
+                        self.bits = (self.bits << 8) | (v & 0xff);
+                        self.bits_left += 8;
+                        self.read_ahead_bytes += 1;
+
+                        v >>= 8;
+                        bytes_left -= 1;
+                    }
+                }
+            } else {
+                // no 0xff bytes, just read the bits all at a time and reverse endian to get them in the right order.
+                v = v.to_be();
+
+                // only fill 63 bits not 64 to avoid having to special case
+                // of self.bits << 64 which is a nop
+                let bytes_to_read = (63 - self.bits_left) / 8;
+
+                self.bits = self.bits << (bytes_to_read * 8) | v >> (64 - bytes_to_read * 8);
+                self.bits_left += bytes_to_read * 8;
+                self.read_ahead_bytes = self.bits_left / 8;
+            }
         }
-
-        v = v.to_be();
-
-        // only fill 63 bits not 64 to avoid having to special case
-        // of self.bits << 64 which is a nop
-        let bytes_to_read = (63 - self.bits_left) / 8;
-
-        self.bits = self.bits << (bytes_to_read * 8) | v >> (64 - bytes_to_read * 8);
-        self.bits_left += bytes_to_read * 8;
-        self.read_ahead_bytes = (self.bits_left - bits_to_read) / 8;
-
-        self.inner
-            .consume((bytes_to_read - self.read_ahead_bytes) as usize);
-
-        return Ok(());
     }
 
+    /// Fills the register up to the number of bits requested, with the assumption that these
+    /// will be immediately consumed.
+    ///
+    /// This function ends up being called very infrequently since almost all of the time the optimistic_fill ensures
+    /// that there are enough bits to work with. Effectively this function ends up only being called in corner cases
+    /// where we are near the end of a BufRead block, at the end of the file or about to hit a reset marker.
     #[cold]
-    fn fill_register_slow(&mut self, bits_to_read: u32) -> Result<(), std::io::Error> {
-        loop {
+    #[inline(never)]
+    fn fill_register_slow(&mut self, bits_to_read: u32) -> Result<()> {
+        self.inner.consume(self.read_ahead_bytes as usize);
+        self.read_ahead_bytes = 0;
+
+        while self.bits_left < bits_to_read {
             let fb = self.inner.fill_buf()?;
+
             if let &[b, ..] = fb {
                 self.inner.consume(1);
 
@@ -177,10 +224,6 @@ impl<R: BufRead> BitReader<R> {
 
                 // continue since we still might need to read more 0 bits
             }
-
-            if self.bits_left >= bits_to_read {
-                break;
-            }
         }
         Ok(())
     }
@@ -191,10 +234,7 @@ impl<R: BufRead> BitReader<R> {
 
     /// used to verify whether this image is using 1s or 0s as fill bits.
     /// Returns whether the fill bit was 1 or so or unknown (None)
-    pub fn read_and_verify_fill_bits(
-        &mut self,
-        pad_bit: &mut Option<u8>,
-    ) -> Result<(), LeptonError> {
+    pub fn read_and_verify_fill_bits(&mut self, pad_bit: &mut Option<u8>) -> Result<()> {
         self.undo_read_ahead();
 
         // if there are bits left, we need to see whether they
@@ -235,7 +275,7 @@ impl<R: BufRead> BitReader<R> {
         return Ok(());
     }
 
-    pub fn verify_reset_code(&mut self) -> Result<(), LeptonError> {
+    pub fn verify_reset_code(&mut self) -> Result<()> {
         // we reached the end of a MCU, so we need to find a reset code and the huffman codes start get padded out, but the spec
         // doesn't specify whether the padding should be 1s or 0s, so we ensure that at least the file is consistant so that we
         // can recode it again just by remembering the pad bit.
@@ -281,9 +321,15 @@ impl<R: BufRead> BitReader<R> {
     /// the only bits that are left are part of the current byte.
     pub fn undo_read_ahead(&mut self) {
         while self.bits_left >= 8 && self.read_ahead_bytes > 0 {
+            // if it was an 0xff then rewind 2 bytes since this was an escape code
+            if self.bits & 0xff == 0xff {
+                self.read_ahead_bytes -= 2;
+            } else {
+                self.read_ahead_bytes -= 1;
+            }
+
             self.bits_left -= 8;
             self.bits >>= 8;
-            self.read_ahead_bytes -= 1;
         }
 
         if self.read_ahead_bytes > 0 {
