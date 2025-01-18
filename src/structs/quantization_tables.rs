@@ -11,8 +11,6 @@ use crate::lepton_error::err_exit_code;
 use crate::{ExitCode, Result};
 use crate::structs::div::recip;
 
-//use super::jpeg_header::JPegHeader;
-
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
     quantization_table_transposed: [u16; 64],
@@ -21,6 +19,7 @@ pub struct QuantizationTables {
     // Calculated using approximate maximal magnitudes
     // of these coefficients `FREQ_MAX`
     min_noise_threshold: [u8; 14],
+    // Reciprocals for division-by-multiplicatio scheme
     recip: [i32; 16],
 }
 
