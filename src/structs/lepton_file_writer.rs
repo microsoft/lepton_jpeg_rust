@@ -187,19 +187,30 @@ const fn string_to_int(s: &str) -> u8 {
     result
 }
 
+static GIT_VERSION: &str = git_version::git_version!(
+    args = ["--abbrev=40", "--always", "--dirty=M"],
+    fallback = "0"
+);
+
+pub fn get_git_version() -> &'static str {
+    GIT_VERSION
+}
+
+pub fn get_cargo_pkg_version() -> u8 {
+    string_to_int(env!("CARGO_PKG_VERSION_MAJOR")) * 100
+        + string_to_int(env!("CARGO_PKG_VERSION_MINOR")) * 10
+        + string_to_int(env!("CARGO_PKG_VERSION_PATCH"))
+}
+
 fn get_git_revision(lp: &mut LeptonHeader) {
-    let hex_str = git_version::git_version!(args = ["--abbrev=8", "--always", "--dirty=M"]);
+    let hex_str = GIT_VERSION;
     if let Ok(v) = u32::from_str_radix(hex_str, 16) {
         // place the warning if we got a git revision. The --dirty=M suffix means that some files
         // were modified so the version is not a clean git version, so we don't write it.
         lp.git_revision_prefix = v.to_be_bytes();
     }
 
-    const ENCODER_VERSION: u8 = string_to_int(env!("CARGO_PKG_VERSION_MAJOR")) * 100
-        + string_to_int(env!("CARGO_PKG_VERSION_MINOR")) * 10
-        + string_to_int(env!("CARGO_PKG_VERSION_PATCH"));
-
-    lp.encoder_version = ENCODER_VERSION;
+    lp.encoder_version = get_cargo_pkg_version();
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)

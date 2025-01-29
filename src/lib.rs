@@ -19,6 +19,7 @@ pub use enabled_features::EnabledFeatures;
 use helpers::{catch_unwind_result, copy_cstring_utf8_to_buffer};
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::Metrics;
+use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 
@@ -197,17 +198,18 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     }
 }
 
-static GIT_VERSION: &str =
-    git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"]);
-
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn get_version_string() -> String {
+    format!("{}-{}", PACKAGE_VERSION, get_git_version())
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn get_version(
     package: &mut *const std::os::raw::c_char,
     git: &mut *const std::os::raw::c_char,
 ) {
-    *git = GIT_VERSION.as_ptr() as *const std::os::raw::c_char;
+    *git = get_git_version().as_ptr() as *const std::os::raw::c_char;
     *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
 }
 

@@ -5,7 +5,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 use std::borrow::Cow;
-use std::env;
 use std::ffi::OsStr;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write};
@@ -161,9 +160,8 @@ Options:
 
     if pargs.contains("--version") {
         println!(
-            "compiled library Lepton version {}, git revision: {}",
-            env!("CARGO_PKG_VERSION"),
-            git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"])
+            "compiled library Lepton version {}",
+            lepton_jpeg::get_version_string()
         );
     }
 
