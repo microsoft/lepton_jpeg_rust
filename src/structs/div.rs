@@ -98,7 +98,11 @@ pub fn div(dividend: i32, divisor_recip: i32) -> i32 {
     let shift = divisor_recip & 0xFF;
     let mult = (divisor_recip & !0xFF) as i64;
     let res = (abs_d * mult >> shift) as i32;
-    if dividend < 0 { -res } else { res }
+    if dividend < 0 {
+        -res
+    } else {
+        res
+    }
 }
 
 // pub fn div(dividend: i32x8, divisor_recip: i32x8)

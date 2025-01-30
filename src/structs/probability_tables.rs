@@ -243,7 +243,7 @@ impl ProbabilityTables {
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(
         &self,
         raster_cols: &[i32x8; 8],
-        qt: &QuantizationTables,//q0: i32,
+        qt: &QuantizationTables, //q0: i32,
         neighbor_data: &NeighborData,
         enabled_features: &enabled_features::EnabledFeatures,
     ) -> PredictDCResult {
