@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use std::num::NonZeroI32;
+
 use crate::consts::*;
 use crate::helpers::*;
 use crate::jpeg::jpeg_header::JpegHeader;
@@ -12,7 +14,18 @@ use crate::{ExitCode, Result};
 
 pub struct QuantizationTables {
     quantization_table: [u16; 64],
+
+    /// transposed version of quantization table
     quantization_table_transposed: [u16; 64],
+
+    /// precalculated divisors * 8192 for the top row of the quantization table for final step of lak calculation
+    /// compiler sees non-zero to avoid having to check for division-by-zero
+    quantization_table_divisors_horiz: [NonZeroI32; 8],
+
+    /// precalculated divisors * 8192 for the left column of the quantization table for final step of lak calculation
+    /// compiler sees non-zero to avoid having to check for division-by-zero
+    quantization_table_divisors_vert: [NonZeroI32; 8],
+
     // Values for discrimination between "regular" and "noise" part of
     // edge AC coefficients, used in `read/write_edge_coefficient`.
     // Calculated using approximate maximal magnitudes
@@ -32,6 +45,8 @@ impl QuantizationTables {
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
             min_noise_threshold: [0; 14],
+            quantization_table_divisors_horiz: [NonZeroI32::new(1).unwrap(); 8],
+            quantization_table_divisors_vert: [NonZeroI32::new(1).unwrap(); 8],
         };
 
         for pixel_row in 0..8 {
@@ -42,6 +57,16 @@ impl QuantizationTables {
 
                 retval.quantization_table[coord] = q;
                 retval.quantization_table_transposed[coord_tr] = q;
+
+                if pixel_row == 0 {
+                    retval.quantization_table_divisors_horiz[pixel_column] =
+                        NonZeroI32::new(i32::from(q) << 13).unwrap();
+                }
+
+                if pixel_column == 0 {
+                    retval.quantization_table_divisors_vert[pixel_row] =
+                        NonZeroI32::new(i32::from(q) << 13).unwrap();
+                }
             }
         }
 
@@ -94,6 +119,13 @@ impl QuantizationTables {
         &self.quantization_table_transposed
     }
 
+    pub fn get_quantization_table_divisors<const HORIZONTAL: bool>(&self) -> &[NonZeroI32; 8] {
+        if HORIZONTAL {
+            &self.quantization_table_divisors_horiz
+        } else {
+            &self.quantization_table_divisors_vert
+        }
+    }
     pub fn get_min_noise_threshold(&self, coef: usize) -> u8 {
         self.min_noise_threshold[coef]
     }
