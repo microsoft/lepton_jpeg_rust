@@ -306,12 +306,12 @@ impl AlignedBlock {
 
     #[inline(always)]
     pub fn set_transposed_from_zigzag(&mut self, index: usize, v: i16) {
-        self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])] = v;
+        self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index].get())] = v;
     }
 
     #[inline(always)]
     pub fn get_transposed_from_zigzag(&self, index: usize) -> i16 {
-        return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index])];
+        return self.raw_data[usize::from(ZIGZAG_TO_TRANSPOSED[index].get())];
     }
 
     #[inline(always)]

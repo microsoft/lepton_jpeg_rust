@@ -8,6 +8,7 @@ use std::cmp;
 use std::io::{Read, Write};
 
 use default_boxed::DefaultBoxed;
+use deranged::{RangedU32, RangedU8};
 
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, u16_bit_length, u32_bit_length};
@@ -33,7 +34,7 @@ const NUM_NON_ZERO_EDGE_BINS: usize = 7;
 type NumNonZerosCountsT = [[[Branch; 1 << NON_ZERO_EDGE_COUNT_BITS]; 8]; 8];
 
 const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
-// The array was used only on indices [2,7] of [0,7]
+// The array was used only on iBndices [2,7] of [0,7]
 const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR - 2;
 const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
@@ -187,9 +188,9 @@ impl ModelPerColor {
     pub fn read_coef<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        zig49: usize,
-        num_non_zeros_bin: usize,
-        best_prior_bit_len: usize,
+        zig49: RangedU32<0, 48>,
+        num_non_zeros_bin: RangedU8<0, 8>,
+        best_prior_bit_len: RangedU32<0, 11>,
     ) -> std::io::Result<i16> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
@@ -210,9 +211,9 @@ impl ModelPerColor {
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
         coef: i16,
-        zig49: usize,
-        num_non_zeros_bin: usize,
-        best_prior_bit_len: usize,
+        zig49: RangedU32<0, 48>,
+        num_non_zeros_bin: RangedU8<0, 8>,
+        best_prior_bit_len: RangedU32<0, 11>,
     ) -> Result<()> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
@@ -233,32 +234,19 @@ impl ModelPerColor {
     #[inline(always)]
     fn get_coef_branches(
         &mut self,
-        num_non_zeros_bin: usize,
-        zig49: usize,
-        best_prior_bit_len: usize,
+        num_non_zeros_bin: RangedU8<0, 8>,
+        zig49: RangedU32<0, 48>,
+        best_prior_bit_len: RangedU32<0, 11>,
     ) -> (
         &mut [Branch; MAX_EXPONENT],
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        // these bounds checks happen anyway, but we can provide more helpful error messages
-        // and it also means that the compiler can move the actual array references around
-        // if it helps with performance
-        assert!(
-            num_non_zeros_bin < NUM_NON_ZERO_7X7_BINS,
-            "num_non_zeros_bin {0} too high",
-            num_non_zeros_bin
-        );
-        assert!(zig49 < 49, "zig49 {0} too high", num_non_zeros_bin);
-        assert!(
-            best_prior_bit_len < NUMERIC_LENGTH_MAX,
-            "best_prior_bit_len {0} too high",
-            best_prior_bit_len
-        );
-
-        let exp = &mut self.counts[num_non_zeros_bin][zig49].exponent_counts[best_prior_bit_len];
+        let exp = &mut self.counts[num_non_zeros_bin.get() as usize][zig49.get() as usize]
+            .exponent_counts[best_prior_bit_len.get() as usize];
         let sign = &mut self.sign_counts[0][0];
-        let bits = &mut self.counts[num_non_zeros_bin][zig49].residual_noise_counts;
+        let bits = &mut self.counts[num_non_zeros_bin.get() as usize][zig49.get() as usize]
+            .residual_noise_counts;
 
         (exp, sign, bits)
     }

@@ -9,6 +9,7 @@ use std::io::Read;
 
 use bytemuck::cast_mut;
 use default_boxed::DefaultBoxed;
+use deranged::RangedU32;
 use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -259,9 +260,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let mut eob_x: u32 = 0;
     let mut eob_y: u32 = 0;
 
-    let mut num_non_zeros_7x7_remaining = num_non_zeros_7x7 as usize;
-
-    if num_non_zeros_7x7_remaining > 0 {
+    if let Some(mut num_non_zeros_7x7_remaining) = RangedU32::<1, 49>::new(num_non_zeros_7x7 as u32)
+    {
         let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
             neighbor_data.left,
             neighbor_data.above,
@@ -273,33 +273,36 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        for (zig49, &coord_tr) in UNZIGZAG_49_TR.iter().enumerate() {
-            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr as usize]);
+        let mut zig49 = RangedU32::<0, 48>::MIN;
+        loop {
+            let coord_tr = UNZIGZAG_49_TR[zig49.get() as usize];
+            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr.get() as usize]);
 
             let coef = model_per_color.read_coef(
                 bool_reader,
                 zig49,
                 num_non_zeros_bin,
-                best_prior_bit_length as usize,
+                RangedU32::<0, 11>::new(best_prior_bit_length.into()).unwrap(),
             )?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let by = u32::from(coord_tr) & 7;
-                let bx = u32::from(coord_tr) >> 3;
+                let by = u32::from(coord_tr.get()) & 7;
+                let bx = u32::from(coord_tr.get()) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
                 eob_x = cmp::max(eob_x, bx);
                 eob_y = cmp::max(eob_y, by);
 
-                output.set_coefficient(coord_tr as usize, coef);
-                raster_col[coord_tr as usize] = i32::from(coef)
-                    * i32::from(qt.get_quantization_table_transposed()[coord_tr as usize]);
+                output.set_coefficient(coord_tr.get() as usize, coef);
+                raster_col[coord_tr.get() as usize] = i32::from(coef)
+                    * i32::from(qt.get_quantization_table_transposed()[coord_tr.get() as usize]);
 
-                num_non_zeros_7x7_remaining -= 1;
-                if num_non_zeros_7x7_remaining == 0 {
+                if let Some(r) = num_non_zeros_7x7_remaining.checked_sub(1) {
+                    num_non_zeros_7x7_remaining = r;
+                } else {
                     break;
                 }
 
@@ -307,14 +310,16 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
                 num_non_zeros_bin =
                     ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
             }
-        }
-    }
 
-    if num_non_zeros_7x7_remaining > 0 {
-        return err_exit_code(
-            ExitCode::StreamInconsistent,
-            "not enough nonzeros in 7x7 block",
-        );
+            if let Some(r) = zig49.checked_add(1) {
+                zig49 = r;
+            } else {
+                return err_exit_code(
+                    ExitCode::StreamInconsistent,
+                    "not enough nonzeros in 7x7 block",
+                );
+            }
+        }
     }
 
     // step 2, read the edge coefficients
