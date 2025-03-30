@@ -81,9 +81,9 @@ pub const FREQ_MAX: [u16; 14] = [
 ];
 
 // used to get prediction branches basing on nonzero-number predictor `num_non_zeros_context`
-pub const NON_ZERO_TO_BIN: [u8; 26] = [
+pub const NON_ZERO_TO_BIN: [RangedU8<0, 8>; 26] = into_array([
     0, 1, 2, 3, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
-];
+]);
 
 // used to get prediction branches basing on current `num_non_zeros_left_7x7`, 0th element is not used
 pub const NON_ZERO_TO_BIN_7X7: [RangedU8<0, 8>; 50] = into_array([

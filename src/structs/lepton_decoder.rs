@@ -9,7 +9,7 @@ use std::io::Read;
 
 use bytemuck::cast_mut;
 use default_boxed::DefaultBoxed;
-use deranged::RangedU32;
+use deranged::{RangedU32, RangedU8};
 use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -427,52 +427,60 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     est_eob: u8,
     raster: &mut [i32; 64],
 ) -> Result<()> {
-    let mut num_non_zeros_edge = model_per_color
+    let num_non_zeros_edge = model_per_color
         .read_non_zero_edge_count::<R, HORIZONTAL>(bool_reader, est_eob, num_non_zeros_bin)
         .context()?;
 
-    let delta;
-    let mut zig15offset;
+    if num_non_zeros_edge == 0 {
+        return Ok(());
+    }
 
-    if HORIZONTAL {
-        delta = 8;
-        zig15offset = 0;
+    if let Some(mut num_non_zeros_edge) = RangedU8::<1, 7>::new(num_non_zeros_edge) {
+        let delta;
+        let mut zig15offset;
+
+        if HORIZONTAL {
+            delta = 8;
+            zig15offset = 0;
+        } else {
+            delta = 1;
+            zig15offset = 7;
+        }
+
+        let mut coord_tr = delta;
+
+        for _lane in 0..7 {
+            let best_prior =
+                pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
+
+            let coef = model_per_color.read_edge_coefficient(
+                bool_reader,
+                qt,
+                RangedU32::<0, 13>::new(zig15offset).unwrap(),
+                num_non_zeros_edge,
+                best_prior,
+            )?;
+
+            if coef != 0 {
+                here_mut.set_coefficient(coord_tr, coef);
+                raster[coord_tr] =
+                    i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
+
+                if let Some(r) = num_non_zeros_edge.checked_sub(1) {
+                    num_non_zeros_edge = r;
+                } else {
+                    break;
+                }
+            }
+
+            coord_tr += delta;
+            zig15offset += 1;
+        }
     } else {
-        delta = 1;
-        zig15offset = 7;
-    }
-
-    let mut coord_tr = delta;
-
-    for _lane in 0..7 {
-        if num_non_zeros_edge == 0 {
-            break;
-        }
-
-        let best_prior =
-            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
-
-        let coef = model_per_color.read_edge_coefficient(
-            bool_reader,
-            qt,
-            zig15offset,
-            num_non_zeros_edge,
-            best_prior,
-        )?;
-
-        if coef != 0 {
-            num_non_zeros_edge -= 1;
-            here_mut.set_coefficient(coord_tr, coef);
-            raster[coord_tr] =
-                i32::from(coef) * i32::from(qt.get_quantization_table_transposed()[coord_tr]);
-        }
-
-        coord_tr += delta;
-        zig15offset += 1;
-    }
-
-    if num_non_zeros_edge != 0 {
-        return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
+        return err_exit_code(
+            ExitCode::StreamInconsistent,
+            "num_non_zeros_edge is too big",
+        );
     }
 
     Ok(())

@@ -9,7 +9,7 @@ use std::io::Write;
 
 use bytemuck::cast;
 use default_boxed::DefaultBoxed;
-use deranged::RangedU32;
+use deranged::{RangedU32, RangedU8};
 use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -542,8 +542,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
                 bool_writer,
                 qt,
                 coef,
-                zig15offset,
-                num_non_zeros_edge,
+                RangedU32::new(zig15offset).unwrap(),
+                RangedU8::new(num_non_zeros_edge).unwrap(),
                 best_prior,
             )
             .context()?;

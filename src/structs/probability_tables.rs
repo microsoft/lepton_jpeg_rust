@@ -90,7 +90,7 @@ impl ProbabilityTables {
     pub fn calc_num_non_zeros_7x7_context_bin<const ALL_PRESENT: bool>(
         &self,
         neighbor_data: &NeighborData,
-    ) -> u8 {
+    ) -> RangedU8<0, 8> {
         let mut num_non_zeros_above = 0;
         let mut num_non_zeros_left = 0;
         if ALL_PRESENT || self.above_present {

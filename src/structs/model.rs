@@ -147,7 +147,7 @@ impl Model {
 pub struct ModelPerColor {
     // `num_non_zeros_context` cannot exceed 25, see `calc_non_zero_counts_context_7x7`
     num_non_zeros_counts7x7:
-        [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25] as usize],
+        [[Branch; 1 << NON_ZERO_7X7_COUNT_BITS]; 1 + NON_ZERO_TO_BIN[25].get() as usize],
 
     counts: [[Counts7x7; 49]; NUM_NON_ZERO_7X7_BINS],
 
@@ -254,11 +254,11 @@ impl ModelPerColor {
     pub fn write_non_zero_7x7_count<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        num_non_zeros_7x7_context_bin: u8,
+        num_non_zeros_7x7_context_bin: RangedU8<0, 8>,
         num_non_zeros_7x7: u8,
     ) -> Result<()> {
         let num_non_zeros_prob =
-            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin.get())];
 
         return bool_writer
             .put_grid(
@@ -291,10 +291,10 @@ impl ModelPerColor {
     pub fn read_non_zero_7x7_count<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        num_non_zeros_7x7_context_bin: u8,
+        num_non_zeros_7x7_context_bin: RangedU8<0, 8>,
     ) -> Result<u8> {
         let num_non_zeros_prob =
-            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
+            &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin.get())];
 
         return Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
@@ -319,28 +319,17 @@ impl ModelPerColor {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
-        zig15offset: usize,
-        num_non_zeros_edge: u8,
+        zig15offset: RangedU32<0, 13>,
+        num_non_zeros_edge: RangedU8<1, 7>,
         best_prior: i32,
     ) -> Result<i16> {
-        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
-
-        // bounds checks will test these anyway, so check here for better
-        // error messages and also gives the optimizer more freedom to move code around
-        assert!(
-            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
-            "num_non_zeros_edge_bin {0} too high",
-            num_non_zeros_edge_bin
-        );
-
-        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
-
         // we cap the bit length since the prior prediction can be wonky
         let best_prior_abs = best_prior.unsigned_abs();
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
-        let length_branches = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
+        let length_branches = &mut self.counts_x[num_non_zeros_edge.get() as usize - 1]
+            [zig15offset.get() as usize]
             .exponent_counts[best_prior_bit_len];
 
         let length = bool_reader
@@ -364,7 +353,9 @@ impl ModelPerColor {
             coef = 1;
 
             if length > 1 {
-                let min_threshold: i32 = qt.get_min_noise_threshold(zig15offset).into();
+                let min_threshold: i32 = qt
+                    .get_min_noise_threshold(zig15offset.get() as usize)
+                    .into();
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
@@ -393,7 +384,8 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge.get() as usize - 1]
+                        [zig15offset.get() as usize]
                         .residual_noise_counts;
 
                     coef <<= i + 1;
@@ -417,21 +409,11 @@ impl ModelPerColor {
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         coef: i16,
-        zig15offset: usize,
-        num_non_zeros_edge: u8,
+        zig15offset: RangedU32<0, 13>,
+        num_non_zeros_edge: RangedU8<1, 7>,
         best_prior: i32,
     ) -> Result<()> {
-        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge) - 1;
-
-        // bounds checks will test these anyway, so check here for better
-        // error messages and also gives the optimizer more freedom to move code around
-        assert!(
-            num_non_zeros_edge_bin < NUM_NON_ZERO_EDGE_BINS,
-            "num_non_zeros_edge_bin {0} too high",
-            num_non_zeros_edge_bin
-        );
-
-        assert!(zig15offset < 14, "zig15offset {0} too high", zig15offset);
+        let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge.get()) - 1;
 
         // we cap the bit length since the prior prediction can be wonky
         let best_prior_abs = best_prior.unsigned_abs();
@@ -441,8 +423,8 @@ impl ModelPerColor {
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
 
-        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset].exponent_counts
-            [best_prior_bit_len];
+        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset.get() as usize]
+            .exponent_counts[best_prior_bit_len];
 
         if length > MAX_EXPONENT {
             return err_exit_code(ExitCode::CoefficientOutOfRange, "CoefficientOutOfRange");
@@ -467,7 +449,8 @@ impl ModelPerColor {
             )?;
 
             if length > 1 {
-                let min_threshold = i32::from(qt.get_min_noise_threshold(zig15offset));
+                let min_threshold =
+                    i32::from(qt.get_min_noise_threshold(zig15offset.get() as usize));
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {
@@ -500,7 +483,8 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin]
+                        [zig15offset.get() as usize]
                         .residual_noise_counts;
 
                     bool_writer
