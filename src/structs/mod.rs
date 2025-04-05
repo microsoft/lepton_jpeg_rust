@@ -11,6 +11,7 @@
 
 mod block_context;
 mod branch;
+mod div;
 mod idct;
 mod lepton_decoder;
 mod lepton_encoder;

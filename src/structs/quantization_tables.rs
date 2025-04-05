@@ -8,6 +8,7 @@ use crate::consts::*;
 use crate::helpers::*;
 use crate::jpeg::jpeg_header::JpegHeader;
 use crate::lepton_error::err_exit_code;
+use crate::structs::div::recip;
 use crate::{ExitCode, Result};
 
 pub struct QuantizationTables {
@@ -18,6 +19,8 @@ pub struct QuantizationTables {
     // Calculated using approximate maximal magnitudes
     // of these coefficients `FREQ_MAX`
     min_noise_threshold: [u8; 14],
+    // Reciprocals for division-by-multiplicatio scheme
+    recip: [i32; 16],
 }
 
 impl QuantizationTables {
@@ -32,6 +35,7 @@ impl QuantizationTables {
             quantization_table: [0; 64],
             quantization_table_transposed: [0; 64],
             min_noise_threshold: [0; 14],
+            recip: [0; 16],
         };
 
         for pixel_row in 0..8 {
@@ -58,6 +62,10 @@ impl QuantizationTables {
                     retval.min_noise_threshold[i] = max_len - RESIDUAL_NOISE_FLOOR as u8;
                 }
             }
+        }
+        for i in 0..16 {
+            let coord = if i < 8 { i } else { (i - 8) * 8 };
+            retval.recip[i] = recip(retval.quantization_table[coord] as i32);
         }
 
         retval
@@ -96,5 +104,9 @@ impl QuantizationTables {
 
     pub fn get_min_noise_threshold(&self, coef: usize) -> u8 {
         self.min_noise_threshold[coef]
+    }
+
+    pub fn get_recip(&self, coef: usize) -> i32 {
+        self.recip[coef]
     }
 }
