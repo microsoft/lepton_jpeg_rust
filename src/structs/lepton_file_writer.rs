@@ -227,7 +227,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     // Get number of threads. Verify that it is at most MAX_THREADS and fits in 4 bits for serialization.
     let num_threads = thread_handoffs.len();
     assert!(
-        num_threads <= MAX_THREADS && num_threads <= MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT,
+        num_threads <= MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT,
         "Too many thread handoffs"
     );
 
@@ -340,7 +340,7 @@ fn get_number_of_threads_for_encoding(
     framebuffer_byte_size: usize,
     max_threads_to_use: usize,
 ) -> usize {
-    let mut num_threads = cmp::min(max_threads_to_use, MAX_THREADS);
+    let mut num_threads = cmp::min(max_threads_to_use, MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT);
 
     if num_rows / 2 < num_threads {
         num_threads = cmp::max(num_rows / 2, 1);

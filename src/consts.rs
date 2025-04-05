@@ -74,17 +74,11 @@ pub const NON_ZERO_TO_BIN_7X7: [u8; 50] = [
     8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 ];
 
-//pub const MAX_FILE_SIZE_BYTES : i32 = 128 * 1024 * 1024;
-pub const MAX_THREADS: usize = 8;
-
 pub const RESIDUAL_NOISE_FLOOR: usize = 7;
 
 pub const LEPTON_VERSION: u8 = 1; // Lepton version, same as used by Lepton C++ since we support the same format
 
-//pub const LogMaxNumerator : i32 = 18;
-//pub const DefaultEncodingThreads : usize = 8;
 pub const SMALL_FILE_BYTES_PER_ENCDOING_THREAD: usize = 125000;
-//pub const TailGarbageBufferLength : i32 = 1024;
 pub const MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT: usize = 16; // Number of threads minus 1 should fit in 4 bits
 
 //pub const SingleFFByte : [u8;1] = [ 0xFF ];
