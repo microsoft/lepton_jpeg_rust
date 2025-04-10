@@ -485,7 +485,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     num_non_zeros_bin: RangedU8<0, 7>,
     est_eob: u8,
 ) -> Result<()> {
-    let mut num_non_zeros_edge;
+    let num_non_zeros_edge;
 
     if !HORIZONTAL {
         num_non_zeros_edge = count_non_zero(block.get_coefficient(1))
@@ -527,33 +527,35 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    for _lane in 0..7 {
-        if num_non_zeros_edge == 0 {
-            break;
+    if let Some(mut n) = RangedU8::<1, 7>::new(num_non_zeros_edge) {
+        for _lane in 0..7 {
+            let best_prior =
+                pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
+
+            let coef = block.get_coefficient(coord_tr);
+
+            model_per_color
+                .write_edge_coefficient(
+                    bool_writer,
+                    qt,
+                    coef,
+                    RangedU32::new(zig15offset).unwrap(),
+                    n,
+                    best_prior,
+                )
+                .context()?;
+
+            if coef != 0 {
+                if let Some(r) = n.checked_sub(1) {
+                    n = r;
+                } else {
+                    break;
+                }
+            }
+
+            coord_tr += delta;
+            zig15offset += 1;
         }
-
-        let best_prior =
-            pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
-
-        let coef = block.get_coefficient(coord_tr);
-
-        model_per_color
-            .write_edge_coefficient(
-                bool_writer,
-                qt,
-                coef,
-                RangedU32::new(zig15offset).unwrap(),
-                RangedU8::new(num_non_zeros_edge).unwrap(),
-                best_prior,
-            )
-            .context()?;
-
-        if coef != 0 {
-            num_non_zeros_edge -= 1;
-        }
-
-        coord_tr += delta;
-        zig15offset += 1;
     }
 
     Ok(())

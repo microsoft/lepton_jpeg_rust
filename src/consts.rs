@@ -25,7 +25,7 @@ pub enum JpegType {
 pub const COLOR_CHANNEL_NUM_BLOCK_TYPES: usize = 3;
 
 /// Convert a slice of u8 into an array of ConstRangedX. Useful for const initialization, eg
-///  ```const CONTARRAY : [ConstRangedX<1,10>;5] = ConstRangedX::<1,10>::into_array([1,2,3,4,5]);
+/// const CONTARRAY : [ConstRangedX<1,10>;5] = ConstRangedX::<1,10>::into_array([1,2,3,4,5]);
 /// will panic if any value is out of range
 const fn into_array<const N: usize, const MIN: u8, const MAX: u8>(
     a: [u8; N],
