@@ -138,9 +138,9 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "flate2"
-version = "1.0.35"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c936bfdafb507ebbf50b8074c54fa31c5be9a1e7e5f467dd659697041407d07c"
+checksum = "7ced92e76e966ca2fd84c8f7aa01a4aea65b0eb6648d72f7c8f3e2764a67fece"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -308,7 +308,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lepton_jpeg"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -317,16 +317,42 @@ dependencies = [
  "flate2",
  "git-version",
  "log",
- "pico-args",
  "rand",
  "rand_chacha",
  "rayon-core",
- "rstest",
- "simple_logger",
  "siphasher",
  "thread-priority",
- "unroll",
  "wide",
+]
+
+[[package]]
+name = "lepton_jpeg_0_5"
+version = "0.5.0"
+dependencies = [
+ "lepton_jpeg",
+ "rstest",
+]
+
+[[package]]
+name = "lepton_jpeg_root"
+version = "0.5.0"
+dependencies = [
+ "lepton_jpeg",
+ "rand",
+ "rand_chacha",
+ "rstest",
+ "siphasher",
+]
+
+[[package]]
+name = "lepton_jpeg_util"
+version = "0.5.0"
+dependencies = [
+ "lepton_jpeg",
+ "log",
+ "pico-args",
+ "rayon-core",
+ "simple_logger",
 ]
 
 [[package]]
@@ -349,9 +375,9 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.3"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8402cab7aefae129c6977bb0ff1b8fd9a04eb5b51efc50a70bea51cda0c7924"
+checksum = "3be647b768db090acb35d5ec5db2b0e1f1de11133ca123b9eacf5137868f892a"
 dependencies = [
  "adler2",
 ]
@@ -704,16 +730,6 @@ name = "unicode-ident"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a210d160f08b701c8721ba1c726c11662f877ea6b7094007e1ca9a1041945034"
-
-[[package]]
-name = "unroll"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad948c1cb799b1a70f836077721a92a35ac177d4daddf4c20a633786d4cf618"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "wasi"

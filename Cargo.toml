@@ -1,52 +1,19 @@
 [package]
-name = "lepton_jpeg"
-version = "0.4.2"
+name = "lepton_jpeg_root"
+version = "0.5.0"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
-
-# requires scoped threads and IsTerminal
-rust-version = "1.70"
-description = "Rust port of the Lepton JPEG compression library"
-readme = "README.md"
-repository = "https://github.com/microsoft/lepton_jpeg_rust"
-license = "Apache-2.0"
-exclude = [
-    "images/*",
-    "tests/*",
-]
-categories = ["multimedia::images", "multimedia::encoding"]
 
 [profile.release]
 debug=true
 
+[workspace]
+members = ["lib","dll","util"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = []
-compression_stats = []
-use_rayon = ["dep:rayon-core"]
-detailed_tracing = []
-
 [dependencies]
-bytemuck = "1"
-byteorder = "1.4"
-flate2 = "1.0"
-default-boxed = "0.2"
-wide = "0.7"
-log = "0.4"
-simple_logger ="5.0"
-unroll = "0.1"
-rayon-core = { version = "1", optional = true }
-git-version = "0.3"
-pico-args = "0.5"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-cpu-time = "1.0"
-thread-priority = "1.0"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-cpu-time = "1.0"
-thread-priority = "1.0"
+lepton_jpeg = { path = "lib" }
 
 [dev-dependencies]
 rstest = "0.22"
@@ -54,12 +21,5 @@ rand = "0.8"
 rand_chacha = "0.3"
 siphasher = "1"
 
-[[bin]]
-name = "lepton_jpeg_util"
-path = "src/main.rs"
-
-
-[lib]
-crate-type = ["cdylib","lib"]
 
 

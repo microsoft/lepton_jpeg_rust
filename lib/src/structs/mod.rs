@@ -4,11 +4,6 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-// Don't allow any unsafe code by default. Since this code has to potentially deal with
-// badly/maliciously formatted images, we want this extra level of safety.
-#![forbid(unsafe_code)]
-#![forbid(trivial_numeric_casts)]
-
 mod block_context;
 mod branch;
 mod idct;
