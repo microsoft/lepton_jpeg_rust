@@ -108,12 +108,12 @@ impl<'a> PartialBuffer<'a> {
 
 #[test]
 fn test_taking_simple() {
-    let mut extra: Vec<u8> = Vec::new();
+    let mut extra = Vec::new();
     let mut pb = PartialBuffer::new(&[1, 2, 3, 4], &mut extra);
 
     let taken = pb.take(4, 0).unwrap();
     assert_eq!(taken, vec![1, 2, 3, 4]);
-    assert!(extra.is_empty());
+    assert_eq!(&extra[..], []);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn test_taking_simple_n() {
 
     let taken = pb.take_n::<4>(0).unwrap();
     assert_eq!(taken, [1, 2, 3, 4]);
-    assert!(extra.is_empty());
+    assert_eq!(&extra[..], []);
 }
 
 #[test]
