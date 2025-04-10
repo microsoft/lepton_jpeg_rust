@@ -435,7 +435,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     let (curr_horiz_pred, curr_vert_pred) =
         ProbabilityTables::predict_current_edges(neighbors_data, &raster);
 
-    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+    let num_non_zeros_bin = RangedU8::new((num_non_zeros_7x7 + 3) / 7).unwrap();
 
     encode_one_edge::<W, ALL_PRESENT, true>(
         here_tr,
@@ -482,7 +482,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     pred: &[i32; 8],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_bin: u8,
+    num_non_zeros_bin: RangedU8<0, 7>,
     est_eob: u8,
 ) -> Result<()> {
     let mut num_non_zeros_edge;

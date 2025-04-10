@@ -381,7 +381,7 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     eob_x: u8,
     eob_y: u8,
 ) -> Result<(i32x8, i32x8)> {
-    let num_non_zeros_bin = (num_non_zeros_7x7 + 3) / 7;
+    let num_non_zeros_bin = RangedU8::new((num_non_zeros_7x7 + 3) / 7).unwrap();
 
     // get predictors for edge coefficients of the current block
     let (curr_horiz_pred, curr_vert_pred) =
@@ -423,7 +423,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_bin: u8,
+    num_non_zeros_bin: RangedU8<0, 7>,
     est_eob: u8,
     raster: &mut [i32; 64],
 ) -> Result<()> {

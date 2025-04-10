@@ -273,7 +273,7 @@ impl ModelPerColor {
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
         est_eob: u8,
-        num_non_zeros_bin: u8,
+        num_non_zeros_bin: RangedU8<0, 7>,
         num_non_zeros_edge: u8,
     ) -> Result<()> {
         let prob_edge_eob =
@@ -305,7 +305,7 @@ impl ModelPerColor {
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         est_eob: u8,
-        num_non_zeros_bin: u8,
+        num_non_zeros_bin: RangedU8<0, 7>,
     ) -> Result<u8> {
         let prob_edge_eob =
             self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
@@ -527,12 +527,14 @@ impl ModelPerColor {
     fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
         &mut self,
         est_eob: u8,
-        num_nonzeros_bin: u8,
+        num_nonzeros_bin: RangedU8<0, 7>,
     ) -> &mut [Branch; 8] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[est_eob as usize][num_nonzeros_bin as usize];
+            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
+                [num_nonzeros_bin.get() as usize];
         } else {
-            return &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize];
+            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
+                [num_nonzeros_bin.get() as usize];
         }
     }
 }
