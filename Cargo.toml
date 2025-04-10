@@ -39,6 +39,7 @@ unroll = "0.1"
 rayon-core = { version = "1", optional = true }
 git-version = "0.3"
 pico-args = "0.5"
+deranged = "0.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpu-time = "1.0"
