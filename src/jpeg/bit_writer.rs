@@ -266,12 +266,12 @@ fn roundtrip_randombits() {
 
                     assert_eq!(
                         expected_peek_byte & mask,
-                        peekcode & mask,
+                        (peekcode as u8) & mask,
                         "peek unexpected result"
                     );
 
                     assert_eq!(
-                        code,
+                        code as u32,
                         r.read(numbits as u32).unwrap(),
                         "read unexpected result"
                     );
