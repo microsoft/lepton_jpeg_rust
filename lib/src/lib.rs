@@ -7,8 +7,18 @@
 // Don't allow any unsafe code by default. Since this code has to potentially deal with
 // badly/maliciously formatted images, we want this extra level of safety.
 #![forbid(unsafe_code)]
+#![forbid(trivial_casts)]
 #![forbid(trivial_numeric_casts)]
-#![forbid(unused_crate_dependencies)]
+#![forbid(non_ascii_idents)]
+#![forbid(unused_extern_crates)]
+#![forbid(unused_import_braces)]
+#![forbid(redundant_lifetimes)]
+#![forbid(single_use_lifetimes)]
+#![forbid(unused_extern_crates)]
+#![forbid(unused_lifetimes)]
+#![forbid(unused_macro_rules)]
+#![forbid(macro_use_extern_crate)]
+#![forbid(missing_unsafe_on_extern)]
 
 mod consts;
 mod helpers;
