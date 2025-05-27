@@ -21,6 +21,8 @@ jobs:
         targets: wasm32-wasip1,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
         components: rustfmt,clippy
 
+    - name: Check formatting
+      run: cargo fmt --check
     - name: Build default target
       run: cargo build --locked --all --workspace
     - name: Build wasm32-wasip1
@@ -29,10 +31,10 @@ jobs:
       run: cargo build --locked --target aarch64-unknown-linux-musl --manifest-path lib/Cargo.toml
     - name: Build x86_64-pc-windows-msvc
       run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace
+    - name: Build x86_64-pc-windows-msvc release
+      run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
     - name: Run tests
       run: cargo test --locked --workspace
     - name: Run tests (use_rayon)
       run: cargo test --locked --features use_rayon --workspace
-    - name: Check formatting
-      run: cargo fmt --check
       
