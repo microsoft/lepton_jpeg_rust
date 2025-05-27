@@ -12,6 +12,18 @@
             ],
             "group": "test",
             "label": "rust: cargo test norun"
+        },
+        {
+            "type": "cargo",
+            "command": "build",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "args": [
+                "--all"
+            ],
+            "group": "build",
+            "label": "rust: cargo build"
         }
     ]
 }

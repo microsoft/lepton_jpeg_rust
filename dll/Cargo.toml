@@ -1,5 +1,5 @@
 [package]
-name = "lepton_jpeg_0_5"
+name = "lepton_jpeg_dll"
 version = "0.5.0"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
@@ -9,6 +9,7 @@ lepton_jpeg = { path = "../lib" }
 rstest = "0.22"
 
 [lib]
+name = "lepton_jpeg"
 crate-type = ["cdylib"]
 
 
