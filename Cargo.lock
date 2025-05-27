@@ -319,6 +319,7 @@ dependencies = [
  "log",
  "rand",
  "rand_chacha",
+ "rayon-core",
  "siphasher",
  "thread-priority",
  "wide",

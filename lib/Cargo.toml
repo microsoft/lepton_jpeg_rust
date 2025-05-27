@@ -22,6 +22,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 default = []
 compression_stats = []
 detailed_tracing = []
+use_rayon = ["dep:rayon-core"]
 
 [dependencies]
 bytemuck = "1"
@@ -31,6 +32,7 @@ default-boxed = "0.2"
 wide = "0.7"
 log = "0.4"
 git-version = "0.3"
+rayon-core = { version = "1", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpu-time = "1.0"
