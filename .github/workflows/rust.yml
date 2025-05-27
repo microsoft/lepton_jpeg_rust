@@ -24,9 +24,9 @@ jobs:
     - name: Build default target
       run: cargo build --locked --all --workspace
     - name: Build wasm32-wasip1
-      run: cargo build --locked --target wasm32-wasip1 --lib --workspace
+      run: cargo build --locked --target wasm32-wasip1 --manifest-path lib/Cargo.toml
     - name: Build aarch64-unknown-linux-musl
-      run: cargo build --locked --target aarch64-unknown-linux-musl --lib --workspace
+      run: cargo build --locked --target aarch64-unknown-linux-musl --manifest-path lib/Cargo.toml
     - name: Build x86_64-pc-windows-msvc
       run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace
     - name: Run tests
