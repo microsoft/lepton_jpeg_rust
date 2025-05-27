@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
 
+use super::simple_threadpool::LeptonThreadPool;
+
 use crate::lepton_error::{AddContext, ExitCode, Result};
 /// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
 ///
@@ -62,23 +64,6 @@ impl Write for MultiplexWriter {
         }
         Ok(())
     }
-}
-
-// if we are not using Rayon, just spawn regular threads
-#[cfg(not(feature = "use_rayon"))]
-fn my_spawn_simple<F>(f: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    super::simple_threadpool::execute(f);
-}
-
-#[cfg(feature = "use_rayon")]
-fn my_spawn_simple<F>(f: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    rayon_core::spawn(f);
 }
 
 /// Collects the thread results and errors and returns them as a vector
@@ -144,6 +129,7 @@ impl<RESULT> ThreadResults<RESULT> {
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
     num_threads: usize,
+    thread_pool: &dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
 where
@@ -181,7 +167,7 @@ where
             Ok(r)
         });
 
-        my_spawn_simple(f);
+        thread_pool.run(Box::new(f));
 
         packet_receivers.push(rx);
     }
@@ -315,6 +301,7 @@ enum State {
 impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn new<FN>(
         num_threads: usize,
+        thread_pool: &dyn LeptonThreadPool,
         retention_bytes: usize,
         max_processor_threads: usize,
         processor: FN,
@@ -359,7 +346,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         for _i in 0..num_threads.min(max_processor_threads) {
             let q = shared_queue.clone();
 
-            my_spawn_simple(move || {
+            thread_pool.run(Box::new(move || {
                 loop {
                     // do this to make sure the lock gets
                     let w = q.lock().unwrap().pop_front();
@@ -370,7 +357,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         break;
                     }
                 }
-            });
+            }));
         }
 
         MultiplexReaderState {
@@ -448,6 +435,9 @@ impl<RESULT> MultiplexReaderState<RESULT> {
     }
 }
 
+#[cfg(test)]
+use crate::DEFAULT_THREAD_POOL;
+
 /// simple end to end test that write the thread id and reads it back
 #[test]
 fn test_multiplex_end_to_end() {
@@ -455,27 +445,37 @@ fn test_multiplex_end_to_end() {
 
     let mut output = Vec::new();
 
-    let w = multiplex_write(&mut output, 10, |writer, thread_id| -> Result<usize> {
-        for i in thread_id as u32..10000 {
-            writer.write_u32::<byteorder::LittleEndian>(i)?;
-        }
+    let w = multiplex_write(
+        &mut output,
+        10,
+        DEFAULT_THREAD_POOL,
+        |writer, thread_id| -> Result<usize> {
+            for i in thread_id as u32..10000 {
+                writer.write_u32::<byteorder::LittleEndian>(i)?;
+            }
 
-        Ok(thread_id)
-    })
+            Ok(thread_id)
+        },
+    )
     .unwrap();
 
     assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     let mut extra = Vec::new();
 
-    let mut multiplex_state =
-        MultiplexReaderState::new(10, 0, 8, |thread_id, reader| -> Result<usize> {
+    let mut multiplex_state = MultiplexReaderState::new(
+        10,
+        DEFAULT_THREAD_POOL,
+        0,
+        8,
+        |thread_id, reader| -> Result<usize> {
             for i in thread_id as u32..10000 {
                 let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
                 assert_eq!(read_thread_id, i);
             }
             Ok(thread_id)
-        });
+        },
+    );
 
     // do worst case, we are just given byte at a time
     for i in 0..output.len() {
@@ -493,9 +493,10 @@ use crate::lepton_error::LeptonError;
 
 #[test]
 fn test_multiplex_read_error() {
-    let mut multiplex_state = MultiplexReaderState::new(10, 0, 8, |_, _| -> Result<usize> {
-        Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
-    });
+    let mut multiplex_state =
+        MultiplexReaderState::new(10, DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
+            Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+        });
 
     let e: LeptonError = multiplex_state.complete().unwrap_err().into();
     assert_eq!(e.exit_code(), ExitCode::FileNotFound);
@@ -504,9 +505,10 @@ fn test_multiplex_read_error() {
 
 #[test]
 fn test_multiplex_read_panic() {
-    let mut multiplex_state = MultiplexReaderState::new(10, 0, 8, |_, _| -> Result<usize> {
-        panic!();
-    });
+    let mut multiplex_state =
+        MultiplexReaderState::new(10, DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
+            panic!();
+        });
 
     let e: LeptonError = multiplex_state.complete().unwrap_err().into();
     assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
@@ -517,14 +519,19 @@ fn test_multiplex_read_panic() {
 fn test_multiplex_write_error() {
     let mut output = Vec::new();
 
-    let e: LeptonError = multiplex_write(&mut output, 10, |_, thread_id| -> Result<usize> {
-        if thread_id == 3 {
-            // have one thread fail
-            Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
-        } else {
-            Ok(0)
-        }
-    })
+    let e: LeptonError = multiplex_write(
+        &mut output,
+        10,
+        DEFAULT_THREAD_POOL,
+        |_, thread_id| -> Result<usize> {
+            if thread_id == 3 {
+                // have one thread fail
+                Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+            } else {
+                Ok(0)
+            }
+        },
+    )
     .unwrap_err()
     .into();
 
@@ -537,12 +544,17 @@ fn test_multiplex_write_error() {
 fn test_multiplex_write_panic() {
     let mut output = Vec::new();
 
-    let e: LeptonError = multiplex_write(&mut output, 10, |_, thread_id| -> Result<usize> {
-        if thread_id == 5 {
-            panic!();
-        }
-        Ok(0)
-    })
+    let e: LeptonError = multiplex_write(
+        &mut output,
+        10,
+        DEFAULT_THREAD_POOL,
+        |_, thread_id| -> Result<usize> {
+            if thread_id == 5 {
+                panic!();
+            }
+            Ok(0)
+        },
+    )
     .unwrap_err()
     .into();
 

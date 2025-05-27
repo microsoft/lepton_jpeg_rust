@@ -26,31 +26,18 @@ pub use helpers::catch_unwind_result;
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::{CpuTimeMeasure, Metrics};
 pub use structs::lepton_file_writer::get_git_version;
+pub use structs::simple_threadpool::{LeptonThreadPool, LeptonThreadPriority, DEFAULT_THREAD_POOL};
 
 use crate::lepton_error::{AddContext, Result};
-
-#[cfg(not(feature = "use_rayon"))]
-pub fn set_thread_priority(priority: i32) {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let p = match priority {
-            100 => thread_priority::ThreadPriority::Max,
-            0 => thread_priority::ThreadPriority::Min,
-            _ => panic!("Unsupported thread priority value: {}", priority),
-        };
-
-        thread_priority::set_current_thread_priority(p).unwrap();
-        crate::structs::simple_threadpool::set_thread_priority(p);
-    }
-}
 
 /// Decodes Lepton container and recreates the original JPEG file
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
+    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features, thread_pool)
 }
 
 /// Encodes JPEG as compressed Lepton format.
@@ -58,16 +45,27 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
+    structs::lepton_file_writer::encode_lepton_wrapper(
+        reader,
+        writer,
+        enabled_features,
+        thread_pool,
+    )
 }
 
 /// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
-    structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
+    structs::lepton_file_writer::encode_lepton_wrapper_verify(
+        input_data,
+        enabled_features,
+        thread_pool,
+    )
 }
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -116,9 +114,15 @@ impl LeptonFileReaderContext {
         input_complete: bool,
         writer: &mut impl Write,
         output_buffer_size: usize,
+        thread_pool: &dyn LeptonThreadPool,
     ) -> Result<bool> {
-        self.reader
-            .process_buffer(input, input_complete, writer, output_buffer_size)
+        self.reader.process_buffer(
+            input,
+            input_complete,
+            writer,
+            output_buffer_size,
+            thread_pool,
+        )
     }
 }
 
@@ -142,7 +146,9 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     } else {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = decode_lepton_file_image(&mut reader, enabled_features).context()?;
+        (lh, block_image) =
+            decode_lepton_file_image(&mut reader, enabled_features, DEFAULT_THREAD_POOL)
+                .context()?;
 
         loop {
             println!("parsed header:");

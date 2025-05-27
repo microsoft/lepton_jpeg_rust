@@ -19,22 +19,49 @@ use std::{
     thread::{self, spawn},
 };
 
-static IDLE_THREADS: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
-static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
+pub enum LeptonThreadPriority {
+    Low,
+    Normal,
+    High,
+}
+
+pub trait LeptonThreadPool {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>);
+    fn set_default_thread_priority(&self, priority: LeptonThreadPriority);
+}
+
+#[derive(Default)]
+pub struct SimpleThreadPool {}
+
+pub const DEFAULT_THREAD_POOL: &SimpleThreadPool = &SimpleThreadPool {};
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 static THREAD_PRIORITY: Mutex<Option<thread_priority::ThreadPriority>> = Mutex::new(None);
 
+impl LeptonThreadPool for SimpleThreadPool {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
+        super::simple_threadpool::execute(f);
+    }
+
+    fn set_default_thread_priority(&self, priority: LeptonThreadPriority) {
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            *THREAD_PRIORITY.lock().unwrap() = match priority {
+                LeptonThreadPriority::Low => Some(thread_priority::ThreadPriority::Min),
+                LeptonThreadPriority::Normal => None,
+                LeptonThreadPriority::High => Some(thread_priority::ThreadPriority::Max),
+            }
+        }
+    }
+}
+
+static IDLE_THREADS: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
+
 #[allow(dead_code)]
 pub fn get_idle_threads() -> usize {
     IDLE_THREADS.lock().unwrap().len()
-}
-
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-#[allow(dead_code)]
-pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
-    *THREAD_PRIORITY.lock().unwrap() = Some(priority);
 }
 
 /// Executes a closure on a thread from the thread pool. Does not block or return any result.

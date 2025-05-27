@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
     decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
-    ExitCode, LeptonError, Metrics,
+    ExitCode, LeptonError, LeptonThreadPool, Metrics, DEFAULT_THREAD_POOL,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -213,18 +213,16 @@ Options:
         enabled_features.use_16bit_dc_estimate = false;
     }
 
-    #[cfg(not(feature = "use_rayon"))]
     if pargs.contains("--highpriority") {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
-        lepton_jpeg::set_thread_priority(100);
+        DEFAULT_THREAD_POOL.set_default_thread_priority(lepton_jpeg::LeptonThreadPriority::High);
     }
 
-    #[cfg(not(feature = "use_rayon"))]
     if pargs.contains("--lowpriority") {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority
-        lepton_jpeg::set_thread_priority(0);
+        DEFAULT_THREAD_POOL.set_default_thread_priority(lepton_jpeg::LeptonThreadPriority::Low);
     }
 
     let filenames = pargs.finish();
@@ -559,13 +557,19 @@ fn do_work(
     match file_type {
         FileType::Jpeg => {
             if verify {
-                (output, metrics) = encode_lepton_verify(input_data, enabled_features)?;
+                (output, metrics) =
+                    encode_lepton_verify(input_data, enabled_features, DEFAULT_THREAD_POOL)?;
             } else {
                 let mut reader = Cursor::new(input_data);
                 output = Vec::with_capacity(input_data.len());
                 let mut writer = Cursor::new(&mut output);
 
-                metrics = encode_lepton(&mut reader, &mut writer, enabled_features)?
+                metrics = encode_lepton(
+                    &mut reader,
+                    &mut writer,
+                    enabled_features,
+                    DEFAULT_THREAD_POOL,
+                )?
             }
 
             info!(
@@ -580,7 +584,12 @@ fn do_work(
 
             output = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton(&mut reader, &mut output, &enabled_features)?;
+            metrics = decode_lepton(
+                &mut reader,
+                &mut output,
+                &enabled_features,
+                DEFAULT_THREAD_POOL,
+            )?;
         }
     }
 

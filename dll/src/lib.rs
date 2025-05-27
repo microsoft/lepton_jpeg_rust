@@ -3,15 +3,12 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project root for license information.
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
- 
- #![forbid(trivial_numeric_casts)]
- #![forbid(unused_crate_dependencies)]
 
 use std::io::Cursor;
 
 use lepton_jpeg::{
     catch_unwind_result, decode_lepton, encode_lepton, get_git_version, EnabledFeatures, ExitCode,
-    LeptonFileReaderContext,
+    LeptonFileReaderContext, DEFAULT_THREAD_POOL,
 };
 use rstest::rstest;
 
@@ -74,7 +71,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             features.max_threads = number_of_threads as u32;
         }
 
-        let _metrics = encode_lepton(&mut reader, &mut writer, &features)?;
+        let _metrics = encode_lepton(&mut reader, &mut writer, &features, DEFAULT_THREAD_POOL)?;
 
         *result_size = writer.position().into();
 
@@ -152,7 +149,12 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton(&mut reader, &mut writer, &mut enabled_features) {
+            match decode_lepton(
+                &mut reader,
+                &mut writer,
+                &mut enabled_features,
+                DEFAULT_THREAD_POOL,
+            ) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return Ok(());
@@ -248,6 +250,7 @@ pub unsafe extern "C" fn decompress_image(
             input_complete,
             &mut writer,
             output_buffer_size as usize,
+            DEFAULT_THREAD_POOL,
         )?;
 
         *result_size = writer.position().into();

@@ -1,4 +1,4 @@
-/// features that are enabled in the encoder. Turn off for potential backward compat issues.
+/// Features that are enabled in the encoder. Turn off for potential backward compat issues.
 #[derive(Debug, Clone)]
 pub struct EnabledFeatures {
     /// enables/disables reading of progressive images

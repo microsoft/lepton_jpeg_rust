@@ -9,7 +9,9 @@ use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
-use lepton_jpeg::{decode_lepton, encode_lepton, encode_lepton_verify, EnabledFeatures};
+use lepton_jpeg::{
+    decode_lepton, encode_lepton, encode_lepton_verify, EnabledFeatures, DEFAULT_THREAD_POOL,
+};
 use lepton_jpeg::{ExitCode, LeptonError};
 use rstest::rstest;
 
@@ -65,6 +67,8 @@ fn verify_decode(
     )]
     file: &str,
 ) {
+    use lepton_jpeg::DEFAULT_THREAD_POOL;
+
     println!("decoding {0:?}", file);
 
     let input = read_file(file, ".lep");
@@ -76,6 +80,7 @@ fn verify_decode(
         &mut Cursor::new(input),
         &mut output,
         &EnabledFeatures::compat_lepton_vector_read(),
+        DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -104,7 +109,13 @@ fn verify_decode_scalar_overflow() {
 
     let features = EnabledFeatures::compat_lepton_scalar_read();
 
-    decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
+    decode_lepton(
+        &mut Cursor::new(input),
+        &mut output,
+        &features,
+        DEFAULT_THREAD_POOL,
+    )
+    .unwrap();
 
     assert!(output[..] == expected[..]);
 }
@@ -155,6 +166,7 @@ fn verify_encode(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
         &EnabledFeatures::compat_lepton_vector_write(),
+        DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -162,6 +174,7 @@ fn verify_encode(
         &mut Cursor::new(lepton),
         &mut output,
         &EnabledFeatures::compat_lepton_vector_read(),
+        DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -179,7 +192,13 @@ fn verify_16bitmath() {
 
         let features = EnabledFeatures::compat_lepton_vector_read();
 
-        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
+        decode_lepton(
+            &mut Cursor::new(input),
+            &mut output,
+            &features,
+            DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -194,7 +213,13 @@ fn verify_16bitmath() {
         let mut features = EnabledFeatures::compat_lepton_vector_read();
         features.use_16bit_dc_estimate = false;
 
-        decode_lepton(&mut Cursor::new(input), &mut output, &features).unwrap();
+        decode_lepton(
+            &mut Cursor::new(input),
+            &mut output,
+            &features,
+            DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
 
         assert!(output[..] == expected[..]);
     }
@@ -206,7 +231,12 @@ fn verify_16bitmath() {
 fn verify_encode_verify(#[values("slrcity")] file: &str) {
     let input = read_file(file, ".jpg");
 
-    encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()).unwrap();
+    encode_lepton_verify(
+        &input[..],
+        &EnabledFeatures::compat_lepton_vector_write(),
+        DEFAULT_THREAD_POOL,
+    )
+    .unwrap();
 }
 
 fn assert_exception<T>(expected_error: ExitCode, result: Result<T, LeptonError>) {
@@ -224,7 +254,11 @@ fn verify_encode_verify_fail(#[values("mismatch_encode")] file: &str) {
 
     assert_exception(
         ExitCode::VerificationContentMismatch,
-        encode_lepton_verify(&input[..], &EnabledFeatures::compat_lepton_vector_write()),
+        encode_lepton_verify(
+            &input[..],
+            &EnabledFeatures::compat_lepton_vector_write(),
+            DEFAULT_THREAD_POOL,
+        ),
     );
 }
 
@@ -244,6 +278,7 @@ fn verify_encode_progressive_false(
                 progressive: false,
                 ..EnabledFeatures::compat_lepton_vector_write()
             },
+            DEFAULT_THREAD_POOL,
         ),
     );
 }
@@ -260,6 +295,7 @@ fn verify_nonoptimal() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             &EnabledFeatures::compat_lepton_vector_write(),
+            DEFAULT_THREAD_POOL,
         ),
     );
 }
@@ -276,6 +312,7 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             &EnabledFeatures::compat_lepton_vector_write(),
+            DEFAULT_THREAD_POOL,
         ),
     );
 }
