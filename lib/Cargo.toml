@@ -5,15 +5,12 @@ edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 # requires scoped threads and IsTerminal
-rust-version = "1.70"
+rust-version = "1.85"
 description = "Rust port of the Lepton JPEG compression library"
 readme = "README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
 license = "Apache-2.0"
-exclude = [
-    "images/*",
-    "tests/*",
-]
+
 categories = ["multimedia::images", "multimedia::encoding"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
