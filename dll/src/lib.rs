@@ -3,9 +3,9 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt in the project root for license information.
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
- 
- #![forbid(trivial_numeric_casts)]
- #![forbid(unused_crate_dependencies)]
+
+#![forbid(trivial_numeric_casts)]
+#![forbid(unused_crate_dependencies)]
 
 use std::io::Cursor;
 
