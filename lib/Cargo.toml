@@ -21,7 +21,6 @@ categories = ["multimedia::images", "multimedia::encoding"]
 [features]
 default = []
 compression_stats = []
-use_rayon = ["dep:rayon-core"]
 detailed_tracing = []
 
 [dependencies]
@@ -31,7 +30,6 @@ flate2 = "1.0"
 default-boxed = "0.2"
 wide = "0.7"
 log = "0.4"
-rayon-core = { version = "1", optional = true }
 git-version = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -39,7 +37,6 @@ cpu-time = "1.0"
 thread-priority = "1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-cpu-time = "1.0"
 thread-priority = "1.0"
 
 [dev-dependencies]
