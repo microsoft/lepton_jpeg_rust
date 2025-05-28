@@ -31,10 +31,20 @@ pub fn get_idle_threads() -> usize {
     IDLE_THREADS.lock().unwrap().len()
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+/// Sets the thread pool priority for the encoder/decoder threads.
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    not(feature = "use_rayon")
+))]
 #[allow(dead_code)]
-pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
-    *THREAD_PRIORITY.lock().unwrap() = Some(priority);
+pub fn set_thread_pool_priority(priority: u32) {
+    let p = match priority {
+        100 => thread_priority::ThreadPriority::Max,
+        0 => thread_priority::ThreadPriority::Min,
+        _ => panic!("Unsupported thread priority value: {}", priority),
+    };
+
+    *THREAD_PRIORITY.lock().unwrap() = Some(p);
 }
 
 /// Executes a closure on a thread from the thread pool. Does not block or return any result.

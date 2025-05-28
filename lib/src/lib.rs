@@ -29,7 +29,7 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::io::{BufRead, Cursor, Seek, Write};
+use std::io::{Cursor, Write};
 
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
@@ -39,46 +39,11 @@ pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 
-#[cfg(not(feature = "use_rayon"))]
-pub fn set_thread_priority(priority: i32) {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let p = match priority {
-            100 => thread_priority::ThreadPriority::Max,
-            0 => thread_priority::ThreadPriority::Min,
-            _ => panic!("Unsupported thread priority value: {}", priority),
-        };
+pub use structs::simple_threadpool::set_thread_pool_priority;
 
-        thread_priority::set_current_thread_priority(p).unwrap();
-        crate::structs::simple_threadpool::set_thread_priority(p);
-    }
-}
+pub use structs::lepton_file_reader::decode_lepton;
 
-/// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
-}
-
-/// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
-}
-
-/// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
-pub fn encode_lepton_verify(
-    input_data: &[u8],
-    enabled_features: &EnabledFeatures,
-) -> Result<(Vec<u8>, Metrics)> {
-    structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
-}
+pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 

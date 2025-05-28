@@ -21,35 +21,59 @@ use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
-use crate::structs::lepton_file_reader::decode_lepton_file;
+use crate::structs::lepton_file_reader::decode_lepton;
 use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 
-/// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
+struct CountBytesWriter<W: Write> {
+    interior: W,
+    count: usize,
+}
+
+impl<W: Write> Write for CountBytesWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let count = self.interior.write(buf)?;
+        self.count += count;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.interior.flush()
+    }
+}
+
+/// Reads a jpeg and writes it out as a lepton file
+pub fn encode_lepton<R: BufRead + Seek, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
 
-    lp.write_lepton_header(writer, enabled_features).context()?;
+    let mut count_writer = CountBytesWriter {
+        interior: writer,
+        count: 0,
+    };
+
+    lp.write_lepton_header(&mut count_writer, enabled_features)
+        .context()?;
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
         &lp.rinfo.truncate_components,
-        writer,
+        &mut count_writer,
         &lp.thread_handoff[..],
         image_data,
         enabled_features,
     )
     .context()?;
 
-    let final_file_size = writer.stream_position()? + 4;
+    let final_file_size = count_writer.count + 4;
 
-    writer
+    count_writer
+        .interior
         .write_u32::<LittleEndian>(final_file_size as u32)
         .context()?;
 
@@ -58,7 +82,7 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
 
 /// Encodes JPEG as compressed Lepton format, verifies roundtrip in buffer. Requires everything to be buffered
 /// since we need to pass through the data multiple times
-pub fn encode_lepton_wrapper_verify(
+pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
 ) -> Result<(Vec<u8>, Metrics)> {
@@ -69,8 +93,7 @@ pub fn encode_lepton_wrapper_verify(
     let mut reader = Cursor::new(&input_data);
     let mut writer = Cursor::new(&mut output_data);
 
-    let mut metrics =
-        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features).context()?;
+    let mut metrics = encode_lepton(&mut reader, &mut writer, &enabled_features).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -81,8 +104,7 @@ pub fn encode_lepton_wrapper_verify(
 
     let mut c = enabled_features.clone();
 
-    metrics
-        .merge_from(decode_lepton_file(&mut verifyreader, &mut verify_buffer, &mut c).context()?);
+    metrics.merge_from(decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c).context()?);
 
     if input_data.len() != verify_buffer.len() {
         return err_exit_code(
@@ -214,7 +236,7 @@ fn get_git_revision(lp: &mut LeptonHeader) {
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
-fn run_lepton_encoder_threads<W: Write + Seek>(
+fn run_lepton_encoder_threads<W: Write>(
     jpeg_header: &JpegHeader,
     colldata: &TruncateComponents,
     writer: &mut W,
@@ -381,7 +403,7 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    let _ = encode_lepton_wrapper(
+    let _ = encode_lepton(
         &mut Cursor::new(&original),
         &mut Cursor::new(&mut output),
         &enabled_features,
@@ -396,7 +418,7 @@ fn test_file(filename: &str) {
 
     let mut recreate = Vec::new();
 
-    decode_lepton_file(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
+    decode_lepton(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
 
     assert_eq!(original.len(), recreate.len());
     assert!(original == recreate);
