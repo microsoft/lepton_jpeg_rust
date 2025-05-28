@@ -217,14 +217,14 @@ Options:
     if pargs.contains("--highpriority") {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
-        lepton_jpeg::set_thread_pool_priority(100);
+        lepton_jpeg::set_thread_priority(100);
     }
 
     #[cfg(not(feature = "use_rayon"))]
     if pargs.contains("--lowpriority") {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority
-        lepton_jpeg::set_thread_pool_priority(0);
+        lepton_jpeg::set_thread_priority(0);
     }
 
     let filenames = pargs.finish();
