@@ -671,6 +671,7 @@ pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     use std::io::Read;
 
     let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
         .join("images")
         .join(filename.to_owned() + ext);
     println!("reading {0}", filename.to_str().unwrap());

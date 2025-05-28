@@ -32,41 +32,6 @@ pub fn catch_unwind_result<R>(
     }
 }
 
-/// copies a string into a limited length zero terminated utf8 buffer
-pub fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
-    if target_error_string.len() == 0 {
-        return;
-    }
-
-    // copy error string into the buffer as utf8
-    let b = std::ffi::CString::new(str).unwrap();
-    let b = b.as_bytes();
-
-    let copy_len = std::cmp::min(b.len(), target_error_string.len() - 1);
-
-    // copy string into buffer as much as fits
-    target_error_string[0..copy_len].copy_from_slice(&b[0..copy_len]);
-
-    // always null terminated
-    target_error_string[copy_len] = 0;
-}
-
-#[test]
-fn test_copy_cstring_utf8_to_buffer() {
-    // test utf8
-    let mut buffer = [0u8; 10];
-    copy_cstring_utf8_to_buffer("h\u{00E1}llo", &mut buffer);
-    assert_eq!(buffer, [b'h', 0xc3, 0xa1, b'l', b'l', b'o', 0, 0, 0, 0]);
-
-    // test null termination
-    let mut buffer = [0u8; 10];
-    copy_cstring_utf8_to_buffer("helloeveryone", &mut buffer);
-    assert_eq!(
-        buffer,
-        [b'h', b'e', b'l', b'l', b'o', b'e', b'v', b'e', b'r', 0]
-    );
-}
-
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {
     return 16 - v.leading_zeros() as u8;
@@ -115,7 +80,7 @@ fn devli_test() {
     for s in 0u8..15 {
         for value in 0..(1 << s) {
             assert_eq!(
-                devli(s, value) as i16,
+                devli(s, value),
                 if s == 0 {
                     value as i16
                 } else if value < (1 << (s as u16 - 1)) {
