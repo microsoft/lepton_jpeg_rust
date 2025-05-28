@@ -34,7 +34,7 @@ const NUM_NON_ZERO_EDGE_BINS: usize = 7;
 type NumNonZerosCountsT = [[[Branch; 1 << NON_ZERO_EDGE_COUNT_BITS]; 8]; 8];
 
 const RESIDUAL_THRESHOLD_COUNTS_D1: usize = 1 << (1 + RESIDUAL_NOISE_FLOOR);
-// The array was used only on iBndices [2,7] of [0,7]
+// The array was used only on indices [2,7] of [0,7]
 const RESIDUAL_THRESHOLD_COUNTS_D2: usize = 1 + RESIDUAL_NOISE_FLOOR - 2;
 const RESIDUAL_THRESHOLD_COUNTS_D3: usize = 1 << RESIDUAL_NOISE_FLOOR;
 
