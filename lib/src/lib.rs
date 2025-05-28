@@ -54,8 +54,6 @@ pub fn set_thread_priority(priority: i32) {
     }
 }
 
-pub use structs::simple_threadpool::set_thread_pool_priority;
-
 pub use structs::lepton_file_reader::decode_lepton;
 
 pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
