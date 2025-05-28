@@ -20,7 +20,7 @@ steps:
     cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
 
 - script: |
-   cargo build --locked 2>&1
+   cargo build --workspace --locked 2>&1
    
   displayName: 'Build debug'
 
@@ -37,13 +37,13 @@ steps:
 
 - script: |
    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
-   cargo build --locked --release 2>&1
+   cargo build --workspace --locked --release 2>&1
    copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
    copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
    copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
    copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
-   cargo build --locked --release 2>&1
+   cargo build --workspace --locked --release 2>&1
 
   displayName: 'Build Release'
 

@@ -12,10 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use lepton_jpeg::metrics::CpuTimeMeasure;
 use lepton_jpeg::{
-    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, EnabledFeatures, ExitCode,
-    LeptonError, Metrics,
+    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
+    ExitCode, LeptonError, Metrics,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -54,8 +53,43 @@ fn override_if<T>(
     Ok(())
 }
 
+struct UtilError(LeptonError);
+
+impl UtilError {
+    fn message(&self) -> &str {
+        self.0.message()
+    }
+
+    fn exit_code(&self) -> ExitCode {
+        self.0.exit_code()
+    }
+}
+
+impl From<pico_args::Error> for UtilError {
+    #[track_caller]
+    fn from(e: pico_args::Error) -> Self {
+        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string().as_str());
+        e.add_context();
+        UtilError(e)
+    }
+}
+
+impl From<LeptonError> for UtilError {
+    #[track_caller]
+    fn from(e: LeptonError) -> Self {
+        UtilError(e)
+    }
+}
+
+impl From<std::io::Error> for UtilError {
+    #[track_caller]
+    fn from(e: std::io::Error) -> Self {
+        UtilError(e.into())
+    }
+}
+
 // wrap main so that errors get printed nicely without a panic
-fn main_with_result() -> Result<(), LeptonError> {
+fn main_with_result() -> Result<(), UtilError> {
     let mut pargs = pico_args::Arguments::from_env();
 
     let mut enabled_features = EnabledFeatures::compat_lepton_vector_read();
