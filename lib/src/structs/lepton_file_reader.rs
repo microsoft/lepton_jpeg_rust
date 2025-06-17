@@ -722,6 +722,11 @@ fn test_pixelated() {
     test_file("pixelated")
 }
 
+#[test]
+fn test_truncate4() {
+    test_file("truncate4")
+}
+
 #[cfg(test)]
 fn test_file(filename: &str) {
     /// This is a small buffer reader that reads one byte at a time to make
