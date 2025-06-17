@@ -724,16 +724,57 @@ fn test_pixelated() {
 
 #[cfg(test)]
 fn test_file(filename: &str) {
+    /// This is a small buffer reader that reads one byte at a time to make
+    /// sure we don't have assumptions about bigger buffers.
+    struct SmallBufRead<'a> {
+        inner: &'a [u8],
+        pos: usize,
+    }
+
+    impl std::io::Read for SmallBufRead<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.inner.len() {
+                return Ok(0);
+            }
+            buf[0] = self.inner[self.pos];
+            self.pos += 1;
+            Ok(1)
+        }
+    }
+
+    impl BufRead for SmallBufRead<'_> {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            if self.pos >= self.inner.len() {
+                return Ok(&[]);
+            }
+            Ok(&self.inner[self.pos..self.pos + 1])
+        }
+
+        fn consume(&mut self, amt: usize) {
+            assert!(
+                amt <= 1,
+                "SmallBufRead only supports consuming 1 byte at a time"
+            );
+            self.pos += amt;
+        }
+    }
+
     let file = read_file(filename, ".lep");
     let original = read_file(filename, ".jpg");
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let _ = decode_lepton_file_image(&mut Cursor::new(&file), &enabled_features).unwrap();
-
     let mut output = Vec::new();
 
-    decode_lepton_file(&mut Cursor::new(&file), &mut output, &enabled_features).unwrap();
+    decode_lepton_file(
+        &mut SmallBufRead {
+            inner: &file,
+            pos: 0,
+        },
+        &mut output,
+        &enabled_features,
+    )
+    .unwrap();
 
     assert_eq!(output.len(), original.len());
     assert!(output == original);
