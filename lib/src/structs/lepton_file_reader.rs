@@ -258,9 +258,13 @@ impl LeptonFileReader {
                     );
                     results.push(mem::take(&mut self.lh.rinfo.garbage_data));
 
-                    // shorten the result to the leptop header size
+                    // find the total size that we have generated
                     let total_length = results.iter().map(|x| x.len()).sum::<usize>();
 
+                    // now go back and shorted the results if they are too long until we have
+                    // the correct size. This consolidates the truncation logic into a single place.
+                    // Multiple results could be truncated, so we need to loop
+                    // and remove the last result until we reach the limit.
                     if total_length > self.lh.jpeg_file_size as usize {
                         let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
                         while amount_to_remove > 0 {
@@ -273,7 +277,7 @@ impl LeptonFileReader {
                                     amount_to_remove = 0;
                                 }
                             } else {
-                                break; // no more results to remove
+                                break; // no more results to remove.
                             }
                         }
                     }
