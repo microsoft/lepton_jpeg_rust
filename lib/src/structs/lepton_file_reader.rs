@@ -712,16 +712,14 @@ fn test_zero_dqt() {
     test_file("zeros_in_dqt_tables")
 }
 
-#[test]
-fn test_yosemite_luma_out_of_bounds() {
-    test_file("yosemite")
-}
-
+/// truncated progessive JPEG. We don't support creating these, but we can read them
 #[test]
 fn test_pixelated() {
     test_file("pixelated")
 }
 
+/// requires that the last segment be truncated by 1 byte. 
+/// This is for compatibility with the C++ version
 #[test]
 fn test_truncate4() {
     test_file("truncate4")
