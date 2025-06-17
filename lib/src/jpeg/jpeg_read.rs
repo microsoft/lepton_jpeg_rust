@@ -71,12 +71,12 @@ use super::jpeg_position_state::JpegPositionState;
 ///
 /// There is also the concept of "garbage data" which is what comes after the scan data but is not
 /// recognized as a header. This garbage data should be appeneded to the end of the file.
-pub fn read_jpeg_file<R: BufRead + Seek>(
+pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     reader: &mut R,
     jpeg_header: &mut JpegHeader,
     rinfo: &mut ReconstructionInfo,
     enabled_features: &EnabledFeatures,
-    on_header_callback: fn(&JpegHeader),
+    mut on_header_callback: FN,
 ) -> Result<(
     Vec<BlockBasedImage>,
     Vec<(u64, RestartSegmentCodingInfo)>,
@@ -95,7 +95,7 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         return err_exit_code(ExitCode::UnsupportedJpeg, "Jpeg does not contain scans");
     }
 
-    on_header_callback(jpeg_header);
+    on_header_callback(jpeg_header, &rinfo.raw_jpeg_header);
 
     if !enabled_features.progressive && jpeg_header.jpeg_type == JpegType::Progressive {
         return err_exit_code(
@@ -153,6 +153,10 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
 
     if jpeg_header.jpeg_type == JpegType::Sequential {
         if rinfo.early_eof_encountered {
+            if enabled_features.stop_reading_at_eoi {
+                return err_exit_code(ExitCode::ShortRead, "early EOF encountered");
+            }
+
             rinfo
                 .truncate_components
                 .set_truncation_bounds(&jpeg_header, rinfo.max_dpos);
@@ -166,8 +170,22 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
             reader.read_exact(&mut rinfo.garbage_data)?;
         }
 
-        // rest of data is garbage data if it is a sequential jpeg (including EOI marker)
-        reader.read_to_end(&mut rinfo.garbage_data).context()?;
+        if enabled_features.stop_reading_at_eoi {
+            // ensure there is an actual EOI marker since we haven't consumed it yet
+            let mut end_of_file = [0u8; 2];
+            reader.read_exact(&mut end_of_file).context()?;
+
+            if end_of_file != EOI {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    "JPEG file does not end with EOI marker",
+                )
+                .context();
+            }
+        } else {
+            // read the rest of the file to garbage data
+            reader.read_to_end(&mut rinfo.garbage_data).context()?;
+        }
     } else {
         assert!(jpeg_header.jpeg_type == JpegType::Progressive);
 
@@ -180,8 +198,14 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
         }
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
+        let mut prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
+
         while prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
-            on_header_callback(&jpeg_header);
+            on_header_callback(
+                jpeg_header,
+                &&rinfo.raw_jpeg_header[prev_raw_jpeg_header_len..],
+            );
+            prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
 
             read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
 
@@ -196,14 +220,16 @@ pub fn read_jpeg_file<R: BufRead + Seek>(
 
         end_scan_position = reader.stream_position()?;
 
-        // since prepare_to_decode_next_scan consumes the EOI,
-        // we need to add it to the beginning of the garbage data (if there is any)
-        rinfo.garbage_data = Vec::from(EOI);
+        if !enabled_features.stop_reading_at_eoi {
+            // since prepare_to_decode_next_scan consumes the EOI,
+            // we need to add it to the beginning of the garbage data (if there is any)
+            rinfo.garbage_data = Vec::from(EOI);
 
-        // append the rest of the file to the buffer
-        if reader.read_to_end(&mut rinfo.garbage_data).context()? == 0 {
-            // no need to record EOI garbage data if there wasn't anything read
-            rinfo.garbage_data.clear();
+            // append the rest of the file to the buffer
+            if reader.read_to_end(&mut rinfo.garbage_data).context()? == 0 {
+                // no need to record EOI garbage data if there wasn't anything read
+                rinfo.garbage_data.clear();
+            }
         }
     }
 

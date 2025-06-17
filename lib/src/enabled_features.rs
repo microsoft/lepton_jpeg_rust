@@ -27,6 +27,13 @@ pub struct EnabledFeatures {
 
     /// maximum size of a jpeg file
     pub max_jpeg_file_size: u32,
+
+    /// stop reading at the end of the valid JPEG file. This is useful if
+    /// the stream contains other data after the EOI marker.
+    ///
+    /// This also disallows handling truncated JPEG files since by definition
+    /// they don't have an EOI marker, instead you will get a ShortRead error.
+    pub stop_reading_at_eoi: bool,
 }
 
 impl EnabledFeatures {
@@ -43,6 +50,7 @@ impl EnabledFeatures {
             accept_invalid_dht: false,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 
@@ -60,6 +68,7 @@ impl EnabledFeatures {
             accept_invalid_dht: true,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 
@@ -77,6 +86,7 @@ impl EnabledFeatures {
             accept_invalid_dht: true,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 }

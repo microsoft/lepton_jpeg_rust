@@ -122,7 +122,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     if input_data[0] == 0xff && input_data[1] == 0xd8 {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh| {
+        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh, _ri| {
             println!("parsed header:");
             let s = format!("{jh:?}");
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));

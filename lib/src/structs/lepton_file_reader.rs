@@ -622,7 +622,7 @@ fn parse_and_write_header() {
         &mut lh.jpeg_header,
         &mut lh.rinfo,
         &enabled_features,
-        |_| {},
+        |_, _| {},
     )
     .unwrap();
 

@@ -50,7 +50,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write>(
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
-    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
+    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
     let mut count_writer = CountBytesWriter {
         interior: writer,
@@ -136,7 +136,7 @@ pub fn encode_lepton_verify(
 pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    callback: fn(&JpegHeader),
+    callback: fn(&JpegHeader, &[u8]),
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lp = LeptonHeader::default_boxed();
 

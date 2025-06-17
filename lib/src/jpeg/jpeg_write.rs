@@ -763,3 +763,111 @@ fn test_encode_block_seq_zero() {
 
     round_trip_block(&block, &expected);
 }
+
+/// reads a JPEG file and writes it back out using the baseline encoder
+/// to verify that the encoder and decoder exactly the same.
+#[test]
+fn roundtrip_baseline_jpeg() {
+    use crate::consts::*;
+    use crate::jpeg::jpeg_read::read_jpeg_file;
+    use crate::jpeg::jpeg_write::jpeg_write_baseline_row_range;
+    use crate::structs::lepton_file_reader::read_file;
+    use std::io::Cursor;
+
+    let mut jpeg_header = JpegHeader::default();
+    let mut rinfo = ReconstructionInfo::default();
+    let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+
+    let file = read_file("iphone", ".jpg");
+
+    let (image_data, partitions, end_scan_position) = read_jpeg_file(
+        &mut Cursor::new(&file),
+        &mut jpeg_header,
+        &mut rinfo,
+        &enabled_features,
+        |_header, _rinfo| {},
+    )
+    .unwrap();
+
+    let mut reconstructed = Vec::new();
+
+    reconstructed.extend_from_slice(&SOI);
+    reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
+
+    let mut prev_offset = 0;
+    for (offset, coding_info) in partitions {
+        let mut r = jpeg_write_baseline_row_range(
+            (offset - prev_offset) as usize,
+            &coding_info,
+            &image_data,
+            &jpeg_header,
+            &rinfo,
+        )
+        .unwrap();
+
+        reconstructed.append(&mut r);
+
+        prev_offset = offset;
+    }
+
+    assert_eq!(reconstructed.len(), end_scan_position as usize);
+
+    reconstructed.extend_from_slice(&EOI);
+
+    assert!(reconstructed == file);
+}
+
+/// reads a progressive JPEG file and writes it back out using the progressive encoder
+/// to verify that the encoder and decoder exactly the same.
+#[test]
+fn roundtrip_progressive_jpeg() {
+    use crate::consts::*;
+    use crate::jpeg::jpeg_read::read_jpeg_file;
+    use crate::structs::lepton_file_reader::read_file;
+    use std::io::Cursor;
+
+    let mut jpeg_header = JpegHeader::default();
+    let mut rinfo = ReconstructionInfo::default();
+    let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+
+    let file = read_file("iphoneprogressive", ".jpg");
+
+    let mut progressive_headers = Vec::new();
+
+    let (image_data, _partitions, end_scan_position) = read_jpeg_file(
+        &mut Cursor::new(&file),
+        &mut jpeg_header,
+        &mut rinfo,
+        &enabled_features,
+        |header, raw_header| {
+            progressive_headers.push((header.clone(), raw_header.to_vec()));
+        },
+    )
+    .unwrap();
+
+    let mut reconstructed = Vec::new();
+
+    reconstructed.extend_from_slice(&SOI);
+
+    let mut scnc = 0;
+
+    for (jh, raw_header) in progressive_headers {
+        // progressive JPEG consists of headers + scan
+        reconstructed.extend_from_slice(&raw_header);
+
+        let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
+
+        reconstructed.extend_from_slice(&scan);
+
+        // advance to next scan
+        scnc += 1;
+    }
+
+    reconstructed.extend_from_slice(&EOI);
+
+    // progressive includes EOI in the scan
+    assert_eq!(reconstructed.len(), end_scan_position as usize);
+    assert_eq!(reconstructed.len(), file.len());
+
+    assert!(reconstructed == file);
+}
