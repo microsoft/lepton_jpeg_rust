@@ -765,7 +765,10 @@ fn test_encode_block_seq_zero() {
 }
 
 #[cfg(test)]
-fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(reader: &mut R, enabled_features : &crate::EnabledFeatures) -> Vec<u8> {
+fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(
+    reader: &mut R,
+    enabled_features: &crate::EnabledFeatures,
+) -> Vec<u8> {
     use crate::consts::*;
     use crate::jpeg::jpeg_read::read_jpeg_file;
 
@@ -865,4 +868,3 @@ fn roundtrip_progressive_jpeg() {
 
     assert!(reconstructed == file);
 }
-
