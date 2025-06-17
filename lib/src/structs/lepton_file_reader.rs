@@ -718,7 +718,7 @@ fn test_pixelated() {
     test_file("pixelated")
 }
 
-/// requires that the last segment be truncated by 1 byte. 
+/// requires that the last segment be truncated by 1 byte.
 /// This is for compatibility with the C++ version
 #[test]
 fn test_truncate4() {
