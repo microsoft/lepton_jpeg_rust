@@ -258,6 +258,26 @@ impl LeptonFileReader {
                     );
                     results.push(mem::take(&mut self.lh.rinfo.garbage_data));
 
+                    // shorten the result to the leptop header size
+                    let total_length = results.iter().map(|x| x.len()).sum::<usize>();
+
+                    if total_length > self.lh.jpeg_file_size as usize {
+                        let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
+                        while amount_to_remove > 0 {
+                            if let Some(last) = results.last_mut() {
+                                if last.len() <= amount_to_remove {
+                                    amount_to_remove -= last.len();
+                                    results.pop();
+                                } else {
+                                    last.truncate(last.len() - amount_to_remove);
+                                    amount_to_remove = 0;
+                                }
+                            } else {
+                                break; // no more results to remove
+                            }
+                        }
+                    }
+
                     self.state = DecoderState::ReturnResults(0, mem::take(results));
                 }
                 DecoderState::ReturnResults(offset, leftover) => {
@@ -341,22 +361,7 @@ impl LeptonFileReader {
                 markers.push(rst);
             }
 
-            let expected_total_length = results.iter().map(|x| x.len()).sum::<usize>()
-                + lh.rinfo.garbage_data.len()
-                + (lh.rinfo.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
-
-            if expected_total_length < lh.jpeg_file_size as usize {
-                // figure out how much extra space we have, since C++ files can have
-                // more restart markers than there is space to fit them
-                let space_for_markers = min(
-                    markers.len(),
-                    lh.jpeg_file_size as usize - expected_total_length,
-                );
-
-                markers.resize(space_for_markers, 0);
-
-                results.push(markers);
-            }
+            results.push(markers);
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -701,6 +706,16 @@ fn test_simple_parse_trailing() {
 #[test]
 fn test_zero_dqt() {
     test_file("zeros_in_dqt_tables")
+}
+
+#[test]
+fn test_yosemite_luma_out_of_bounds() {
+    test_file("yosemite")
+}
+
+#[test]
+fn test_pixelated() {
+    test_file("pixelated")
 }
 
 #[cfg(test)]

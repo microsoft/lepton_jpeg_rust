@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -152,31 +153,14 @@ impl LeptonHeader {
         let num_threads = self.thread_handoff.len();
 
         // luma_y_end of the last thread is not serialized/deserialized, fill it here
-        self.thread_handoff[num_threads - 1].luma_y_end =
-            self.rinfo.truncate_components.get_block_height(0);
+        let max_luma = self.rinfo.truncate_components.get_block_height(0);
 
-        // if the last segment was too big to fit with the garbage data taken into account, shorten it
-        // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
-        if self.rinfo.early_eof_encountered {
-            let mut max_last_segment_size = self.jpeg_file_size
-                - u32::try_from(self.rinfo.garbage_data.len())?
-                - u32::try_from(self.raw_jpeg_header_read_index)?
-                - u32::try_from(SOI.len())?;
-
-            // subtract the segment sizes of all the previous segments (except for the last)
-            for i in 0..num_threads - 1 {
-                max_last_segment_size -= self.thread_handoff[i].segment_size;
-            }
-
-            let last = &mut self.thread_handoff[num_threads - 1];
-
-            let max_last_segment_size = max_last_segment_size;
-
-            if last.segment_size > max_last_segment_size {
-                // re-adjust the last segment size
-                last.segment_size = max_last_segment_size;
-            }
+        for i in 0..num_threads {
+            self.thread_handoff[i].luma_y_start =
+                min(self.thread_handoff[i].luma_y_start, max_luma);
+            self.thread_handoff[i].luma_y_end = min(self.thread_handoff[i].luma_y_end, max_luma);
         }
+        self.thread_handoff[num_threads - 1].luma_y_end = max_luma;
 
         Ok(())
     }
