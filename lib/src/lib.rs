@@ -54,6 +54,25 @@ pub fn set_thread_priority(priority: i32) {
     }
 }
 
+/// Trait for types that can provide the current position in a stream. This
+/// is intentionally a subset of the Seek trait, as it only requires remembering
+/// the current position without allowing seeking to arbitrary positions.
+///
+/// This is useful for callers for which it would be complex to provide seek capabilities, but can
+/// count the number of bytes read or written so far.
+///
+/// We provide a blanket implementation for any type that implements `std::io::Seek`.
+pub trait StreamPosition {
+    /// Returns the current position in the stream.
+    fn position(&mut self) -> u64;
+}
+
+impl<T: std::io::Seek> StreamPosition for T {
+    fn position(&mut self) -> u64 {
+        self.stream_position().unwrap()
+    }
+}
+
 pub use structs::lepton_file_reader::decode_lepton;
 
 pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};

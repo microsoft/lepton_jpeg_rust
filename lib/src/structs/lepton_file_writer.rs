@@ -12,7 +12,6 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use default_boxed::DefaultBoxed;
 use log::info;
 
-use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JpegHeader;
@@ -26,54 +25,33 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-
-struct CountBytesWriter<W: Write> {
-    interior: W,
-    count: usize,
-}
-
-impl<W: Write> Write for CountBytesWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let count = self.interior.write(buf)?;
-        self.count += count;
-        Ok(count)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.interior.flush()
-    }
-}
+use crate::{consts::*, StreamPosition};
 
 /// Reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton<R: BufRead + Seek, W: Write>(
+pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
-    let mut count_writer = CountBytesWriter {
-        interior: writer,
-        count: 0,
-    };
+    let start_position = writer.position();
 
-    lp.write_lepton_header(&mut count_writer, enabled_features)
-        .context()?;
+    lp.write_lepton_header(writer, enabled_features).context()?;
 
     let metrics = run_lepton_encoder_threads(
         &lp.jpeg_header,
         &lp.rinfo.truncate_components,
-        &mut count_writer,
+        writer,
         &lp.thread_handoff[..],
         image_data,
         enabled_features,
     )
     .context()?;
 
-    let final_file_size = count_writer.count + 4;
+    let final_file_size = (writer.position() - start_position) + 4;
 
-    count_writer
-        .interior
+    writer
         .write_u32::<LittleEndian>(final_file_size as u32)
         .context()?;
 
