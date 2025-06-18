@@ -182,6 +182,8 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
                 )
                 .context();
             }
+
+            rinfo.garbage_data = end_of_file.to_vec();
         } else {
             // read the rest of the file to garbage data
             reader.read_to_end(&mut rinfo.garbage_data).context()?;
@@ -220,16 +222,17 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
         end_scan_position = reader.stream_position()?;
 
-        if !enabled_features.stop_reading_at_eoi {
-            // since prepare_to_decode_next_scan consumes the EOI,
-            // we need to add it to the beginning of the garbage data (if there is any)
-            rinfo.garbage_data = Vec::from(EOI);
+        // Since prepare_to_decode_next_scan consumed the EOI,
+        // we need to add EOI to the beginning of the garbage data (if there is any).
+        //
+        // If there was actually no garbage data, this is still ok since
+        // the marker will be appended, then removed when file gets truncated by the
+        // overall file limit.
+        rinfo.garbage_data = Vec::from(EOI);
 
+        if !enabled_features.stop_reading_at_eoi {
             // append the rest of the file to the buffer
-            if reader.read_to_end(&mut rinfo.garbage_data).context()? == 0 {
-                // no need to record EOI garbage data if there wasn't anything read
-                rinfo.garbage_data.clear();
-            }
+            reader.read_to_end(&mut rinfo.garbage_data).context()?;
         }
     }
 
@@ -934,4 +937,80 @@ fn decode_eobrun_sa<R: BufRead>(
 /// bit since it is always 1, so we need to add it back.
 fn decode_eobrun_bits(s: u8, n: u16) -> u16 {
     n + (1 << s)
+}
+
+#[test]
+fn read_garbage_behavior_progressive() {
+    read_garbage_behavior("iphoneprogressive");
+}
+
+#[test]
+fn read_garbage_behavior_baseline() {
+    read_garbage_behavior("iphone");
+}
+
+/// reads a JPEG file and verifies that the garbage data is handled correctly.
+#[cfg(test)]
+fn read_garbage_behavior(filename: &str) {
+    let mut file = crate::structs::lepton_file_reader::read_file(filename, ".jpg");
+    let mut enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+
+    let mut cursor = std::io::Cursor::new(&file);
+    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+
+    assert_eq!(
+        &rinfo.garbage_data[..],
+        [0xff, 0xd9],
+        "Expected garbage data to match what was written"
+    );
+
+    // now add some garbage data to the end of the file
+    file.extend_from_slice(b"hi"); // EOI + some garbage
+
+    let mut cursor = std::io::Cursor::new(&file);
+    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+
+    assert_eq!(
+        &rinfo.garbage_data[..],
+        [0xff, 0xd9, b'h', b'i'],
+        "Expected garbage data to match what was written"
+    );
+
+    enabled_features.stop_reading_at_eoi = true;
+    let mut cursor = std::io::Cursor::new(&file);
+    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+
+    assert_eq!(cursor.position(), file.len() as u64 - 2);
+
+    assert_eq!(
+        &rinfo.garbage_data[..],
+        [0xff, 0xd9],
+        "Expected garbage data to match what was written when stop_reading_at_eoi is true"
+    );
+}
+
+#[cfg(test)]
+fn read_jpeg<R: BufRead + Seek>(
+    reader: &mut R,
+    enabled_features: &EnabledFeatures,
+) -> (ReconstructionInfo, JpegHeader) {
+    use crate::jpeg::jpeg_read::read_jpeg_file;
+
+    let mut jpeg_header = JpegHeader::default();
+    let mut rinfo = ReconstructionInfo::default();
+
+    let mut headers = Vec::new();
+
+    let (_image_data, _partitions, _end_scan_position) = read_jpeg_file(
+        reader,
+        &mut jpeg_header,
+        &mut rinfo,
+        &enabled_features,
+        |header, raw_header| {
+            headers.push((header.clone(), raw_header.to_vec()));
+        },
+    )
+    .unwrap();
+
+    (rinfo, jpeg_header)
 }
