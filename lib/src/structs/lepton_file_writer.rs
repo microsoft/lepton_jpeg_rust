@@ -140,6 +140,8 @@ pub fn read_jpeg<R: BufRead + Seek>(
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lp = LeptonHeader::default_boxed();
 
+    let stream_start_position = reader.stream_position().context()?;
+
     get_git_revision(&mut lp);
 
     let (image_data, partitions, end_scan) = read_jpeg_file(
@@ -162,7 +164,9 @@ pub fn read_jpeg<R: BufRead + Seek>(
         };
 
         thread_handoff.push(ThreadHandoff {
-            segment_offset_in_file: (*segment_offset).try_into().unwrap(),
+            segment_offset_in_file: (*segment_offset - stream_start_position)
+                .try_into()
+                .unwrap(),
             luma_y_start: r.luma_y_start,
             luma_y_end: r.luma_y_end,
             overhang_byte: r.overhang_byte,
@@ -185,7 +189,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
-    lp.jpeg_file_size = reader.stream_position().context()? as u32;
+    lp.jpeg_file_size = (reader.stream_position().context()? - stream_start_position) as u32;
 
     if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
         return err_exit_code(
@@ -409,6 +413,56 @@ fn test_file(filename: &str) {
         &enabled_features,
     )
     .unwrap();
+
+    println!(
+        "Original size: {0}, compressed size: {1}",
+        original.len(),
+        output.len()
+    );
+
+    let mut recreate = Vec::new();
+
+    decode_lepton(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
+
+    assert_eq!(original.len(), recreate.len());
+    assert!(original == recreate);
+}
+
+/// Test that we can encode and decode an embedded file. This means that the seek position is
+/// relative and not 0 at the start of the file.
+#[test]
+fn encode_embedded_file() {
+    use crate::structs::lepton_file_reader::read_file;
+
+    let original = read_file("iphone", ".jpg");
+
+    let prefix = b"this is a string";
+    let suffix = b"this is a suffix string";
+
+    let mut embedded = Vec::new();
+    embedded.extend_from_slice(prefix);
+    embedded.extend_from_slice(&original);
+    embedded.extend_from_slice(suffix);
+
+    let mut read_content = Cursor::new(&embedded);
+    read_content.set_position(prefix.len() as u64);
+
+    let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
+    enabled_features.stop_reading_at_eoi = true;
+
+    let mut output = Vec::new();
+
+    let _ = encode_lepton(
+        &mut read_content,
+        &mut Cursor::new(&mut output),
+        &enabled_features,
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_content.position() as usize,
+        prefix.len() + original.len()
+    );
 
     println!(
         "Original size: {0}, compressed size: {1}",
