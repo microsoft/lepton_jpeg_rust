@@ -257,6 +257,30 @@ impl LeptonFileReader {
                     );
                     results.push(mem::take(&mut self.lh.rinfo.garbage_data));
 
+                    // find the total size that we have generated
+                    let total_length = results.iter().map(|x| x.len()).sum::<usize>();
+
+                    // now go back and shorted the results if they are too long until we have
+                    // the correct size. This consolidates the truncation logic into a single place.
+                    // Multiple results could be truncated, so we need to loop
+                    // and remove the last result until we reach the limit.
+                    if total_length > self.lh.jpeg_file_size as usize {
+                        let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
+                        while amount_to_remove > 0 {
+                            if let Some(last) = results.last_mut() {
+                                if last.len() <= amount_to_remove {
+                                    amount_to_remove -= last.len();
+                                    results.pop();
+                                } else {
+                                    last.truncate(last.len() - amount_to_remove);
+                                    amount_to_remove = 0;
+                                }
+                            } else {
+                                break; // no more results to remove.
+                            }
+                        }
+                    }
+
                     self.state = DecoderState::ReturnResults(0, mem::take(results));
                 }
                 DecoderState::ReturnResults(offset, leftover) => {
@@ -340,22 +364,7 @@ impl LeptonFileReader {
                 markers.push(rst);
             }
 
-            let expected_total_length = results.iter().map(|x| x.len()).sum::<usize>()
-                + lh.rinfo.garbage_data.len()
-                + (lh.rinfo.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
-
-            if expected_total_length < lh.jpeg_file_size as usize {
-                // figure out how much extra space we have, since C++ files can have
-                // more restart markers than there is space to fit them
-                let space_for_markers = min(
-                    markers.len(),
-                    lh.jpeg_file_size as usize - expected_total_length,
-                );
-
-                markers.resize(space_for_markers, 0);
-
-                results.push(markers);
-            }
+            results.push(markers);
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -702,18 +711,72 @@ fn test_zero_dqt() {
     test_file("zeros_in_dqt_tables")
 }
 
+/// truncated progessive JPEG. We don't support creating these, but we can read them
+#[test]
+fn test_pixelated() {
+    test_file("pixelated")
+}
+
+/// requires that the last segment be truncated by 1 byte.
+/// This is for compatibility with the C++ version
+#[test]
+fn test_truncate4() {
+    test_file("truncate4")
+}
+
 #[cfg(test)]
 fn test_file(filename: &str) {
+    /// This is a small buffer reader that reads one byte at a time to make
+    /// sure we don't have assumptions about bigger buffers.
+    struct SmallBufRead<'a> {
+        inner: &'a [u8],
+        pos: usize,
+    }
+
+    impl std::io::Read for SmallBufRead<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.inner.len() {
+                return Ok(0);
+            }
+            buf[0] = self.inner[self.pos];
+            self.pos += 1;
+            Ok(1)
+        }
+    }
+
+    impl BufRead for SmallBufRead<'_> {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            if self.pos >= self.inner.len() {
+                return Ok(&[]);
+            }
+            Ok(&self.inner[self.pos..self.pos + 1])
+        }
+
+        fn consume(&mut self, amt: usize) {
+            assert!(
+                amt <= 1,
+                "SmallBufRead only supports consuming 1 byte at a time"
+            );
+            self.pos += amt;
+        }
+    }
+
     let file = read_file(filename, ".lep");
     let original = read_file(filename, ".jpg");
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let _ = decode_lepton_file_image(&mut Cursor::new(&file), &enabled_features).unwrap();
-
     let mut output = Vec::new();
 
-    decode_lepton(&mut Cursor::new(&file), &mut output, &enabled_features).unwrap();
+    decode_lepton(
+        &mut SmallBufRead {
+            inner: &file,
+            pos: 0,
+        },
+        &mut output,
+        &enabled_features,
+    )
+    .unwrap();
 
     assert_eq!(output.len(), original.len());
     assert!(output == original);

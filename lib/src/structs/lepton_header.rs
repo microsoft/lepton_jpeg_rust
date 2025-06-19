@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -152,8 +153,14 @@ impl LeptonHeader {
         let num_threads = self.thread_handoff.len();
 
         // luma_y_end of the last thread is not serialized/deserialized, fill it here
-        self.thread_handoff[num_threads - 1].luma_y_end =
-            self.rinfo.truncate_components.get_block_height(0);
+        let max_luma = self.rinfo.truncate_components.get_block_height(0);
+
+        for i in 0..num_threads {
+            self.thread_handoff[i].luma_y_start =
+                min(self.thread_handoff[i].luma_y_start, max_luma);
+            self.thread_handoff[i].luma_y_end = min(self.thread_handoff[i].luma_y_end, max_luma);
+        }
+        self.thread_handoff[num_threads - 1].luma_y_end = max_luma;
 
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
