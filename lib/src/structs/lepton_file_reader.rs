@@ -28,9 +28,8 @@ use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 
-/// reads a lepton file and writes it out as a jpeg
-/// wraps LeptonFileReader
-pub fn decode_lepton_file<R: BufRead, W: Write>(
+/// Reads an entire lepton file and writes it out as a JPEG
+pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -632,7 +631,7 @@ fn parse_and_write_header() {
         &mut lh.jpeg_header,
         &mut lh.rinfo,
         &enabled_features,
-        |_| {},
+        |_, _| {},
     )
     .unwrap();
 
@@ -769,7 +768,7 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    decode_lepton_file(
+    decode_lepton(
         &mut SmallBufRead {
             inner: &file,
             pos: 0,

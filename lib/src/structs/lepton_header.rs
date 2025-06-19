@@ -224,10 +224,12 @@ impl LeptonHeader {
         header_reader.read_exact(&mut hdr_data)?;
 
         if self.rinfo.garbage_data.len() == 0 {
-            // if we don't have any garbage, assume FFD9 EOI
+            // if we don't have any garbage, assume 0xFF 0xD9 EOI (end of image marker)
 
-            // kind of broken logic since this assumes a EOF even if there was a 0 byte garbage header
-            // in the file, but this is what the file format is.
+            // Kind of broken logic since this assumes a EOI even if the file was
+            // truncated at the EOI, but this is what the file format is.
+            // In this case, this marker will be chopped off later by the
+            // overall JPEG file size limit, so this is not a correctness problem.
             self.rinfo.garbage_data.extend(EOI);
         }
 
