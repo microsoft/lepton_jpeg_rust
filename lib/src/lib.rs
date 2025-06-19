@@ -29,7 +29,7 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::io::{BufRead, Cursor, Seek, Write};
+use std::io::{Cursor, Write};
 
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
@@ -54,31 +54,28 @@ pub fn set_thread_priority(priority: i32) {
     }
 }
 
-/// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
+/// Trait for types that can provide the current position in a stream. This
+/// is intentionally a subset of the Seek trait, as it only requires remembering
+/// the current position without allowing seeking to arbitrary positions.
+///
+/// This is useful for callers for which it would be complex to provide seek capabilities, but can
+/// count the number of bytes read or written so far.
+///
+/// We provide a blanket implementation for any type that implements `std::io::Seek`.
+pub trait StreamPosition {
+    /// Returns the current position in the stream.
+    fn position(&mut self) -> u64;
 }
 
-/// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
+impl<T: std::io::Seek> StreamPosition for T {
+    fn position(&mut self) -> u64 {
+        self.stream_position().unwrap()
+    }
 }
 
-/// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
-pub fn encode_lepton_verify(
-    input_data: &[u8],
-    enabled_features: &EnabledFeatures,
-) -> Result<(Vec<u8>, Metrics)> {
-    structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
-}
+pub use structs::lepton_file_reader::decode_lepton;
+
+pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -144,7 +141,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     if input_data[0] == 0xff && input_data[1] == 0xd8 {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh| {
+        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh, _ri| {
             println!("parsed header:");
             let s = format!("{jh:?}");
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
