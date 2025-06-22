@@ -7,7 +7,7 @@ authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 # requires scoped threads and IsTerminal
 rust-version = "1.85"
 description = "Rust port of the Lepton JPEG compression library"
-readme = "README.md"
+readme = "../README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
 license = "Apache-2.0"
 
