@@ -152,7 +152,12 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton(&mut reader, &mut writer, &mut enabled_features, DEFAULT_THREAD_POOL) {
+            match decode_lepton(
+                &mut reader,
+                &mut writer,
+                &mut enabled_features,
+                DEFAULT_THREAD_POOL,
+            ) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return Ok(());

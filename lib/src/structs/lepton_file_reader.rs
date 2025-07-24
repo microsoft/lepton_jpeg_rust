@@ -752,7 +752,7 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    decode_lepton_file(
+    decode_lepton(
         &mut Cursor::new(&file),
         &mut output,
         &enabled_features,

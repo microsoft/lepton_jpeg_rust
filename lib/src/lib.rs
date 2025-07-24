@@ -29,7 +29,7 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::io::{BufRead, Cursor, Seek, Write};
+use std::io::Write;
 
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
@@ -38,6 +38,9 @@ pub use metrics::{CpuTimeMeasure, Metrics};
 pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
+pub use crate::structs::simple_threadpool::{
+    LeptonThreadPool, LeptonThreadPriority, DEFAULT_THREAD_POOL,
+};
 
 #[cfg(not(feature = "use_rayon"))]
 pub fn set_thread_priority(priority: i32) {
@@ -50,7 +53,6 @@ pub fn set_thread_priority(priority: i32) {
         };
 
         thread_priority::set_current_thread_priority(p).unwrap();
-        crate::structs::simple_threadpool::set_thread_priority(p);
     }
 }
 
@@ -138,6 +140,7 @@ impl LeptonFileReaderContext {
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
 #[allow(dead_code)]
 pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeatures) -> Result<()> {
+    use std::io::Cursor;
     use structs::lepton_file_reader::decode_lepton_file_image;
     use structs::lepton_file_writer::read_jpeg;
 

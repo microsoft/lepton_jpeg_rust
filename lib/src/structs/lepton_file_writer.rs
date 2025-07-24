@@ -25,7 +25,7 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool, DEFAULT_THREAD_POOL, StreamPosition};
+use crate::{consts::*, LeptonThreadPool, StreamPosition, DEFAULT_THREAD_POOL};
 
 /// Reads a jpeg and writes it out as a lepton file
 pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
@@ -75,8 +75,7 @@ pub fn encode_lepton_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features, thread_pool)
-            .context()?;
+        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -88,7 +87,7 @@ pub fn encode_lepton_verify(
     let mut c = enabled_features.clone();
 
     metrics.merge_from(
-        decode_lepton_file(
+        decode_lepton(
             &mut verifyreader,
             &mut verify_buffer,
             &mut c,
@@ -416,7 +415,7 @@ fn test_file(filename: &str) {
 
     let mut recreate = Vec::new();
 
-    decode_lepton_file(
+    decode_lepton(
         &mut Cursor::new(&output),
         &mut recreate,
         &enabled_features,
