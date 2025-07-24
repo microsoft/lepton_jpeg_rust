@@ -1,10 +1,6 @@
 [package]
 name = "lepton_jpeg"
-<<<<<<< HEAD
-version = "0.5.0"
-=======
 version = "0.5.1"
->>>>>>> main
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
