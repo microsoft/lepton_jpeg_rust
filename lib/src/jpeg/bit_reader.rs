@@ -4,12 +4,12 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::{BufRead, Seek};
+use std::io::BufRead;
 
 use super::jpeg_code;
 use crate::helpers::has_ff;
 use crate::lepton_error::{err_exit_code, ExitCode};
-use crate::LeptonError;
+use crate::{LeptonError, StreamPosition};
 
 // Implemenation of bit reader on top of JPEG data stream as read by a reader
 pub struct BitReader<R> {
@@ -22,7 +22,7 @@ pub struct BitReader<R> {
     read_ahead_bytes: u32,
 }
 
-impl<R: BufRead + Seek> BitReader<R> {
+impl<R: BufRead + StreamPosition> BitReader<R> {
     /// Returns the current position in the stream, which corresponds the byte that has
     /// unread bits in it.
     ///
@@ -31,7 +31,7 @@ impl<R: BufRead + Seek> BitReader<R> {
     pub fn stream_position(&mut self) -> u64 {
         self.undo_read_ahead();
 
-        let pos = self.inner.stream_position().unwrap();
+        let pos = self.inner.position();
 
         if self.bits_left > 0 && !self.eof {
             if self.bits as u8 == 0xff && !self.truncated_ff {

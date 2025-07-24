@@ -7,8 +7,18 @@
 // Don't allow any unsafe code by default. Since this code has to potentially deal with
 // badly/maliciously formatted images, we want this extra level of safety.
 #![forbid(unsafe_code)]
+#![forbid(trivial_casts)]
 #![forbid(trivial_numeric_casts)]
-#![forbid(unused_crate_dependencies)]
+#![forbid(non_ascii_idents)]
+#![forbid(unused_extern_crates)]
+#![forbid(unused_import_braces)]
+#![forbid(redundant_lifetimes)]
+#![forbid(single_use_lifetimes)]
+#![forbid(unused_extern_crates)]
+#![forbid(unused_lifetimes)]
+#![forbid(unused_macro_rules)]
+#![forbid(macro_use_extern_crate)]
+#![forbid(missing_unsafe_on_extern)]
 
 mod consts;
 mod helpers;
@@ -26,47 +36,46 @@ pub use helpers::catch_unwind_result;
 pub use lepton_error::{ExitCode, LeptonError};
 pub use metrics::{CpuTimeMeasure, Metrics};
 pub use structs::lepton_file_writer::get_git_version;
-pub use structs::simple_threadpool::{LeptonThreadPool, LeptonThreadPriority, DEFAULT_THREAD_POOL};
 
 use crate::lepton_error::{AddContext, Result};
 
-/// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
-) -> Result<Metrics> {
-    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features, thread_pool)
+#[cfg(not(feature = "use_rayon"))]
+pub fn set_thread_priority(priority: i32) {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        let p = match priority {
+            100 => thread_priority::ThreadPriority::Max,
+            0 => thread_priority::ThreadPriority::Min,
+            _ => panic!("Unsupported thread priority value: {}", priority),
+        };
+
+        thread_priority::set_current_thread_priority(p).unwrap();
+        crate::structs::simple_threadpool::set_thread_priority(p);
+    }
 }
 
-/// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
-) -> Result<Metrics> {
-    structs::lepton_file_writer::encode_lepton_wrapper(
-        reader,
-        writer,
-        enabled_features,
-        thread_pool,
-    )
+/// Trait for types that can provide the current position in a stream. This
+/// is intentionally a subset of the Seek trait, as it only requires remembering
+/// the current position without allowing seeking to arbitrary positions.
+///
+/// This is useful for callers for which it would be complex to provide seek capabilities, but can
+/// count the number of bytes read or written so far.
+///
+/// We provide a blanket implementation for any type that implements `std::io::Seek`.
+pub trait StreamPosition {
+    /// Returns the current position in the stream.
+    fn position(&mut self) -> u64;
 }
 
-/// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
-pub fn encode_lepton_verify(
-    input_data: &[u8],
-    enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
-) -> Result<(Vec<u8>, Metrics)> {
-    structs::lepton_file_writer::encode_lepton_wrapper_verify(
-        input_data,
-        enabled_features,
-        thread_pool,
-    )
+impl<T: std::io::Seek> StreamPosition for T {
+    fn position(&mut self) -> u64 {
+        self.stream_position().unwrap()
+    }
 }
+
+pub use structs::lepton_file_reader::decode_lepton;
+
+pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -138,7 +147,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     if input_data[0] == 0xff && input_data[1] == 0xd8 {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh| {
+        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh, _ri| {
             println!("parsed header:");
             let s = format!("{jh:?}");
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));

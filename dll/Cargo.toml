@@ -9,6 +9,7 @@ lepton_jpeg = { path = "../lib" }
 rstest = "0.22"
 
 [lib]
+name = "lepton_jpeg"
 crate-type = ["cdylib"]
 
 

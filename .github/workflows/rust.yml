@@ -22,9 +22,9 @@ jobs:
         components: rustfmt,clippy
 
     - name: Check formatting
-      run: cargo fmt --check
+      run: cargo fmt --check --all
     - name: Build default target
-      run: cargo build --locked --all --workspace
+      run: cargo build --locked --workspace
     - name: Build wasm32-wasip1
       run: cargo build --locked --target wasm32-wasip1 --manifest-path lib/Cargo.toml
     - name: Build aarch64-unknown-linux-musl

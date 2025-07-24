@@ -28,9 +28,8 @@ use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::{consts::*, LeptonThreadPool};
 
-/// reads a lepton file and writes it out as a jpeg
-/// wraps LeptonFileReader
-pub fn decode_lepton_file<R: BufRead, W: Write>(
+/// Reads an entire lepton file and writes it out as a JPEG
+pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
@@ -263,6 +262,30 @@ impl LeptonFileReader {
                     );
                     results.push(mem::take(&mut self.lh.rinfo.garbage_data));
 
+                    // find the total size that we have generated
+                    let total_length = results.iter().map(|x| x.len()).sum::<usize>();
+
+                    // now go back and shorted the results if they are too long until we have
+                    // the correct size. This consolidates the truncation logic into a single place.
+                    // Multiple results could be truncated, so we need to loop
+                    // and remove the last result until we reach the limit.
+                    if total_length > self.lh.jpeg_file_size as usize {
+                        let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
+                        while amount_to_remove > 0 {
+                            if let Some(last) = results.last_mut() {
+                                if last.len() <= amount_to_remove {
+                                    amount_to_remove -= last.len();
+                                    results.pop();
+                                } else {
+                                    last.truncate(last.len() - amount_to_remove);
+                                    amount_to_remove = 0;
+                                }
+                            } else {
+                                break; // no more results to remove.
+                            }
+                        }
+                    }
+
                     self.state = DecoderState::ReturnResults(0, mem::take(results));
                 }
                 DecoderState::ReturnResults(offset, leftover) => {
@@ -346,22 +369,7 @@ impl LeptonFileReader {
                 markers.push(rst);
             }
 
-            let expected_total_length = results.iter().map(|x| x.len()).sum::<usize>()
-                + lh.rinfo.garbage_data.len()
-                + (lh.rinfo.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
-
-            if expected_total_length < lh.jpeg_file_size as usize {
-                // figure out how much extra space we have, since C++ files can have
-                // more restart markers than there is space to fit them
-                let space_for_markers = min(
-                    markers.len(),
-                    lh.jpeg_file_size as usize - expected_total_length,
-                );
-
-                markers.resize(space_for_markers, 0);
-
-                results.push(markers);
-            }
+            results.push(markers);
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -633,7 +641,7 @@ fn parse_and_write_header() {
         &mut lh.jpeg_header,
         &mut lh.rinfo,
         &enabled_features,
-        |_| {},
+        |_, _| {},
     )
     .unwrap();
 
@@ -711,6 +719,19 @@ fn test_simple_parse_trailing() {
 #[test]
 fn test_zero_dqt() {
     test_file("zeros_in_dqt_tables")
+}
+
+/// truncated progessive JPEG. We don't support creating these, but we can read them
+#[test]
+fn test_pixelated() {
+    test_file("pixelated")
+}
+
+/// requires that the last segment be truncated by 1 byte.
+/// This is for compatibility with the C++ version
+#[test]
+fn test_truncate4() {
+    test_file("truncate4")
 }
 
 #[cfg(test)]

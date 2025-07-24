@@ -4,6 +4,9 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+#![forbid(trivial_numeric_casts)]
+#![forbid(unused_crate_dependencies)]
+
 use std::io::Cursor;
 
 use lepton_jpeg::{
@@ -149,12 +152,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton(
-                &mut reader,
-                &mut writer,
-                &mut enabled_features,
-                DEFAULT_THREAD_POOL,
-            ) {
+            match decode_lepton(&mut reader, &mut writer, &mut enabled_features, DEFAULT_THREAD_POOL) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return Ok(());

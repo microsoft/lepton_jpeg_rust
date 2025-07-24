@@ -20,21 +20,23 @@ use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
-use crate::structs::lepton_file_reader::decode_lepton_file;
+use crate::structs::lepton_file_reader::decode_lepton;
 use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool, DEFAULT_THREAD_POOL};
+use crate::{consts::*, LeptonThreadPool, DEFAULT_THREAD_POOL, StreamPosition};
 
-/// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
+/// Reads a jpeg and writes it out as a lepton file
+pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
     thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
+    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
+
+    let start_position = writer.position();
 
     lp.write_lepton_header(writer, enabled_features).context()?;
 
@@ -49,7 +51,7 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
     )
     .context()?;
 
-    let final_file_size = writer.stream_position()? + 4;
+    let final_file_size = (writer.position() - start_position) + 4;
 
     writer
         .write_u32::<LittleEndian>(final_file_size as u32)
@@ -60,7 +62,7 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
 
 /// Encodes JPEG as compressed Lepton format, verifies roundtrip in buffer. Requires everything to be buffered
 /// since we need to pass through the data multiple times
-pub fn encode_lepton_wrapper_verify(
+pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
     thread_pool: &dyn LeptonThreadPool,
@@ -125,9 +127,11 @@ pub fn encode_lepton_wrapper_verify(
 pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    callback: fn(&JpegHeader),
+    callback: fn(&JpegHeader, &[u8]),
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lp = LeptonHeader::default_boxed();
+
+    let stream_start_position = reader.stream_position().context()?;
 
     get_git_revision(&mut lp);
 
@@ -151,7 +155,9 @@ pub fn read_jpeg<R: BufRead + Seek>(
         };
 
         thread_handoff.push(ThreadHandoff {
-            segment_offset_in_file: (*segment_offset).try_into().unwrap(),
+            segment_offset_in_file: (*segment_offset - stream_start_position)
+                .try_into()
+                .unwrap(),
             luma_y_start: r.luma_y_start,
             luma_y_end: r.luma_y_end,
             overhang_byte: r.overhang_byte,
@@ -174,7 +180,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
-    lp.jpeg_file_size = reader.stream_position().context()? as u32;
+    lp.jpeg_file_size = (reader.stream_position().context()? - stream_start_position) as u32;
 
     if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
         return err_exit_code(
@@ -225,7 +231,7 @@ fn get_git_revision(lp: &mut LeptonHeader) {
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
-fn run_lepton_encoder_threads<W: Write + Seek>(
+fn run_lepton_encoder_threads<W: Write>(
     jpeg_header: &JpegHeader,
     colldata: &TruncateComponents,
     writer: &mut W,
@@ -394,7 +400,7 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    let _ = encode_lepton_wrapper(
+    let _ = encode_lepton(
         &mut Cursor::new(&original),
         &mut Cursor::new(&mut output),
         &enabled_features,
