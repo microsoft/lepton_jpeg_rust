@@ -7,14 +7,12 @@ rust-version = "1.85"
 
 [features]
 default = []
-use_rayon = ["dep:rayon-core"]
 
 [dependencies]
 lepton_jpeg = { path = "../lib" }
 pico-args = "0.5"
 log = "0.4"
 simple_logger ="5.0"
-rayon-core = { version = "1", optional = true }
 
 [[bin]]
 name="lepton_jpeg_util"

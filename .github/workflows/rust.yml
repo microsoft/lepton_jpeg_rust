@@ -35,6 +35,5 @@ jobs:
       run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
     - name: Run tests
       run: cargo test --locked --workspace
-    - name: Run tests (use_rayon)
-      run: cargo test --locked --features use_rayon --workspace
+
       
