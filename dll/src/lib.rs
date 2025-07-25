@@ -70,6 +70,10 @@ fn test_copy_cstring_utf8_to_buffer() {
 }
 
 /// C ABI interface for compressing image, exposed from DLL
+/// * `number_of_threads` - the number of partitions to split JPEG into.
+///
+///  Lower 8 bits are used to specify the number of partitions, and the
+///  0x100 bit is used to specify whether to use Rayon thread pool.
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn WrapperCompressImage(
@@ -89,11 +93,11 @@ pub unsafe extern "C" fn WrapperCompressImage(
         let mut writer = Cursor::new(output);
 
         let mut features = EnabledFeatures::compat_lepton_vector_write();
-        if (number_of_threads & 0xf) > 0 {
-            features.max_threads = (number_of_threads & 0xf) as u32;
+        if (number_of_threads & 0xff) > 0 {
+            features.max_threads = (number_of_threads & 0xff) as u32;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x10 != 0 {
+        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x100 != 0 {
             &RAYON_THREAD_POOL
         } else {
             &DEFAULT_THREAD_POOL
@@ -139,6 +143,11 @@ pub unsafe extern "C" fn WrapperDecompressImage(
 /// C ABI interface for decompressing image, exposed from DLL.
 /// use_16bit_dc_estimate argument should be set to true only for images
 /// that were compressed by C++ version of Leptron (see comments below).
+///
+///
+/// * `number_of_threads` - the number of threads to use for decompression.
+///  Lower 8 bits are used to specify the number of threads, and the
+///  0x100 bit is used to specify whether to use Rayon thread pool.
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn WrapperDecompressImageEx(
@@ -166,11 +175,11 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             ..EnabledFeatures::compat_lepton_vector_read()
         };
 
-        if (number_of_threads & 0xf) > 0 {
-            enabled_features.max_threads = (number_of_threads & 0xf) as u32;
+        if (number_of_threads & 0xff) > 0 {
+            enabled_features.max_threads = (number_of_threads & 0xff) as u32;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x10 != 0 {
+        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x100 != 0 {
             &RAYON_THREAD_POOL
         } else {
             &DEFAULT_THREAD_POOL
