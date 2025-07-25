@@ -4,13 +4,13 @@ pub struct EnabledFeatures {
     /// enables/disables reading of progressive images
     pub progressive: bool,
 
-    // reject/accept images with DQTs with zeros (may cause divide-by-zero)
+    /// reject/accept images with DQTs with zeros (may cause divide-by-zero)
     pub reject_dqts_with_zeros: bool,
 
     /// maximum jpeg width
     pub max_jpeg_width: u32,
 
-    // maximum jpeg height
+    /// maximum jpeg height
     pub max_jpeg_height: u32,
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path

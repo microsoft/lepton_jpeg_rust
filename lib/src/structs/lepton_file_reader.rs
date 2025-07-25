@@ -29,6 +29,14 @@ use crate::structs::thread_handoff::ThreadHandoff;
 use crate::{consts::*, LeptonThreadPool};
 
 /// Reads an entire lepton file and writes it out as a JPEG
+///
+/// # Parameters
+///
+/// - `reader`: A buffered reader from which the Lepton-encoded data is read.
+/// - `writer`: A writer to which the decoded JPEG image is written.
+/// - `enabled_features`: A set of toggles for enabling/disabling decoding features/restrictions.
+/// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
+/// can point to `DEFAULT_THREAD_POOL`.
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,

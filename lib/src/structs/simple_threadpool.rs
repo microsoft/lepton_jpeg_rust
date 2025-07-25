@@ -24,17 +24,25 @@ use std::{
 /// but also requires the thread pool to be static, since we don't require the thread
 /// to return within a specific lifetime.
 pub trait LeptonThreadPool {
+    /// Runs a closure on a thread from the thread pool. The thread
+    /// thread lifetime is not specified, so it can must be static.
     fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>);
 }
 
+/// Priority levels for threads in the thread pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LeptonThreadPriority {
+    /// Low priority thread
     Low,
+    /// Normal priority thread, we don't touch the priority of these threads.
     #[default]
     Normal,
+    /// High priority thread
     High,
 }
 
+/// A simple thread pool that spawns threads on demand and reuses them for executing closures.
+/// There is no limit on the number of threads, but the number of idle threads is limited to the number of CPUs available.
 #[derive(Default)]
 pub struct SimpleThreadPool {
     priority: LeptonThreadPriority,
@@ -42,6 +50,7 @@ pub struct SimpleThreadPool {
 }
 
 impl SimpleThreadPool {
+    /// Creates a new thread pool with the specified priority.
     pub const fn new(priority: LeptonThreadPriority) -> Self {
         SimpleThreadPool {
             priority,
@@ -49,6 +58,7 @@ impl SimpleThreadPool {
         }
     }
 
+    /// Returns the number of idle threads in the thread pool.
     #[allow(dead_code)]
     pub fn get_idle_threads(&self) -> usize {
         self.idle_threads.lock().unwrap().len()
@@ -109,6 +119,7 @@ impl SimpleThreadPool {
     }
 }
 
+/// A default instance of the `SimpleThreadPool` that can be used for encoding and decoding operations.
 pub static DEFAULT_THREAD_POOL: SimpleThreadPool =
     SimpleThreadPool::new(LeptonThreadPriority::Normal);
 

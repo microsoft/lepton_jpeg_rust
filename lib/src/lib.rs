@@ -4,6 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+#![doc = include_str!("../../README.md")]
 // Don't allow any unsafe code by default. Since this code has to potentially deal with
 // badly/maliciously formatted images, we want this extra level of safety.
 #![forbid(unsafe_code)]
@@ -19,6 +20,7 @@
 #![forbid(unused_macro_rules)]
 #![forbid(macro_use_extern_crate)]
 #![forbid(missing_unsafe_on_extern)]
+#![deny(missing_docs)]
 
 mod consts;
 mod helpers;
@@ -41,20 +43,6 @@ use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
     LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
 };
-
-#[cfg(not(feature = "use_rayon"))]
-pub fn set_thread_priority(priority: i32) {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let p = match priority {
-            100 => thread_priority::ThreadPriority::Max,
-            0 => thread_priority::ThreadPriority::Min,
-            _ => panic!("Unsupported thread priority value: {}", priority),
-        };
-
-        thread_priority::set_current_thread_priority(p).unwrap();
-    }
-}
 
 /// Trait for types that can provide the current position in a stream. This
 /// is intentionally a subset of the Seek trait, as it only requires remembering
@@ -81,6 +69,8 @@ pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Returns the version string of the library, which includes the package version and the git version.
+/// This is useful for debugging and logging purposes to know the exact version of the library is being used
 pub fn get_version_string() -> String {
     format!("{}-{}", PACKAGE_VERSION, get_git_version())
 }

@@ -28,6 +28,13 @@ use crate::structs::thread_handoff::ThreadHandoff;
 use crate::{consts::*, LeptonThreadPool, StreamPosition};
 
 /// Reads a jpeg and writes it out as a lepton file
+///
+/// # Parameters
+/// - `reader`: A buffered reader from which the JPEG data is read.
+/// - `writer`: A writer to which the Lepton-encoded data is written.
+/// - `enabled_features`: A set of toggles for enabling/disabling encoding features/restrictions.
+/// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
+/// can point to `DEFAULT_THREAD_POOL`.
 pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
@@ -202,6 +209,7 @@ static GIT_VERSION: &str = git_version::git_version!(
     fallback = "0"
 );
 
+/// Returns the git version used to build this libary as a static string.
 pub fn get_git_version() -> &'static str {
     GIT_VERSION
 }
