@@ -10,7 +10,4 @@ rstest = "0.22"
 rayon = "1"
 
 [lib]
-name = "lepton_jpeg"
 crate-type = ["cdylib"]
-
-
