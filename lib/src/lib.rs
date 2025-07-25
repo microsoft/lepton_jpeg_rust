@@ -80,14 +80,19 @@ pub fn get_version_string() -> String {
 /// Dropping the object will abort any threads or decoding in progress.
 pub struct LeptonFileReaderContext {
     reader: structs::lepton_file_reader::LeptonFileReader,
+    thread_pool: &'static dyn LeptonThreadPool,
 }
 
 impl LeptonFileReaderContext {
     /// Creates a new context for decompressing Lepton encoded files,
     /// features parameter can be used to enable or disable certain behaviors.
-    pub fn new(features: EnabledFeatures) -> LeptonFileReaderContext {
+    pub fn new(
+        features: EnabledFeatures,
+        thread_pool: &'static dyn LeptonThreadPool,
+    ) -> LeptonFileReaderContext {
         LeptonFileReaderContext {
             reader: structs::lepton_file_reader::LeptonFileReader::new(features),
+            thread_pool,
         }
     }
 
@@ -115,14 +120,13 @@ impl LeptonFileReaderContext {
         input_complete: bool,
         writer: &mut impl Write,
         output_buffer_size: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
         self.reader.process_buffer(
             input,
             input_complete,
             writer,
             output_buffer_size,
-            thread_pool,
+            self.thread_pool,
         )
     }
 }
