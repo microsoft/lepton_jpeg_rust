@@ -81,7 +81,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
     input_buffer_size: u64,
     output_buffer: *mut u8,
     output_buffer_size: u64,
-    number_of_threads: i32,
+    number_of_threads: u32,
     result_size: *mut u64,
 ) -> i32 {
     match catch_unwind_result(|| {
@@ -94,14 +94,15 @@ pub unsafe extern "C" fn WrapperCompressImage(
 
         let mut features = EnabledFeatures::compat_lepton_vector_write();
         if (number_of_threads & 0xff) > 0 {
-            features.max_threads = (number_of_threads & 0xff) as u32;
+            features.max_threads = number_of_threads & 0xff;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x100 != 0 {
-            &RAYON_THREAD_POOL
-        } else {
-            &DEFAULT_THREAD_POOL
-        };
+        let thread_pool: &'static dyn LeptonThreadPool =
+            if number_of_threads & USE_RAYON_THREAD_POOL != 0 {
+                &RAYON_THREAD_POOL
+            } else {
+                &DEFAULT_THREAD_POOL
+            };
 
         let _metrics = encode_lepton(&mut reader, &mut writer, &features, thread_pool)?;
 
@@ -126,7 +127,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     input_buffer_size: u64,
     output_buffer: *mut u8,
     output_buffer_size: u64,
-    number_of_threads: i32,
+    number_of_threads: u32,
     result_size: *mut u64,
 ) -> i32 {
     return WrapperDecompressImageEx(
@@ -155,7 +156,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     input_buffer_size: u64,
     output_buffer: *mut u8,
     output_buffer_size: u64,
-    number_of_threads: i32,
+    number_of_threads: u32,
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
@@ -176,14 +177,15 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
         };
 
         if (number_of_threads & 0xff) > 0 {
-            enabled_features.max_threads = (number_of_threads & 0xff) as u32;
+            enabled_features.max_threads = number_of_threads & 0xff;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if number_of_threads & 0x100 != 0 {
-            &RAYON_THREAD_POOL
-        } else {
-            &DEFAULT_THREAD_POOL
-        };
+        let thread_pool: &'static dyn LeptonThreadPool =
+            if number_of_threads & USE_RAYON_THREAD_POOL != 0 {
+                &RAYON_THREAD_POOL
+            } else {
+                &DEFAULT_THREAD_POOL
+            };
 
         loop {
             let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -241,7 +243,7 @@ pub unsafe extern "C" fn get_version(
 
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 
-const USE_RAYON_THREAD_POOL: u32 = 2;
+const USE_RAYON_THREAD_POOL: u32 = 0x100;
 
 #[no_mangle]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
