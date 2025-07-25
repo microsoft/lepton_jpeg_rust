@@ -39,7 +39,7 @@ pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
-    LeptonThreadPool, LeptonThreadPriority, DEFAULT_THREAD_POOL,
+    LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
 };
 
 #[cfg(not(feature = "use_rayon"))]
@@ -125,7 +125,7 @@ impl LeptonFileReaderContext {
         input_complete: bool,
         writer: &mut impl Write,
         output_buffer_size: usize,
-        thread_pool: &dyn LeptonThreadPool,
+        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
         self.reader.process_buffer(
             input,
@@ -159,7 +159,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
         let mut reader = Cursor::new(input_data);
 
         (lh, block_image) =
-            decode_lepton_file_image(&mut reader, enabled_features, DEFAULT_THREAD_POOL)
+            decode_lepton_file_image(&mut reader, enabled_features, &DEFAULT_THREAD_POOL)
                 .context()?;
 
         loop {

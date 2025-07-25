@@ -129,7 +129,7 @@ impl<RESULT> ThreadResults<RESULT> {
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
     num_threads: usize,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
 where
@@ -301,7 +301,7 @@ enum State {
 impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn new<FN>(
         num_threads: usize,
-        thread_pool: &dyn LeptonThreadPool,
+        thread_pool: &'static dyn LeptonThreadPool,
         retention_bytes: usize,
         max_processor_threads: usize,
         processor: FN,
@@ -448,7 +448,7 @@ fn test_multiplex_end_to_end() {
     let w = multiplex_write(
         &mut output,
         10,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
         |writer, thread_id| -> Result<usize> {
             for i in thread_id as u32..10000 {
                 writer.write_u32::<byteorder::LittleEndian>(i)?;
@@ -465,7 +465,7 @@ fn test_multiplex_end_to_end() {
 
     let mut multiplex_state = MultiplexReaderState::new(
         10,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
         0,
         8,
         |thread_id, reader| -> Result<usize> {
@@ -494,7 +494,7 @@ use crate::lepton_error::LeptonError;
 #[test]
 fn test_multiplex_read_error() {
     let mut multiplex_state =
-        MultiplexReaderState::new(10, DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
+        MultiplexReaderState::new(10, &DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
             Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
         });
 
@@ -506,7 +506,7 @@ fn test_multiplex_read_error() {
 #[test]
 fn test_multiplex_read_panic() {
     let mut multiplex_state =
-        MultiplexReaderState::new(10, DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
+        MultiplexReaderState::new(10, &DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
             panic!();
         });
 
@@ -522,7 +522,7 @@ fn test_multiplex_write_error() {
     let e: LeptonError = multiplex_write(
         &mut output,
         10,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
         |_, thread_id| -> Result<usize> {
             if thread_id == 3 {
                 // have one thread fail
@@ -547,7 +547,7 @@ fn test_multiplex_write_panic() {
     let e: LeptonError = multiplex_write(
         &mut output,
         10,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
         |_, thread_id| -> Result<usize> {
             if thread_id == 5 {
                 panic!();

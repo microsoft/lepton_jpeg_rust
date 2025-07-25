@@ -25,14 +25,14 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool, StreamPosition, DEFAULT_THREAD_POOL};
+use crate::{consts::*, LeptonThreadPool, StreamPosition};
 
 /// Reads a jpeg and writes it out as a lepton file
 pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
@@ -65,7 +65,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
@@ -87,13 +87,7 @@ pub fn encode_lepton_verify(
     let mut c = enabled_features.clone();
 
     metrics.merge_from(
-        decode_lepton(
-            &mut verifyreader,
-            &mut verify_buffer,
-            &mut c,
-            DEFAULT_THREAD_POOL,
-        )
-        .context()?,
+        decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c, thread_pool).context()?,
     );
 
     if input_data.len() != verify_buffer.len() {
@@ -237,7 +231,7 @@ fn run_lepton_encoder_threads<W: Write>(
     thread_handoffs: &[ThreadHandoff],
     image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -391,6 +385,7 @@ fn test_slrcity() {
 #[cfg(test)]
 fn test_file(filename: &str) {
     use crate::structs::lepton_file_reader::read_file;
+    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
 
     let original = read_file(filename, ".jpg");
 
@@ -403,7 +398,7 @@ fn test_file(filename: &str) {
         &mut Cursor::new(&original),
         &mut Cursor::new(&mut output),
         &enabled_features,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -419,7 +414,7 @@ fn test_file(filename: &str) {
         &mut Cursor::new(&output),
         &mut recreate,
         &enabled_features,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 

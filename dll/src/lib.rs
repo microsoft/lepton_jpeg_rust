@@ -74,7 +74,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
             features.max_threads = number_of_threads as u32;
         }
 
-        let _metrics = encode_lepton(&mut reader, &mut writer, &features, DEFAULT_THREAD_POOL)?;
+        let _metrics = encode_lepton(&mut reader, &mut writer, &features, &DEFAULT_THREAD_POOL)?;
 
         *result_size = writer.position().into();
 
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
                 &mut reader,
                 &mut writer,
                 &mut enabled_features,
-                DEFAULT_THREAD_POOL,
+                &DEFAULT_THREAD_POOL,
             ) {
                 Ok(_) => {
                     *result_size = writer.position().into();
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn decompress_image(
             input_complete,
             &mut writer,
             output_buffer_size as usize,
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         )?;
 
         *result_size = writer.position().into();

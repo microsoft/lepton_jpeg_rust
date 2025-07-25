@@ -80,7 +80,7 @@ fn verify_decode(
         &mut Cursor::new(input),
         &mut output,
         &EnabledFeatures::compat_lepton_vector_read(),
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -113,7 +113,7 @@ fn verify_decode_scalar_overflow() {
         &mut Cursor::new(input),
         &mut output,
         &features,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -166,7 +166,7 @@ fn verify_encode(
         &mut Cursor::new(&input),
         &mut Cursor::new(&mut lepton),
         &EnabledFeatures::compat_lepton_vector_write(),
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -174,7 +174,7 @@ fn verify_encode(
         &mut Cursor::new(lepton),
         &mut output,
         &EnabledFeatures::compat_lepton_vector_read(),
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -196,7 +196,7 @@ fn verify_16bitmath() {
             &mut Cursor::new(input),
             &mut output,
             &features,
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         )
         .unwrap();
 
@@ -217,7 +217,7 @@ fn verify_16bitmath() {
             &mut Cursor::new(input),
             &mut output,
             &features,
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         )
         .unwrap();
 
@@ -234,7 +234,7 @@ fn verify_encode_verify(#[values("slrcity")] file: &str) {
     encode_lepton_verify(
         &input[..],
         &EnabledFeatures::compat_lepton_vector_write(),
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 }
@@ -257,7 +257,7 @@ fn verify_encode_verify_fail(#[values("mismatch_encode")] file: &str) {
         encode_lepton_verify(
             &input[..],
             &EnabledFeatures::compat_lepton_vector_write(),
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         ),
     );
 }
@@ -278,7 +278,7 @@ fn verify_encode_progressive_false(
                 progressive: false,
                 ..EnabledFeatures::compat_lepton_vector_write()
             },
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         ),
     );
 }
@@ -295,7 +295,7 @@ fn verify_nonoptimal() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             &EnabledFeatures::compat_lepton_vector_write(),
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         ),
     );
 }
@@ -312,7 +312,7 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
             &mut Cursor::new(&input),
             &mut Cursor::new(&mut lepton),
             &EnabledFeatures::compat_lepton_vector_write(),
-            DEFAULT_THREAD_POOL,
+            &DEFAULT_THREAD_POOL,
         ),
     );
 }

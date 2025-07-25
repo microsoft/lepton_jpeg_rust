@@ -14,10 +14,16 @@ use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
     decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
-    ExitCode, LeptonError, LeptonThreadPool, Metrics, DEFAULT_THREAD_POOL,
+    ExitCode, LeptonError, LeptonThreadPool, LeptonThreadPriority, Metrics, SimpleThreadPool,
+    DEFAULT_THREAD_POOL,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
+
+static LOW_PRIORITY_THREAD_POOL: SimpleThreadPool =
+    SimpleThreadPool::new(LeptonThreadPriority::Low);
+static HIGH_PRIORITY_THREAD_POOL: SimpleThreadPool =
+    SimpleThreadPool::new(LeptonThreadPriority::High);
 
 #[derive(Copy, Clone, Debug)]
 enum FileType {
@@ -213,17 +219,17 @@ Options:
         enabled_features.use_16bit_dc_estimate = false;
     }
 
-    if pargs.contains("--highpriority") {
+    let thread_pool = if pargs.contains("--highpriority") {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
-        DEFAULT_THREAD_POOL.set_default_thread_priority(lepton_jpeg::LeptonThreadPriority::High);
-    }
-
-    if pargs.contains("--lowpriority") {
+        &HIGH_PRIORITY_THREAD_POOL
+    } else if pargs.contains("--lowpriority") {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority
-        DEFAULT_THREAD_POOL.set_default_thread_priority(lepton_jpeg::LeptonThreadPriority::Low);
-    }
+        &LOW_PRIORITY_THREAD_POOL
+    } else {
+        &DEFAULT_THREAD_POOL
+    };
 
     let filenames = pargs.finish();
 
@@ -246,6 +252,7 @@ Options:
             &enabled_features,
             verify,
             &mut corrupt,
+            thread_pool,
         )?;
         return Ok(());
     }
@@ -318,7 +325,13 @@ Options:
         // do the encoding/decoding, if we got an error and were corrupting the file, then restore the
         // original data and continue so we can try corrupting the file in different ways
         // per iteration
-        match do_work(file_type, verify, &writable_input_data, &enabled_features) {
+        match do_work(
+            file_type,
+            verify,
+            &writable_input_data,
+            &enabled_features,
+            thread_pool,
+        ) {
             Err(e) => {
                 error!("error {0}", e);
 
@@ -417,6 +430,7 @@ fn execute_verify_dir(
     enabled_features: &EnabledFeatures,
     verify: bool,
     corrupt_data_seed: &mut Option<u64>,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(), LeptonError> {
     let entries;
     match std::fs::read_dir(dir) {
@@ -438,6 +452,7 @@ fn execute_verify_dir(
                 enabled_features,
                 verify,
                 corrupt_data_seed,
+                thread_pool,
             )?;
             continue;
         }
@@ -466,6 +481,7 @@ fn execute_verify_dir(
                 verify,
                 &original_contents,
                 &enabled_features,
+                thread_pool,
             ) {
                 Err(e) => {
                     eprintln!("{:?} error {}", path, e);
@@ -550,6 +566,7 @@ fn do_work(
     verify: bool,
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics), LeptonError> {
     let metrics;
     let mut output;
@@ -558,18 +575,13 @@ fn do_work(
         FileType::Jpeg => {
             if verify {
                 (output, metrics) =
-                    encode_lepton_verify(input_data, enabled_features, DEFAULT_THREAD_POOL)?;
+                    encode_lepton_verify(input_data, enabled_features, thread_pool)?;
             } else {
                 let mut reader = Cursor::new(input_data);
                 output = Vec::with_capacity(input_data.len());
                 let mut writer = Cursor::new(&mut output);
 
-                metrics = encode_lepton(
-                    &mut reader,
-                    &mut writer,
-                    enabled_features,
-                    DEFAULT_THREAD_POOL,
-                )?
+                metrics = encode_lepton(&mut reader, &mut writer, enabled_features, thread_pool)?
             }
 
             info!(
@@ -584,12 +596,7 @@ fn do_work(
 
             output = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton(
-                &mut reader,
-                &mut output,
-                &enabled_features,
-                DEFAULT_THREAD_POOL,
-            )?;
+            metrics = decode_lepton(&mut reader, &mut output, &enabled_features, thread_pool)?;
         }
     }
 

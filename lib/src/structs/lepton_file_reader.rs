@@ -33,7 +33,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let mut decoder = LeptonFileReader::new(enabled_features.clone());
 
@@ -58,7 +58,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
 pub fn decode_lepton_file_image<R: BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    thread_pool: &dyn LeptonThreadPool,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lh = LeptonHeader::default_boxed();
     let mut enabled_features = enabled_features.clone();
@@ -177,7 +177,7 @@ impl LeptonFileReader {
         input_complete: bool,
         output: &mut impl Write,
         mut output_max_size: usize,
-        thread_pool: &dyn LeptonThreadPool,
+        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
@@ -423,7 +423,7 @@ impl LeptonFileReader {
         v: Vec<u8>,
         lh: &LeptonHeader,
         enabled_features: &EnabledFeatures,
-        thread_pool: &dyn LeptonThreadPool,
+        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<DecoderState> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -525,7 +525,7 @@ impl LeptonFileReader {
         lh: &LeptonHeader,
         features: &EnabledFeatures,
         retention_bytes: usize,
-        thread_pool: &dyn LeptonThreadPool,
+        thread_pool: &'static dyn LeptonThreadPool,
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,
@@ -746,7 +746,7 @@ fn test_file(filename: &str) {
     let _ = decode_lepton_file_image(
         &mut Cursor::new(&file),
         &enabled_features,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -756,7 +756,7 @@ fn test_file(filename: &str) {
         &mut Cursor::new(&file),
         &mut output,
         &enabled_features,
-        DEFAULT_THREAD_POOL,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
