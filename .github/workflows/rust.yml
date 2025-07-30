@@ -43,12 +43,10 @@ jobs:
     needs: build
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-      toolchain: stable
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
 
     - name: Publish to crates.io
       env:
