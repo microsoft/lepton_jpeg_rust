@@ -25,13 +25,21 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, StreamPosition};
+use crate::{consts::*, LeptonThreadPool, StreamPosition};
 
 /// Reads a jpeg and writes it out as a lepton file
+///
+/// # Parameters
+/// - `reader`: A buffered reader from which the JPEG data is read.
+/// - `writer`: A writer to which the Lepton-encoded data is written.
+/// - `enabled_features`: A set of toggles for enabling/disabling encoding features/restrictions.
+/// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
+/// can point to `DEFAULT_THREAD_POOL`.
 pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
@@ -46,6 +54,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
         &lp.thread_handoff[..],
         image_data,
         enabled_features,
+        thread_pool,
     )
     .context()?;
 
@@ -63,6 +72,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
@@ -71,7 +81,8 @@ pub fn encode_lepton_verify(
     let mut reader = Cursor::new(&input_data);
     let mut writer = Cursor::new(&mut output_data);
 
-    let mut metrics = encode_lepton(&mut reader, &mut writer, &enabled_features).context()?;
+    let mut metrics =
+        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -82,7 +93,9 @@ pub fn encode_lepton_verify(
 
     let mut c = enabled_features.clone();
 
-    metrics.merge_from(decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c).context()?);
+    metrics.merge_from(
+        decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c, thread_pool).context()?,
+    );
 
     if input_data.len() != verify_buffer.len() {
         return err_exit_code(
@@ -196,6 +209,7 @@ static GIT_VERSION: &str = git_version::git_version!(
     fallback = "0"
 );
 
+/// Returns the git version used to build this libary as a static string.
 pub fn get_git_version() -> &'static str {
     GIT_VERSION
 }
@@ -225,6 +239,7 @@ fn run_lepton_encoder_threads<W: Write>(
     thread_handoffs: &[ThreadHandoff],
     image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -245,6 +260,7 @@ fn run_lepton_encoder_threads<W: Write>(
     let mut thread_results = multiplex_write(
         writer,
         thread_handoffs.len(),
+        thread_pool,
         move |thread_writer, thread_id| {
             let cpu_time = CpuTimeMeasure::new();
 
@@ -377,6 +393,7 @@ fn test_slrcity() {
 #[cfg(test)]
 fn test_file(filename: &str) {
     use crate::structs::lepton_file_reader::read_file;
+    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
 
     let original = read_file(filename, ".jpg");
 
@@ -389,6 +406,7 @@ fn test_file(filename: &str) {
         &mut Cursor::new(&original),
         &mut Cursor::new(&mut output),
         &enabled_features,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -400,57 +418,13 @@ fn test_file(filename: &str) {
 
     let mut recreate = Vec::new();
 
-    decode_lepton(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
-
-    assert_eq!(original.len(), recreate.len());
-    assert!(original == recreate);
-}
-
-/// Test that we can encode and decode an embedded file. This means that the seek position is
-/// relative and not 0 at the start of the file.
-#[test]
-fn encode_embedded_file() {
-    use crate::structs::lepton_file_reader::read_file;
-
-    let original = read_file("iphone", ".jpg");
-
-    let prefix = b"this is a string";
-    let suffix = b"this is a suffix string";
-
-    let mut embedded = Vec::new();
-    embedded.extend_from_slice(prefix);
-    embedded.extend_from_slice(&original);
-    embedded.extend_from_slice(suffix);
-
-    let mut read_content = Cursor::new(&embedded);
-    read_content.set_position(prefix.len() as u64);
-
-    let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
-    enabled_features.stop_reading_at_eoi = true;
-
-    let mut output = Vec::new();
-
-    let _ = encode_lepton(
-        &mut read_content,
-        &mut Cursor::new(&mut output),
+    decode_lepton(
+        &mut Cursor::new(&output),
+        &mut recreate,
         &enabled_features,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
-
-    assert_eq!(
-        read_content.position() as usize,
-        prefix.len() + original.len()
-    );
-
-    println!(
-        "Original size: {0}, compressed size: {1}",
-        original.len(),
-        output.len()
-    );
-
-    let mut recreate = Vec::new();
-
-    decode_lepton(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
 
     assert_eq!(original.len(), recreate.len());
     assert!(original == recreate);

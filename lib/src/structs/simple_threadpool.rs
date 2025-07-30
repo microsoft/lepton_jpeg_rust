@@ -19,69 +19,117 @@ use std::{
     thread::{self, spawn},
 };
 
-static IDLE_THREADS: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
-static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
-
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-static THREAD_PRIORITY: Mutex<Option<thread_priority::ThreadPriority>> = Mutex::new(None);
-
-#[allow(dead_code)]
-pub fn get_idle_threads() -> usize {
-    IDLE_THREADS.lock().unwrap().len()
+/// A trait that defines the interface for a Lepton thread pool.
+/// It has a simple fire-and-forget interface, which is sufficient for the current use cases,
+/// but also requires the thread pool to be static, since we don't require the thread
+/// to return within a specific lifetime.
+pub trait LeptonThreadPool {
+    /// Runs a closure on a thread from the thread pool. The thread
+    /// thread lifetime is not specified, so it can must be static.
+    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>);
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-#[allow(dead_code)]
-pub fn set_thread_priority(priority: thread_priority::ThreadPriority) {
-    *THREAD_PRIORITY.lock().unwrap() = Some(priority);
+/// Priority levels for threads in the thread pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeptonThreadPriority {
+    /// Low priority thread
+    Low,
+    /// Normal priority thread, we don't touch the priority of these threads.
+    #[default]
+    Normal,
+    /// High priority thread
+    High,
 }
 
-/// Executes a closure on a thread from the thread pool. Does not block or return any result.
-pub fn execute<F>(f: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    if let Some(sender) = IDLE_THREADS.lock().unwrap().pop() {
-        sender.send(Box::new(f)).unwrap();
-    } else {
-        // channel for receiving future work on this thread
-        let (tx_schedule, rx_schedule) = channel();
+/// A simple thread pool that spawns threads on demand and reuses them for executing closures.
+/// There is no limit on the number of threads, but the number of idle threads is limited to the number of CPUs available.
+#[derive(Default)]
+pub struct SimpleThreadPool {
+    priority: LeptonThreadPriority,
+    idle_threads: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>>,
+}
 
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        let thread_priority = THREAD_PRIORITY.lock().unwrap().clone();
+impl SimpleThreadPool {
+    /// Creates a new thread pool with the specified priority.
+    pub const fn new(priority: LeptonThreadPriority) -> Self {
+        SimpleThreadPool {
+            priority,
+            idle_threads: LazyLock::new(|| Mutex::new(Vec::new())),
+        }
+    }
 
-        spawn(move || {
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
-            if let Some(priority) = thread_priority {
-                thread_priority::set_current_thread_priority(priority).unwrap();
-            }
+    /// Returns the number of idle threads in the thread pool.
+    #[allow(dead_code)]
+    pub fn get_idle_threads(&self) -> usize {
+        self.idle_threads.lock().unwrap().len()
+    }
 
-            f();
+    /// Executes a closure on a thread from the thread pool. Does not block or return any result.
+    fn execute<F>(&'static self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        if let Some(sender) = self.idle_threads.lock().unwrap().pop() {
+            sender.send(Box::new(f)).unwrap();
+        } else {
+            // channel for receiving future work on this thread
+            let (tx_schedule, rx_schedule) = channel();
 
-            loop {
-                if let Ok(mut i) = IDLE_THREADS.lock() {
-                    // stick back into list of idle threads if there aren't more than
-                    // the number of cpus already there.
-                    if i.len() > *NUM_CPUS {
-                        // just exits the thread
+            let priority = self.priority;
+            let idle_threads = &self.idle_threads;
+
+            spawn(move || {
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                match priority {
+                    LeptonThreadPriority::Low => thread_priority::set_current_thread_priority(
+                        thread_priority::ThreadPriority::Min,
+                    )
+                    .unwrap(),
+                    LeptonThreadPriority::Normal => {}
+                    LeptonThreadPriority::High => thread_priority::set_current_thread_priority(
+                        thread_priority::ThreadPriority::Max,
+                    )
+                    .unwrap(),
+                }
+
+                f();
+
+                loop {
+                    if let Ok(mut i) = idle_threads.lock() {
+                        // stick back into list of idle threads if there aren't more than
+                        // the number of cpus already there.
+                        if i.len() > *NUM_CPUS {
+                            // just exits the thread
+                            break;
+                        }
+                        i.push(tx_schedule.clone());
+                    } else {
                         break;
                     }
-                    i.push(tx_schedule.clone());
-                } else {
-                    break;
-                }
 
-                if let Ok(f) = rx_schedule.recv() {
-                    f();
-                } else {
-                    // channel broken, exit thread
-                    break;
+                    if let Ok(f) = rx_schedule.recv() {
+                        f();
+                    } else {
+                        // channel broken, exit thread
+                        break;
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 }
+
+/// A default instance of the `SimpleThreadPool` that can be used for encoding and decoding operations.
+pub static DEFAULT_THREAD_POOL: SimpleThreadPool =
+    SimpleThreadPool::new(LeptonThreadPriority::Normal);
+
+impl LeptonThreadPool for SimpleThreadPool {
+    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>) {
+        self.execute(f);
+    }
+}
+
+static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelism().unwrap().get());
 
 #[test]
 fn test_threadpool() {
@@ -92,7 +140,7 @@ fn test_threadpool() {
 
     for _i in 0usize..100 {
         let aref = a.clone();
-        execute(move || {
+        DEFAULT_THREAD_POOL.execute(move || {
             aref.fetch_add(1, Ordering::AcqRel);
         });
     }
@@ -101,5 +149,5 @@ fn test_threadpool() {
         thread::yield_now();
     }
 
-    println!("Idle threads: {}", get_idle_threads());
+    println!("Idle threads: {}", DEFAULT_THREAD_POOL.get_idle_threads());
 }

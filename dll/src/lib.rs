@@ -7,11 +7,11 @@
 #![forbid(trivial_numeric_casts)]
 #![forbid(unused_crate_dependencies)]
 
-use std::io::Cursor;
+use std::{io::Cursor, sync::LazyLock};
 
 use lepton_jpeg::{
     catch_unwind_result, decode_lepton, encode_lepton, get_git_version, EnabledFeatures, ExitCode,
-    LeptonFileReaderContext,
+    LeptonFileReaderContext, LeptonThreadPool, DEFAULT_THREAD_POOL,
 };
 use rstest::rstest;
 
@@ -33,6 +33,25 @@ fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
     // always null terminated
     target_error_string[copy_len] = 0;
 }
+
+struct RayonThreadPool {
+    pool: LazyLock<rayon::ThreadPool>,
+}
+
+impl LeptonThreadPool for RayonThreadPool {
+    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>) {
+        self.pool.spawn(f);
+    }
+}
+
+static RAYON_THREAD_POOL: RayonThreadPool = RayonThreadPool {
+    pool: LazyLock::new(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8) // default to 8 threads, can be adjusted
+            .build()
+            .unwrap()
+    }),
+};
 
 #[test]
 fn test_copy_cstring_utf8_to_buffer() {
@@ -61,6 +80,29 @@ pub unsafe extern "C" fn WrapperCompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
+    WrapperCompressImage2(
+        input_buffer,
+        input_buffer_size,
+        output_buffer,
+        output_buffer_size,
+        number_of_threads as u32,
+        result_size,
+        0,
+    )
+}
+
+/// C ABI interface for compressing image, exposed from DLL
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn WrapperCompressImage2(
+    input_buffer: *const u8,
+    input_buffer_size: u64,
+    output_buffer: *mut u8,
+    output_buffer_size: u64,
+    number_of_threads: u32,
+    result_size: *mut u64,
+    flags: u32,
+) -> i32 {
     match catch_unwind_result(|| {
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
 
@@ -71,10 +113,16 @@ pub unsafe extern "C" fn WrapperCompressImage(
 
         let mut features = EnabledFeatures::compat_lepton_vector_write();
         if number_of_threads > 0 {
-            features.max_threads = number_of_threads as u32;
+            features.max_threads = number_of_threads;
         }
 
-        let _metrics = encode_lepton(&mut reader, &mut writer, &features)?;
+        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+            &RAYON_THREAD_POOL
+        } else {
+            &DEFAULT_THREAD_POOL
+        };
+
+        let _metrics = encode_lepton(&mut reader, &mut writer, &features, thread_pool)?;
 
         *result_size = writer.position().into();
 
@@ -100,14 +148,14 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
-    return WrapperDecompressImageEx(
+    return WrapperDecompressImage3(
         input_buffer,
         input_buffer_size,
         output_buffer,
         output_buffer_size,
-        number_of_threads,
+        number_of_threads as u32,
         result_size,
-        false, // use_16bit_dc_estimate
+        0,
     );
 }
 
@@ -125,6 +173,33 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
+    WrapperDecompressImage3(
+        input_buffer,
+        input_buffer_size,
+        output_buffer,
+        output_buffer_size,
+        number_of_threads as u32,
+        result_size,
+        if use_16bit_dc_estimate {
+            DECOMPRESS_USE_16BIT_DC_ESTIMATE
+        } else {
+            0
+        },
+    )
+}
+
+/// C ABI interface for decompressing image, exposed from DLL.
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn WrapperDecompressImage3(
+    input_buffer: *const u8,
+    input_buffer_size: u64,
+    output_buffer: *mut u8,
+    output_buffer_size: u64,
+    number_of_threads: u32,
+    result_size: *mut u64,
+    flags: u32,
+) -> i32 {
     match catch_unwind_result(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
 
@@ -137,13 +212,19 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
         // (hence the two parameters in features).
 
         let mut enabled_features = EnabledFeatures {
-            use_16bit_dc_estimate: use_16bit_dc_estimate,
+            use_16bit_dc_estimate: (flags & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0),
             ..EnabledFeatures::compat_lepton_vector_read()
         };
 
         if number_of_threads > 0 {
-            enabled_features.max_threads = number_of_threads as u32;
+            enabled_features.max_threads = number_of_threads;
         }
+
+        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+            &RAYON_THREAD_POOL
+        } else {
+            &DEFAULT_THREAD_POOL
+        };
 
         loop {
             let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -152,7 +233,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
             let mut reader = Cursor::new(input);
             let mut writer = Cursor::new(output);
 
-            match decode_lepton(&mut reader, &mut writer, &mut enabled_features) {
+            match decode_lepton(&mut reader, &mut writer, &mut enabled_features, thread_pool) {
                 Ok(_) => {
                     *result_size = writer.position().into();
                     return Ok(());
@@ -200,16 +281,22 @@ pub unsafe extern "C" fn get_version(
 }
 
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
+const USE_RAYON_THREAD_POOL: u32 = 2;
 
 #[no_mangle]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
-    let enabled_features = if features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0 {
-        EnabledFeatures::compat_lepton_vector_read()
-    } else {
-        EnabledFeatures::compat_lepton_scalar_read()
+    let enabled_features = EnabledFeatures {
+        use_16bit_dc_estimate: (features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0),
+        ..EnabledFeatures::compat_lepton_vector_read()
     };
 
-    let context = Box::new(LeptonFileReaderContext::new(enabled_features));
+    let thread_pool: &'static dyn LeptonThreadPool = if features & USE_RAYON_THREAD_POOL != 0 {
+        &RAYON_THREAD_POOL
+    } else {
+        &DEFAULT_THREAD_POOL
+    };
+
+    let context = Box::new(LeptonFileReaderContext::new(enabled_features, thread_pool));
     Box::into_raw(context) as *mut std::ffi::c_void
 }
 
@@ -296,13 +383,14 @@ fn extern_interface() {
     let mut result_size: u64 = 0;
 
     unsafe {
-        let retval = WrapperCompressImage(
+        let retval = WrapperCompressImage2(
             input[..].as_ptr(),
             input.len() as u64,
             compressed[..].as_mut_ptr(),
             compressed.len() as u64,
             8,
             (&mut result_size) as *mut u64,
+            0,
         );
 
         assert_eq!(retval, 0);
@@ -313,13 +401,14 @@ fn extern_interface() {
 
     let mut original_size: u64 = 0;
     unsafe {
-        let retval = WrapperDecompressImage(
+        let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
             result_size,
             original[..].as_mut_ptr(),
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
+            0,
         );
 
         assert_eq!(retval, 0);
@@ -329,8 +418,11 @@ fn extern_interface() {
 }
 
 /// tests the chunked decompression interface
-#[test]
-fn extern_interface_decompress_chunked() {
+#[rstest]
+fn extern_interface_decompress_chunked(
+    #[values(DECOMPRESS_USE_16BIT_DC_ESTIMATE,DECOMPRESS_USE_16BIT_DC_ESTIMATE|USE_RAYON_THREAD_POOL)]
+    flags: u32,
+) {
     use std::io::Read;
 
     let input = read_file("slrcity", ".lep");
@@ -338,7 +430,7 @@ fn extern_interface_decompress_chunked() {
     let mut output = Vec::new();
 
     unsafe {
-        let context = create_decompression_context(1);
+        let context = create_decompression_context(flags);
 
         let mut file_read = Cursor::new(input);
         let mut input_buffer = [0u8; 7];
@@ -398,13 +490,14 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
     let mut result_size: u64 = 0;
 
     unsafe {
-        let retval = WrapperCompressImage(
+        let retval = WrapperCompressImage2(
             input[..].as_ptr(),
             input.len() as u64,
             compressed[..].as_mut_ptr(),
             compressed.len() as u64,
             8,
             (&mut result_size) as *mut u64,
+            0,
         );
 
         assert_eq!(retval, file.1.as_integer_error_code());
@@ -425,13 +518,14 @@ fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
 
     let mut decompressed_size: u64 = 0;
     unsafe {
-        let retval = WrapperDecompressImage(
+        let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
             compressed.len() as u64,
             decompressed[..].as_mut_ptr(),
             decompressed.len() as u64,
             8,
             (&mut decompressed_size) as *mut u64,
+            0,
         );
 
         assert_eq!(retval, 0);
@@ -497,14 +591,14 @@ fn verify_decode_external_interface_with_use_16bit_dc_estimate(
 
     let mut original_size: u64 = 0;
     unsafe {
-        let retval = WrapperDecompressImageEx(
+        let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
             compressed.len() as u64,
             original[..].as_mut_ptr(),
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
-            true, // use_16bit_dc_estimate
+            DECOMPRESS_USE_16BIT_DC_ESTIMATE,
         );
 
         assert_eq!(retval, 0);
@@ -525,13 +619,14 @@ fn verify_extern_16bit_math_retry() {
 
     let mut original_size: u64 = 0;
     unsafe {
-        let retval = WrapperDecompressImage(
+        let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
             compressed.len() as u64,
             original[..].as_mut_ptr(),
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
+            0,
         );
 
         assert_eq!(retval, 0);
