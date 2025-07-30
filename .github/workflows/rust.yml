@@ -17,9 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: rust-lang/setup-rust@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+        toolchain: stable
           targets: wasm32-wasip1,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
           components: rustfmt,clippy
 
@@ -54,9 +54,8 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Rust
-        uses: rust-lang/setup-rust@v1
-        with:
-          rust-version: stable
+        uses: dtolnay/rust-toolchain@stable
+        toolchain: stable
 
       - name: Publish to crates.io
         env:
