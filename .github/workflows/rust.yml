@@ -44,6 +44,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+
+    - name: Get commit of tag and main
+      id: check
+      run: |
+        TAG_COMMIT=$(git rev-parse ${{ github.ref }})
+        MAIN_COMMIT=$(git rev-parse origin/main)
+
+        echo "Tag points to: $TAG_COMMIT"
+        echo "Main branch is at: $MAIN_COMMIT"
+
+        if [ "$TAG_COMMIT" != "$MAIN_COMMIT" ]; then
+          echo "❌ Tag is not at the tip of main, not publishing"
+          exit 1
+        fi
+
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: stable
