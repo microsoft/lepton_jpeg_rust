@@ -285,10 +285,9 @@ const USE_RAYON_THREAD_POOL: u32 = 2;
 
 #[no_mangle]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
-    let enabled_features = if features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0 {
-        EnabledFeatures::compat_lepton_vector_read()
-    } else {
-        EnabledFeatures::compat_lepton_scalar_read()
+    let enabled_features = EnabledFeatures {
+        use_16bit_dc_estimate: (features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0),
+        ..EnabledFeatures::compat_lepton_vector_read()
     };
 
     let thread_pool: &'static dyn LeptonThreadPool = if features & USE_RAYON_THREAD_POOL != 0 {
