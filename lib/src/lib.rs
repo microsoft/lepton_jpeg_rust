@@ -4,7 +4,16 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-#![doc = include_str!("../../README.md")]
+//! A lossless JPEG compressor with precise bit-for-bit recovery, supporting both baseline and progressive JPEGs.
+//! Achieves compression savings of around 22%, making it suitable for cold cloud storage use cases.
+//!
+//! This crate is a Rust port of Dropbox’s original [lepton](https://github.com/dropbox/lepton) JPEG compression tool.
+//! It retains the performance characteristics of the C++ version while benefiting from Rust’s memory safety guarantees.
+//! All JPEG content—including metadata and even malformed segments—is preserved accurately.
+//!
+//! The original C++ codebase has been deprecated by Dropbox. This Rust implementation incorporates
+//! an exhaustive security review of the original, making it a safer and more maintainable alternative.
+
 // Don't allow any unsafe code by default. Since this code has to potentially deal with
 // badly/maliciously formatted images, we want this extra level of safety.
 #![forbid(unsafe_code)]
