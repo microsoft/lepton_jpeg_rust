@@ -1,10 +1,8 @@
-name: Rust CI and Publish
+name: Rust
 
 on:
   push:
     branches: [ "main" ]
-    tags:
-      - "v*.*.*"  # Trigger publish job on version tags like v1.2.3
   pull_request:
 
 env:
@@ -12,6 +10,7 @@ env:
 
 jobs:
   build:
+
     runs-on: windows-latest
 
     steps:
@@ -37,33 +36,4 @@ jobs:
     - name: Run tests
       run: cargo test --locked --workspace
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Get commit of tag and main
-      id: check
-      run: |
-        TAG_COMMIT=$(git rev-parse ${{ github.ref }})
-        MAIN_COMMIT=$(git rev-parse origin/main)
-
-        echo "Tag points to: $TAG_COMMIT"
-        echo "Main branch is at: $MAIN_COMMIT"
-
-        if [ "$TAG_COMMIT" != "$MAIN_COMMIT" ]; then
-          echo "❌ Tag is not at the tip of main, not publishing"
-          exit 1
-        fi
-
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CRATE_PUBLISH }}
-      run: cargo publish --verbose --package lepton_jpeg
+      
