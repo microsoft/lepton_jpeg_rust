@@ -64,4 +64,4 @@ jobs:
     - name: Publish to crates.io
       env:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CRATE_PUBLISH }}
-      run: cargo publish --verbose
+      run: cargo publish --verbose --package lepton_jpeg
