@@ -376,8 +376,6 @@ fn read_first_scan<R: BufRead + Seek>(
         }
     }
 
-    bit_reader.undo_read_ahead();
-
     Ok(())
 }
 
