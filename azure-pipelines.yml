@@ -1,135 +1,199 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# Documentation:  https://aka.ms/obpipelines
 
 trigger:
-- main
+  branches:
+    include:
+      - main
 
-pool:
-  name: Azure Pipelines
-  vmImage: windows-latest
+pr:
+  branches:
+    include:
+      - main
+      
+parameters:
+  - name: debug
+    displayName: Enable debug output
+    type: boolean
+    default: false
+  - name: official
+    displayName: Whether to build Official or NonOfficial
+    type: string
+    default: NonOfficial
+    values:
+      - NonOfficial
+      - Official
 
-steps:
-- task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
-  displayName: 'Install Rust '
-  inputs:
-    rustVersion: 'ms-1.85'
-    additionalTargets: 'i686-pc-windows-msvc'
-    toolchainFeed: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustTools/nuget/v3/index.json
-    cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
+variables:
+  system.debug: ${{parameters.debug}}
+  WindowsContainerImage: onebranch.azurecr.io/windows/ltsc2022/vse2022:latest
+  # CDP_DEFINITION_BUILD_COUNT is needed for onebranch.pipeline.version task.
+  # See: https://aka.ms/obpipelines/versioning
+  CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
+  # LOAD BEARING - the vpack task fails without these
+  ROOT: $(Build.SourcesDirectory)
+  REPOROOT: $(Build.SourcesDirectory)
+  OUTPUTROOT: $(REPOROOT)\out
+  NUGET_XMLDOC_MODE: none
 
-- script: |
-   cargo build --workspace --locked 2>&1
-   
-  displayName: 'Build debug'
+resources:
+  repositories:
+    - repository: GovernedTemplates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
 
-- script: |
-   cargo install junit-test
-   junit-test
-   copy junit.xml $(System.DefaultWorkingDirectory)\TEST-rust.xml
-  displayName: 'Test debug'
+extends:
+  template: v2/Microsoft.${{parameters.official}}.yml@GovernedTemplates
+  parameters:
+    featureFlags:
+      WindowsHostVersion:
+        Version: 2022
+        Network: R1
+    platform:
+      name: windows_undocked
+      product: lepton_jpeg_rust
+    # https://aka.ms/obpipelines/cloudvault
+    cloudvault:
+      enabled: false
+    # https://aka.ms/obpipelines/sdl
+    globalSdl:
+      binskim:
+        # > Due to some legacy reasons, 1ES PT is scanning full sources directory
+        # > for BinSkim tool instead of just scanning the output directory [...]
+        scanOutputDirectoryOnly: true
+      isNativeCode: true
+      tsa:
+        enabled: ${{eq(parameters.official, 'Official')}}
+        configFile: "$(Build.SourcesDirectory)/.pipelines/tsa.json"
+    stages:
+      # Our Build stage will build all three targets in one job, so we don't need
+      # to repeat most of the boilerplate work in three separate jobs.
+      - stage: Build
+        jobs:
+          - job: Windows
+            pool:
+              type: windows
+            variables:
+            steps:
+            - task: ssplat.rust-build-release-tools.rust-installer-task.RustInstaller@1
+              displayName: 'Install Rust '
+              inputs:
+                rustVersion: 'ms-1.85'
+                additionalTargets: 'i686-pc-windows-msvc'
+                toolchainFeed: https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustTools/nuget/v3/index.json
+                cratesIoFeedOverride: sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/
 
-- task: PublishTestResults@2
-  displayName: 'Publish Test Results **/TEST-*.xml'
-  inputs:
-    mergeTestResults: true
+            - script: |
+              cargo build --workspace --locked 2>&1
+              
+              displayName: 'Build debug'
 
-- script: |
-   set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
-   cargo build --workspace --locked --release 2>&1
-   copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
-   copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
-   copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
-   copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
-   set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
-   cargo build --workspace --locked --release 2>&1
+            - script: |
+              cargo install junit-test
+              junit-test
+              copy junit.xml $(System.DefaultWorkingDirectory)\TEST-rust.xml
+              displayName: 'Test debug'
 
-  displayName: 'Build Release'
+            - task: PublishTestResults@2
+              displayName: 'Publish Test Results **/TEST-*.xml'
+              inputs:
+                mergeTestResults: true
 
-- task: UseDotNet@2
-  inputs:
-    packageType: 'sdk'
-    version: '6.x'
+            - script: |
+              set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
+              cargo build --workspace --locked --release 2>&1
+              copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
+              copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
+              copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
+              copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
+              set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
+              cargo build --workspace --locked --release 2>&1
 
-- task: EsrpCodeSigning@5
-  inputs:
-    ConnectedServiceName: 'ESRP CodeSigningV2-OneDrive Service'
-    AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309' 
-    AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2' 
-    AuthAKVName: 'ODSP-ESRP' 
-    AuthCertName: 'ODSP-ESRP-Auth-V2' 
-    AuthSignCertName: 'CodeSigningCertificate'
-    FolderPath: '$(Build.SourcesDirectory)'
-    Pattern: '
-      target\debug\lepton_jpeg.dll,
-      target\debug\lepton_jpeg_util.exe,
-      target\release\lepton_jpeg.dll,
-      target\release\lepton_jpeg_avx2.dll,
-      target\release\lepton_jpeg_util.exe,
-      target\release\lepton_jpeg_util_avx2.exe'
-    signConfigType: 'inlineSignParams'
-    inlineOperation: |
-      [
-       {
-        "KeyCode": "CP-401405",
-        "OperationCode": "SigntoolSign",
-        "ToolName": "sign",
-        "ToolVersion": "1.0",
-        "Parameters": {
-         "OpusName": "Microsoft",
-         "OpusInfo": "https://www.microsoft.com",
-         "FileDigest": "/fd SHA256",
-         "PageHash": "/NPH",
-         "TimeStamp": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
-        }
-       },
-       {
-        "KeyCode": "CP-401405",
-        "OperationCode": "SigntoolVerify",
-        "ToolName": "sign",
-        "ToolVersion": "1.0",
-        "Parameters": {}
-       }
-      ]
-    SessionTimeout: '60'
-    MaxConcurrency: '50'
-    MaxRetryAttempts: '5'
-    PendingAnalysisWaitTimeoutMinutes: '5'
+              displayName: 'Build Release'
 
-- task: CopyFiles@2
-  displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
-  inputs:
-    SourceFolder: '$(Build.SourcesDirectory)'
-    Contents: |
-     target\debug\?(*.dll|*.exe|*.pdb)
-     target\release\?(*.dll|*.exe|*.pdb)
-     
-    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+            - task: UseDotNet@2
+              inputs:
+                packageType: 'sdk'
+                version: '6.x'
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Artifact'
-  inputs:
-    ArtifactName: 'drop_lepton_jpeg_rust'
+            - task: EsrpCodeSigning@5
+              inputs:
+                ConnectedServiceName: 'ESRP CodeSigningV2-OneDrive Service'
+                AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309' 
+                AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2' 
+                AuthAKVName: 'ODSP-ESRP' 
+                AuthCertName: 'ODSP-ESRP-Auth-V2' 
+                AuthSignCertName: 'CodeSigningCertificate'
+                FolderPath: '$(Build.SourcesDirectory)'
+                Pattern: '
+                  target\debug\lepton_jpeg.dll,
+                  target\debug\lepton_jpeg_util.exe,
+                  target\release\lepton_jpeg.dll,
+                  target\release\lepton_jpeg_avx2.dll,
+                  target\release\lepton_jpeg_util.exe,
+                  target\release\lepton_jpeg_util_avx2.exe'
+                signConfigType: 'inlineSignParams'
+                inlineOperation: |
+                  [
+                  {
+                    "KeyCode": "CP-401405",
+                    "OperationCode": "SigntoolSign",
+                    "ToolName": "sign",
+                    "ToolVersion": "1.0",
+                    "Parameters": {
+                    "OpusName": "Microsoft",
+                    "OpusInfo": "https://www.microsoft.com",
+                    "FileDigest": "/fd SHA256",
+                    "PageHash": "/NPH",
+                    "TimeStamp": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+                    }
+                  },
+                  {
+                    "KeyCode": "CP-401405",
+                    "OperationCode": "SigntoolVerify",
+                    "ToolName": "sign",
+                    "ToolVersion": "1.0",
+                    "Parameters": {}
+                  }
+                  ]
+                SessionTimeout: '60'
+                MaxConcurrency: '50'
+                MaxRetryAttempts: '5'
+                PendingAnalysisWaitTimeoutMinutes: '5'
 
-- task: PublishSymbols@2
-  displayName: 'Publish symbols copy'
-  inputs:
-    SymbolsFolder: '$(Build.ArtifactStagingDirectory)'
-    SearchPattern: '**\*.pdb'
-    SymbolServerType: TeamServices
+            - task: CopyFiles@2
+              displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
+              inputs:
+                SourceFolder: '$(Build.SourcesDirectory)'
+                Contents: |
+                target\debug\?(*.dll|*.exe|*.pdb)
+                target\release\?(*.dll|*.exe|*.pdb)
+                
+                TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
-- task: NuGetCommand@2
-  displayName: 'NuGet pack'
-  inputs:
-    command: pack
-    packagesToPack: package/Lepton.Jpeg.Rust.nuspec
+            - task: PublishBuildArtifacts@1
+              displayName: 'Publish Artifact'
+              inputs:
+                ArtifactName: 'drop_lepton_jpeg_rust'
 
-- task: NuGetCommand@2
-  displayName: 'NuGet push'
-  inputs:
-    command: push
-    packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
-    publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
-    allowPackageConflicts: true
-  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
+            - task: PublishSymbols@2
+              displayName: 'Publish symbols copy'
+              inputs:
+                SymbolsFolder: '$(Build.ArtifactStagingDirectory)'
+                SearchPattern: '**\*.pdb'
+                SymbolServerType: TeamServices
+
+            - task: NuGetCommand@2
+              displayName: 'NuGet pack'
+              inputs:
+                command: pack
+                packagesToPack: package/Lepton.Jpeg.Rust.nuspec
+
+            - task: NuGetCommand@2
+              displayName: 'NuGet push'
+              inputs:
+                command: push
+                packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
+                publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
+                allowPackageConflicts: true
+              condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
