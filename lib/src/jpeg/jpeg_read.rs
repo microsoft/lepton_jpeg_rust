@@ -166,6 +166,17 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             // even if early EOF was set to true.
             end_scan_position = reader.seek(SeekFrom::Current(-2))?.try_into().unwrap();
 
+            // make sure we don't return any partitions that are beyond the
+            // adjusted end position
+            for i in 0..partitions.len() {
+                if partitions[i].0 >= end_scan_position {
+                    return err_exit_code(
+                        ExitCode::UnsupportedJpeg,
+                        "Partition conflicts with garbage data",
+                    );
+                }
+            }
+
             rinfo.garbage_data.resize(2, 0);
             reader.read_exact(&mut rinfo.garbage_data)?;
         }
@@ -364,6 +375,7 @@ fn read_first_scan<R: BufRead + Seek>(
             sta = JpegDecodeStatus::DecodeInProgress;
         }
     }
+
     Ok(())
 }
 

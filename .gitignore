@@ -7,3 +7,6 @@
 
 # VSCode
 .vs/
+
+# don't checkin lock file for fuzz as it should get autogen
+fuzz/Cargo.lock
