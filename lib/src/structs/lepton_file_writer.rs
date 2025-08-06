@@ -12,7 +12,6 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use default_boxed::DefaultBoxed;
 use log::info;
 
-use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JpegHeader;
@@ -21,19 +20,30 @@ use crate::jpeg::truncate_components::TruncateComponents;
 use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
-use crate::structs::lepton_file_reader::decode_lepton_file;
+use crate::structs::lepton_file_reader::decode_lepton;
 use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
+use crate::{consts::*, LeptonThreadPool, StreamPosition};
 
-/// reads a jpeg and writes it out as a lepton file
-pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
+/// Reads a jpeg and writes it out as a lepton file
+///
+/// # Parameters
+/// - `reader`: A buffered reader from which the JPEG data is read.
+/// - `writer`: A writer to which the Lepton-encoded data is written.
+/// - `enabled_features`: A set of toggles for enabling/disabling encoding features/restrictions.
+/// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
+/// can point to `DEFAULT_THREAD_POOL`.
+pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh| {})?;
+    let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
+
+    let start_position = writer.position();
 
     lp.write_lepton_header(writer, enabled_features).context()?;
 
@@ -44,10 +54,11 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
         &lp.thread_handoff[..],
         image_data,
         enabled_features,
+        thread_pool,
     )
     .context()?;
 
-    let final_file_size = writer.stream_position()? + 4;
+    let final_file_size = (writer.position() - start_position) + 4;
 
     writer
         .write_u32::<LittleEndian>(final_file_size as u32)
@@ -58,9 +69,10 @@ pub fn encode_lepton_wrapper<R: BufRead + Seek, W: Write + Seek>(
 
 /// Encodes JPEG as compressed Lepton format, verifies roundtrip in buffer. Requires everything to be buffered
 /// since we need to pass through the data multiple times
-pub fn encode_lepton_wrapper_verify(
+pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
@@ -70,7 +82,7 @@ pub fn encode_lepton_wrapper_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton_wrapper(&mut reader, &mut writer, &enabled_features).context()?;
+        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -81,8 +93,9 @@ pub fn encode_lepton_wrapper_verify(
 
     let mut c = enabled_features.clone();
 
-    metrics
-        .merge_from(decode_lepton_file(&mut verifyreader, &mut verify_buffer, &mut c).context()?);
+    metrics.merge_from(
+        decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c, thread_pool).context()?,
+    );
 
     if input_data.len() != verify_buffer.len() {
         return err_exit_code(
@@ -114,9 +127,11 @@ pub fn encode_lepton_wrapper_verify(
 pub fn read_jpeg<R: BufRead + Seek>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    callback: fn(&JpegHeader),
+    callback: fn(&JpegHeader, &[u8]),
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lp = LeptonHeader::default_boxed();
+
+    let stream_start_position = reader.stream_position().context()?;
 
     get_git_revision(&mut lp);
 
@@ -140,7 +155,9 @@ pub fn read_jpeg<R: BufRead + Seek>(
         };
 
         thread_handoff.push(ThreadHandoff {
-            segment_offset_in_file: (*segment_offset).try_into().unwrap(),
+            segment_offset_in_file: (*segment_offset - stream_start_position)
+                .try_into()
+                .unwrap(),
             luma_y_start: r.luma_y_start,
             luma_y_end: r.luma_y_end,
             overhang_byte: r.overhang_byte,
@@ -163,7 +180,7 @@ pub fn read_jpeg<R: BufRead + Seek>(
     let merged_handoffs =
         split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
     lp.thread_handoff = merged_handoffs;
-    lp.jpeg_file_size = reader.stream_position().context()? as u32;
+    lp.jpeg_file_size = (reader.stream_position().context()? - stream_start_position) as u32;
 
     if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
         return err_exit_code(
@@ -192,6 +209,7 @@ static GIT_VERSION: &str = git_version::git_version!(
     fallback = "0"
 );
 
+/// Returns the git version used to build this libary as a static string.
 pub fn get_git_version() -> &'static str {
     GIT_VERSION
 }
@@ -214,13 +232,14 @@ fn get_git_revision(lp: &mut LeptonHeader) {
 }
 
 /// runs the encoding threads and returns the total amount of CPU time consumed (including worker threads)
-fn run_lepton_encoder_threads<W: Write + Seek>(
+fn run_lepton_encoder_threads<W: Write>(
     jpeg_header: &JpegHeader,
     colldata: &TruncateComponents,
     writer: &mut W,
     thread_handoffs: &[ThreadHandoff],
     image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -241,6 +260,7 @@ fn run_lepton_encoder_threads<W: Write + Seek>(
     let mut thread_results = multiplex_write(
         writer,
         thread_handoffs.len(),
+        thread_pool,
         move |thread_writer, thread_id| {
             let cpu_time = CpuTimeMeasure::new();
 
@@ -373,6 +393,7 @@ fn test_slrcity() {
 #[cfg(test)]
 fn test_file(filename: &str) {
     use crate::structs::lepton_file_reader::read_file;
+    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
 
     let original = read_file(filename, ".jpg");
 
@@ -381,10 +402,11 @@ fn test_file(filename: &str) {
 
     let mut output = Vec::new();
 
-    let _ = encode_lepton_wrapper(
+    let _ = encode_lepton(
         &mut Cursor::new(&original),
         &mut Cursor::new(&mut output),
         &enabled_features,
+        &DEFAULT_THREAD_POOL,
     )
     .unwrap();
 
@@ -396,7 +418,13 @@ fn test_file(filename: &str) {
 
     let mut recreate = Vec::new();
 
-    decode_lepton_file(&mut Cursor::new(&output), &mut recreate, &enabled_features).unwrap();
+    decode_lepton(
+        &mut Cursor::new(&output),
+        &mut recreate,
+        &enabled_features,
+        &DEFAULT_THREAD_POOL,
+    )
+    .unwrap();
 
     assert_eq!(original.len(), recreate.len());
     assert!(original == recreate);

@@ -131,10 +131,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "deranged"
-version = "0.4.0"
+name = "either"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "equivalent"
@@ -314,19 +314,17 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lepton_jpeg"
-version = "0.5.0"
+version = "0.5.3"
 dependencies = [
  "bytemuck",
  "byteorder",
  "cpu-time",
  "default-boxed",
- "deranged 0.4.0",
  "flate2",
  "git-version",
  "log",
  "rand",
  "rand_chacha",
- "rayon-core",
  "siphasher",
  "thread-priority",
  "wide",
@@ -334,15 +332,16 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_dll"
-version = "0.5.0"
+version = "0.5.3"
 dependencies = [
  "lepton_jpeg",
+ "rayon",
  "rstest",
 ]
 
 [[package]]
 name = "lepton_jpeg_root"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "lepton_jpeg",
  "rand",
@@ -353,12 +352,11 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_util"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "lepton_jpeg",
  "log",
  "pico-args",
- "rayon-core",
  "simple_logger",
 ]
 
@@ -492,6 +490,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "rayon"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
+dependencies = [
+ "either",
+ "rayon-core",
 ]
 
 [[package]]
@@ -688,7 +696,7 @@ version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e7868883861bd0e56d9ac6efcaaca0d6d5d82a2a7ec8209ff492c07cf37b21"
 dependencies = [
- "deranged 0.3.11",
+ "deranged",
  "itoa",
  "libc",
  "num-conv",

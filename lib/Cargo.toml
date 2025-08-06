@@ -1,13 +1,13 @@
 [package]
 name = "lepton_jpeg"
-version = "0.5.0"
+version = "0.5.3"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 # requires scoped threads and IsTerminal
 rust-version = "1.85"
 description = "Rust port of the Lepton JPEG compression library"
-readme = "README.md"
+readme = "../README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
 license = "Apache-2.0"
 
@@ -19,7 +19,6 @@ categories = ["multimedia::images", "multimedia::encoding"]
 default = []
 compression_stats = []
 detailed_tracing = []
-use_rayon = ["dep:rayon-core"]
 
 [dependencies]
 bytemuck = "1"
@@ -30,7 +29,6 @@ wide = "0.7"
 log = "0.4"
 git-version = "0.3"
 deranged = "0.4"
-rayon-core = { version = "1", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpu-time = "1.0"

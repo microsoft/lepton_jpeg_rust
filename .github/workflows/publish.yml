@@ -1,0 +1,67 @@
+name: Publish Crate
+
+on:
+  push:
+    tags:
+      - "v*.*.*"  # Triggers only for version tag pushes
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code with full history
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Needed to compare commits and access tag history
+
+    - name: Ensure tag is at tip of main
+      id: verify_tag_commit
+      run: |
+        echo "🔍 Verifying tag points to main branch tip..."
+        git fetch origin main
+
+        TAG_COMMIT=$(git rev-parse ${{ github.ref }})
+        MAIN_COMMIT=$(git rev-parse origin/main)
+
+        echo "Tag commit:  $TAG_COMMIT"
+        echo "Main commit: $MAIN_COMMIT"
+
+        if [ "$TAG_COMMIT" != "$MAIN_COMMIT" ]; then
+          echo "❌ Tag is not at tip of main. Aborting."
+          exit 1
+        fi
+        echo "✅ Tag is at tip of main."
+
+    - name: Extract tag version
+      id: tag_version
+      run: |
+        echo "TAG_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+    - name: Read version from Cargo.toml
+      id: cargo_version
+      run: |
+        CARGO_VERSION=$(grep '^version\s*=' lib/Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+        echo "CARGO_VERSION=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Check tag version matches Cargo.toml
+      run: |
+        echo "🔍 Comparing tag and Cargo.toml versions..."
+        echo "Tag:          ${{ steps.tag_version.outputs.TAG_VERSION }}"
+        echo "Cargo.toml:   ${{ steps.cargo_version.outputs.CARGO_VERSION }}"
+
+        if [ "${{ steps.tag_version.outputs.TAG_VERSION }}" != "${{ steps.cargo_version.outputs.CARGO_VERSION }}" ]; then
+          echo "❌ Version mismatch: tag does not match Cargo.toml"
+          exit 1
+        fi
+        echo "✅ Tag version matches Cargo.toml."
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Publish to crates.io
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CRATE_PUBLISH }}
+      run: cargo publish --verbose --package lepton_jpeg

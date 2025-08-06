@@ -13,7 +13,6 @@ use default_boxed::DefaultBoxed;
 use log::info;
 use log::warn;
 
-use crate::consts::*;
 use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
@@ -27,13 +26,22 @@ use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
+use crate::{consts::*, LeptonThreadPool};
 
-/// reads a lepton file and writes it out as a jpeg
-/// wraps LeptonFileReader
-pub fn decode_lepton_file<R: BufRead, W: Write>(
+/// Reads an entire lepton file and writes it out as a JPEG
+///
+/// # Parameters
+///
+/// - `reader`: A buffered reader from which the Lepton-encoded data is read.
+/// - `writer`: A writer to which the decoded JPEG image is written.
+/// - `enabled_features`: A set of toggles for enabling/disabling decoding features/restrictions.
+/// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
+/// can point to `DEFAULT_THREAD_POOL`.
+pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let mut decoder = LeptonFileReader::new(enabled_features.clone());
 
@@ -42,7 +50,7 @@ pub fn decode_lepton_file<R: BufRead, W: Write>(
         let buffer = reader.fill_buf().context()?;
 
         done = decoder
-            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX)
+            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX, thread_pool)
             .context()?;
 
         let amt = buffer.len();
@@ -58,6 +66,7 @@ pub fn decode_lepton_file<R: BufRead, W: Write>(
 pub fn decode_lepton_file_image<R: BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
+    thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lh = LeptonHeader::default_boxed();
     let mut enabled_features = enabled_features.clone();
@@ -83,6 +92,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
         &lh,
         &enabled_features,
         4,
+        thread_pool,
         |_thread_handoff, image_data, _, _| {
             // just return the image data directly to be merged together
             return Ok(image_data);
@@ -175,6 +185,7 @@ impl LeptonFileReader {
         input_complete: bool,
         output: &mut impl Write,
         mut output_max_size: usize,
+        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
@@ -215,7 +226,8 @@ impl LeptonFileReader {
                 }
                 DecoderState::CMP() => {
                     if let Some(v) = in_buffer.take(3, 0) {
-                        self.state = Self::process_cmp(v, &self.lh, &self.enabled_features)?;
+                        self.state =
+                            Self::process_cmp(v, &self.lh, &self.enabled_features, thread_pool)?;
                     }
                 }
 
@@ -257,6 +269,30 @@ impl LeptonFileReader {
                             .to_vec(),
                     );
                     results.push(mem::take(&mut self.lh.rinfo.garbage_data));
+
+                    // find the total size that we have generated
+                    let total_length = results.iter().map(|x| x.len()).sum::<usize>();
+
+                    // now go back and shorted the results if they are too long until we have
+                    // the correct size. This consolidates the truncation logic into a single place.
+                    // Multiple results could be truncated, so we need to loop
+                    // and remove the last result until we reach the limit.
+                    if total_length > self.lh.jpeg_file_size as usize {
+                        let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
+                        while amount_to_remove > 0 {
+                            if let Some(last) = results.last_mut() {
+                                if last.len() <= amount_to_remove {
+                                    amount_to_remove -= last.len();
+                                    results.pop();
+                                } else {
+                                    last.truncate(last.len() - amount_to_remove);
+                                    amount_to_remove = 0;
+                                }
+                            } else {
+                                break; // no more results to remove.
+                            }
+                        }
+                    }
 
                     self.state = DecoderState::ReturnResults(0, mem::take(results));
                 }
@@ -341,22 +377,7 @@ impl LeptonFileReader {
                 markers.push(rst);
             }
 
-            let expected_total_length = results.iter().map(|x| x.len()).sum::<usize>()
-                + lh.rinfo.garbage_data.len()
-                + (lh.rinfo.raw_jpeg_header.len() - lh.raw_jpeg_header_read_index);
-
-            if expected_total_length < lh.jpeg_file_size as usize {
-                // figure out how much extra space we have, since C++ files can have
-                // more restart markers than there is space to fit them
-                let space_for_markers = min(
-                    markers.len(),
-                    lh.jpeg_file_size as usize - expected_total_length,
-                );
-
-                markers.resize(space_for_markers, 0);
-
-                results.push(markers);
-            }
+            results.push(markers);
         }
 
         Ok(DecoderState::AppendTrailer(results))
@@ -410,6 +431,7 @@ impl LeptonFileReader {
         v: Vec<u8>,
         lh: &LeptonHeader,
         enabled_features: &EnabledFeatures,
+        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<DecoderState> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -419,6 +441,7 @@ impl LeptonFileReader {
                 lh,
                 enabled_features,
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
+                thread_pool,
                 |_thread_handoff, image_data, _, _| {
                     // just return the image data directly to be merged together
                     return Ok(image_data);
@@ -432,6 +455,7 @@ impl LeptonFileReader {
                 &lh,
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
+                thread_pool,
                 |thread_handoff, image_data, jpeg_header, rinfo| {
                     let restart_info = RestartSegmentCodingInfo {
                         overhang_byte: thread_handoff.overhang_byte,
@@ -509,6 +533,7 @@ impl LeptonFileReader {
         lh: &LeptonHeader,
         features: &EnabledFeatures,
         retention_bytes: usize,
+        thread_pool: &'static dyn LeptonThreadPool,
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,
@@ -527,6 +552,7 @@ impl LeptonFileReader {
 
         let multiplex_reader_state = MultiplexReaderState::new(
             thread_handoff.len(),
+            thread_pool,
             retention_bytes,
             features.max_threads as usize,
             move |thread_id, reader| -> Result<(Metrics, P)> {
@@ -623,7 +649,7 @@ fn parse_and_write_header() {
         &mut lh.jpeg_header,
         &mut lh.rinfo,
         &enabled_features,
-        |_| {},
+        |_, _| {},
     )
     .unwrap();
 
@@ -703,18 +729,44 @@ fn test_zero_dqt() {
     test_file("zeros_in_dqt_tables")
 }
 
+/// truncated progessive JPEG. We don't support creating these, but we can read them
+#[test]
+fn test_pixelated() {
+    test_file("pixelated")
+}
+
+/// requires that the last segment be truncated by 1 byte.
+/// This is for compatibility with the C++ version
+#[test]
+fn test_truncate4() {
+    test_file("truncate4")
+}
+
 #[cfg(test)]
 fn test_file(filename: &str) {
+    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
+
     let file = read_file(filename, ".lep");
     let original = read_file(filename, ".jpg");
 
     let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let _ = decode_lepton_file_image(&mut Cursor::new(&file), &enabled_features).unwrap();
+    let _ = decode_lepton_file_image(
+        &mut Cursor::new(&file),
+        &enabled_features,
+        &DEFAULT_THREAD_POOL,
+    )
+    .unwrap();
 
     let mut output = Vec::new();
 
-    decode_lepton_file(&mut Cursor::new(&file), &mut output, &enabled_features).unwrap();
+    decode_lepton(
+        &mut Cursor::new(&file),
+        &mut output,
+        &enabled_features,
+        &DEFAULT_THREAD_POOL,
+    )
+    .unwrap();
 
     assert_eq!(output.len(), original.len());
     assert!(output == original);

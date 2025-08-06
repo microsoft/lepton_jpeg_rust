@@ -13,38 +13,74 @@ use std::num::TryFromIntError;
 #[non_exhaustive]
 /// Well-defined errors for bad things that are expected to happen as part of compression/decompression
 pub enum ExitCode {
+    /// Assertion failure, which indicates probably indicated a bug in the library.
     AssertionFailure = 1,
-    //CodingError = 2,
+    //CodingError = 2
+    /// The JPEG file is too short to be a valid JPEG file.
     ShortRead = 3,
+
+    /// We don't support 4-color JPEGs.
     Unsupported4Colors = 4,
+
+    /// The coefficients in the JPEG file are out of range specified by the JPEG standard.
     CoefficientOutOfRange = 6,
+
+    /// The lepton file has a coding error in the arithmetic coding part.
     StreamInconsistent = 7,
+
+    /// The JPEG file is progressive, and progressive support is not enabled.
     ProgressiveUnsupported = 8,
+
+    /// The JPEG file has a sampling factor that is not supported by the library.
     SamplingBeyondTwoUnsupported = 10,
     //SamplingBeyondFourUnsupported = 11,
     //ThreadingPartialMcu = 12,
+    /// The lepton file is a version that is not supported by the library.
     VersionUnsupported = 13,
     //OnlyGarbageNoJpeg = 14,
+    /// An error was returned by an IO operation, for example if a BufRead
+    /// passed in retrned an error.
     OsError = 33,
     //HeaderTooLarge = 34,
     //BlockOffsetOOM = 37,
+    /// The JPEG cannot be encoded due to a non-standard feature that is not supported by the library.
     UnsupportedJpeg = 42,
+
+    /// The JPEG file has a zero IDCT, which is not supported by the library.
     UnsupportedJpegWithZeroIdct0 = 43,
+
+    /// The JPEG file has invalid reset codes in the stream
     InvalidResetCode = 44,
+
+    /// The JPEG uses inconsistent padding, which is not supported by the library.
     InvalidPadding = 45,
     //WrapperOutputWriteFailed = 101,
+    /// The Lepton file is not a valid Lepton file.
     BadLeptonFile = 102,
+
+    /// An error occurred while sending a message to a thread in the thread pool.
     ChannelFailure = 103,
 
-    // Add new failures here
-    GeneralFailure = 1000,
+    /// error occured while casting an integer to a smaller type, most likely
+    /// means that the JPEG contains invalid data
+    IntegerCastOverflow = 1000,
     //CompressionFailedForAllChunks = 1001,
     //CompressedDataLargerThanPlainText = 1002,
     //HeaderChecksumMismatch = 1003,
+    /// We verified against the original JPEG file but the regenerated length was different
     VerificationLengthMismatch = 1004,
+
+    /// We verified against the original JPEG file but the content was different (but same length)
     VerificationContentMismatch = 1005,
+
+    /// Caller passed in invalid parameters
     SyntaxError = 1006,
+
+    /// The file to be read was not found (only used by utility exe)
     FileNotFound = 1007,
+
+    /// An external verification failed (only used by utility exe when verifying
+    /// against C++ Lepton implementation)
     ExternalVerificationFailed = 1008,
 }
 
@@ -84,6 +120,7 @@ impl Display for LeptonError {
 }
 
 impl LeptonError {
+    /// Creates a new LeptonError with the specified exit code and message.
     pub fn new(exit_code: ExitCode, message: &str) -> LeptonError {
         LeptonError {
             i: Box::new(LeptonErrorInternal {
@@ -93,14 +130,18 @@ impl LeptonError {
         }
     }
 
+    /// Returns the numeric exit code of the error to clasify the error
     pub fn exit_code(&self) -> ExitCode {
         self.i.exit_code
     }
 
+    /// Returns the message of the error, which is a human-readable description of the error.
     pub fn message(&self) -> &str {
         &self.i.message
     }
 
+    /// Adds context to the error by appending the current location in the code. This
+    /// allows for building a callstack of where the error occurred.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -151,7 +192,7 @@ fn get_io_error_exit_code(e: &std::io::Error) -> ExitCode {
 impl From<TryFromIntError> for LeptonError {
     #[track_caller]
     fn from(e: TryFromIntError) -> Self {
-        let mut e = LeptonError::new(ExitCode::GeneralFailure, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::IntegerCastOverflow, e.to_string().as_str());
         e.add_context();
         e
     }

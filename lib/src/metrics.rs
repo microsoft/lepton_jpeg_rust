@@ -13,6 +13,7 @@ pub struct CpuTimeMeasure {
 }
 
 impl CpuTimeMeasure {
+    /// Creates a new CpuTimeMeasure instance that starts measuring time.
     pub fn new() -> Self {
         Self {
             #[cfg(windows)]
@@ -22,6 +23,7 @@ impl CpuTimeMeasure {
         }
     }
 
+    /// Returns the elapsed time since the CpuTimeMeasure instance was created.
     pub fn elapsed(&self) -> Duration {
         #[cfg(windows)]
         {
@@ -59,6 +61,7 @@ pub struct ModelComponentStatistics {
     pub total_compressed: i64,
 }
 
+/// Metrics for the Lepton JPEG compression and decompression process.
 #[derive(Default, Debug)]
 pub struct Metrics {
     map: HashMap<ModelComponent, ModelComponentStatistics>,
@@ -66,6 +69,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Records the compression statistics for a specific model component.
     #[allow(dead_code)]
     pub fn record_compression_stats(
         &mut self,
@@ -81,10 +85,12 @@ impl Metrics {
         e.total_compressed += total_compressed;
     }
 
+    /// Records the CPU worker time for the compression process.
     pub fn record_cpu_worker_time(&mut self, duration: Duration) {
         self.cpu_time_worker_time += duration;
     }
 
+    /// Returns the total number of bits processed for a specific model component.
     #[allow(dead_code)]
     pub fn print_metrics(&self) {
         let mut sort_vec = Vec::new();
@@ -119,17 +125,23 @@ impl Metrics {
         println!("worker_cpu={0}ms", self.cpu_time_worker_time.as_millis());
     }
 
+    /// empties the metrics and returns the collected data
     pub fn drain(&mut self) -> Metrics {
+        let cpu_time_worker_time = self.cpu_time_worker_time;
+        self.cpu_time_worker_time = Duration::default();
+
         Metrics {
             map: self.map.drain().collect(),
-            cpu_time_worker_time: self.cpu_time_worker_time,
+            cpu_time_worker_time,
         }
     }
 
+    /// Returns the total CPU worker time recorded in the metrics.
     pub fn get_cpu_time_worker_time(&self) -> Duration {
         self.cpu_time_worker_time
     }
 
+    /// Merges another Metrics instance into this one, summing the statistics.
     pub fn merge_from(&mut self, mut source_metrics: Metrics) {
         for x in source_metrics.map.drain() {
             let e = self

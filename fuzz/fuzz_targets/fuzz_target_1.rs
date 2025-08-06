@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use lepton_jpeg::{decode_lepton, encode_lepton, EnabledFeatures};
+use lepton_jpeg::{decode_lepton, encode_lepton, EnabledFeatures, DEFAULT_THREAD_POOL};
 
 use libfuzzer_sys::fuzz_target;
 
@@ -22,20 +22,21 @@ fuzz_target!(|data: &[u8]| {
         max_jpeg_width: 1024,
         use_16bit_dc_estimate: use_16bit,
         use_16bit_adv_predict: use_16bit,
-        accept_invalid_dht: accept_invalid_dht
+        accept_invalid_dht: accept_invalid_dht,
+        .. EnabledFeatures::compat_lepton_vector_write()
     };
 
     {
         let mut writer = Cursor::new(&mut output);
 
-        r = encode_lepton(&mut Cursor::new(&data), &mut writer, 8, &features);
+        r = encode_lepton(&mut Cursor::new(&data), &mut writer, &features, &DEFAULT_THREAD_POOL);
     }
 
     let mut original = Vec::new();
 
     match r {
         Ok(_) => {
-            let _ = decode_lepton(&mut Cursor::new(&output), &mut original, 8, &features);
+            let _ = decode_lepton(&mut Cursor::new(&output), &mut original, &features, &DEFAULT_THREAD_POOL);
         }
         Err(_) => {}
     }

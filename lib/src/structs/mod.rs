@@ -13,14 +13,13 @@ pub mod lepton_file_reader;
 pub mod lepton_file_writer;
 pub mod lepton_header;
 mod model;
-mod multiplexer;
+pub mod multiplexer;
 mod neighbor_summary;
 mod partial_buffer;
 mod probability_tables;
 mod quantization_tables;
 mod simple_hash;
 
-#[cfg(not(feature = "use_rayon"))]
 pub mod simple_threadpool;
 
 mod thread_handoff;

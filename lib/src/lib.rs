@@ -4,6 +4,16 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+//! A lossless JPEG compressor with precise bit-for-bit recovery, supporting both baseline and progressive JPEGs.
+//! Achieves compression savings of around 22%, making it suitable for cold cloud storage use cases.
+//!
+//! This crate is a Rust port of Dropbox’s original [lepton](https://github.com/dropbox/lepton) JPEG compression tool.
+//! It retains the performance characteristics of the C++ version while benefiting from Rust’s memory safety guarantees.
+//! All JPEG content—including metadata and even malformed segments—is preserved accurately.
+//!
+//! The original C++ codebase has been deprecated by Dropbox. This Rust implementation incorporates
+//! an exhaustive security review of the original, making it a safer and more maintainable alternative.
+
 // Don't allow any unsafe code by default. Since this code has to potentially deal with
 // badly/maliciously formatted images, we want this extra level of safety.
 #![forbid(unsafe_code)]
@@ -19,6 +29,7 @@
 #![forbid(unused_macro_rules)]
 #![forbid(macro_use_extern_crate)]
 #![forbid(missing_unsafe_on_extern)]
+#![deny(missing_docs)]
 
 mod consts;
 mod helpers;
@@ -29,7 +40,7 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::io::{BufRead, Cursor, Seek, Write};
+use std::io::Write;
 
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
@@ -38,50 +49,37 @@ pub use metrics::{CpuTimeMeasure, Metrics};
 pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
+pub use crate::structs::simple_threadpool::{
+    LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
+};
 
-#[cfg(not(feature = "use_rayon"))]
-pub fn set_thread_priority(priority: i32) {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        let p = match priority {
-            100 => thread_priority::ThreadPriority::Max,
-            0 => thread_priority::ThreadPriority::Min,
-            _ => panic!("Unsupported thread priority value: {}", priority),
-        };
+/// Trait for types that can provide the current position in a stream. This
+/// is intentionally a subset of the Seek trait, as it only requires remembering
+/// the current position without allowing seeking to arbitrary positions.
+///
+/// This is useful for callers for which it would be complex to provide seek capabilities, but can
+/// count the number of bytes read or written so far.
+///
+/// We provide a blanket implementation for any type that implements `std::io::Seek`.
+pub trait StreamPosition {
+    /// Returns the current position in the stream.
+    fn position(&mut self) -> u64;
+}
 
-        thread_priority::set_current_thread_priority(p).unwrap();
-        crate::structs::simple_threadpool::set_thread_priority(p);
+impl<T: std::io::Seek> StreamPosition for T {
+    fn position(&mut self) -> u64 {
+        self.stream_position().unwrap()
     }
 }
 
-/// Decodes Lepton container and recreates the original JPEG file
-pub fn decode_lepton<R: BufRead, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_reader::decode_lepton_file(reader, writer, enabled_features)
-}
+pub use structs::lepton_file_reader::decode_lepton;
 
-/// Encodes JPEG as compressed Lepton format.
-pub fn encode_lepton<R: BufRead + Seek, W: Write + Seek>(
-    reader: &mut R,
-    writer: &mut W,
-    enabled_features: &EnabledFeatures,
-) -> Result<Metrics> {
-    structs::lepton_file_writer::encode_lepton_wrapper(reader, writer, enabled_features)
-}
-
-/// Compresses JPEG into Lepton format and compares input to output to verify that compression roundtrip is OK
-pub fn encode_lepton_verify(
-    input_data: &[u8],
-    enabled_features: &EnabledFeatures,
-) -> Result<(Vec<u8>, Metrics)> {
-    structs::lepton_file_writer::encode_lepton_wrapper_verify(input_data, enabled_features)
-}
+pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Returns the version string of the library, which includes the package version and the git version.
+/// This is useful for debugging and logging purposes to know the exact version of the library is being used
 pub fn get_version_string() -> String {
     format!("{}-{}", PACKAGE_VERSION, get_git_version())
 }
@@ -91,14 +89,19 @@ pub fn get_version_string() -> String {
 /// Dropping the object will abort any threads or decoding in progress.
 pub struct LeptonFileReaderContext {
     reader: structs::lepton_file_reader::LeptonFileReader,
+    thread_pool: &'static dyn LeptonThreadPool,
 }
 
 impl LeptonFileReaderContext {
     /// Creates a new context for decompressing Lepton encoded files,
     /// features parameter can be used to enable or disable certain behaviors.
-    pub fn new(features: EnabledFeatures) -> LeptonFileReaderContext {
+    pub fn new(
+        features: EnabledFeatures,
+        thread_pool: &'static dyn LeptonThreadPool,
+    ) -> LeptonFileReaderContext {
         LeptonFileReaderContext {
             reader: structs::lepton_file_reader::LeptonFileReader::new(features),
+            thread_pool,
         }
     }
 
@@ -127,14 +130,20 @@ impl LeptonFileReaderContext {
         writer: &mut impl Write,
         output_buffer_size: usize,
     ) -> Result<bool> {
-        self.reader
-            .process_buffer(input, input_complete, writer, output_buffer_size)
+        self.reader.process_buffer(
+            input,
+            input_complete,
+            writer,
+            output_buffer_size,
+            self.thread_pool,
+        )
     }
 }
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
 #[allow(dead_code)]
 pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeatures) -> Result<()> {
+    use std::io::Cursor;
     use structs::lepton_file_reader::decode_lepton_file_image;
     use structs::lepton_file_writer::read_jpeg;
 
@@ -144,7 +153,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     if input_data[0] == 0xff && input_data[1] == 0xd8 {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh| {
+        (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh, _ri| {
             println!("parsed header:");
             let s = format!("{jh:?}");
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
@@ -152,7 +161,9 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     } else {
         let mut reader = Cursor::new(input_data);
 
-        (lh, block_image) = decode_lepton_file_image(&mut reader, enabled_features).context()?;
+        (lh, block_image) =
+            decode_lepton_file_image(&mut reader, enabled_features, &DEFAULT_THREAD_POOL)
+                .context()?;
 
         loop {
             println!("parsed header:");

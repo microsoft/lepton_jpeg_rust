@@ -1,16 +1,16 @@
-/// features that are enabled in the encoder. Turn off for potential backward compat issues.
+/// Features that are enabled in the encoder. Turn off for potential backward compat issues.
 #[derive(Debug, Clone)]
 pub struct EnabledFeatures {
     /// enables/disables reading of progressive images
     pub progressive: bool,
 
-    // reject/accept images with DQTs with zeros (may cause divide-by-zero)
+    /// reject/accept images with DQTs with zeros (may cause divide-by-zero)
     pub reject_dqts_with_zeros: bool,
 
     /// maximum jpeg width
     pub max_jpeg_width: u32,
 
-    // maximum jpeg height
+    /// maximum jpeg height
     pub max_jpeg_height: u32,
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
@@ -27,6 +27,13 @@ pub struct EnabledFeatures {
 
     /// maximum size of a jpeg file
     pub max_jpeg_file_size: u32,
+
+    /// stop reading at the end of the valid JPEG file. This is useful if
+    /// the stream contains other data after the EOI marker.
+    ///
+    /// This also disallows handling truncated JPEG files since by definition
+    /// they don't have an EOI marker, instead you will get a ShortRead error.
+    pub stop_reading_at_eoi: bool,
 }
 
 impl EnabledFeatures {
@@ -43,6 +50,7 @@ impl EnabledFeatures {
             accept_invalid_dht: false,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 
@@ -60,6 +68,7 @@ impl EnabledFeatures {
             accept_invalid_dht: true,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 
@@ -77,6 +86,7 @@ impl EnabledFeatures {
             accept_invalid_dht: true,
             max_threads: 8,
             max_jpeg_file_size: 128 * 1024 * 1024,
+            stop_reading_at_eoi: false,
         }
     }
 }

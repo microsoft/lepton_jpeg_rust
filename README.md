@@ -13,7 +13,7 @@ Some operations of this library are vectorized such as the IDCT using the [Wide]
 
 - [Rust 1.65 or Above](https://www.rust-lang.org/tools/install)
 
-```
+``` bash
 git clone https://github.com/microsoft/lepton_jpeg_rust
 cd lepton_jpeg_rust
 cargo build

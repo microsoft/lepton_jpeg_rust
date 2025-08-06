@@ -32,6 +32,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+use std::fmt::Debug;
 use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
@@ -414,7 +415,7 @@ impl HuffTree {
 }
 
 /// JPEG information parsed out of segments found before the image segment
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JpegHeader {
     /// quantization tables 4 x 64
     pub q_tables: [[u16; 64]; 4],
@@ -479,6 +480,32 @@ pub struct JpegHeader {
     /// successive approximation bit pos low
     pub cs_sal: u8,
 }
+
+impl std::fmt::Debug for JpegHeader {
+    /// Custom debug implementation to avoid printing large arrays
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JpegHeader")
+            .field("cmp_info", &self.cmp_info)
+            .field("cmpc", &self.cmpc)
+            .field("img_width", &self.img_width)
+            .field("img_height", &self.img_height)
+            .field("jpeg_type", &self.jpeg_type)
+            .field("sfhm", &self.sfhm)
+            .field("sfvm", &self.sfvm)
+            .field("mcuv", &self.mcuv)
+            .field("mcuh", &self.mcuh)
+            .field("mcuc", &self.mcuc)
+            .field("rsti", &self.rsti)
+            .field("cs_cmpc", &self.cs_cmpc)
+            .field("cs_cmp", &self.cs_cmp)
+            .field("cs_from", &self.cs_from)
+            .field("cs_to", &self.cs_to)
+            .field("cs_sah", &self.cs_sah)
+            .field("cs_sal", &self.cs_sal)
+            .finish()
+    }
+}
+
 enum ParseSegmentResult {
     Continue,
     EOI,
