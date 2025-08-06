@@ -5,6 +5,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 use bytemuck::cast;
+use deranged::RangedU32;
+use deranged::RangedU8;
 use wide::{i16x8, i32x8, u16x8};
 
 use crate::consts::*;
@@ -81,14 +83,14 @@ impl ProbabilityTables {
     }
 
     #[inline(always)]
-    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
-        return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
+    pub fn num_non_zeros_to_bin_7x7(num_non_zeros: RangedU32<1, 49>) -> RangedU8<0, 8> {
+        return NON_ZERO_TO_BIN_7X7[num_non_zeros.get() as usize];
     }
 
     pub fn calc_num_non_zeros_7x7_context_bin<const ALL_PRESENT: bool>(
         &self,
         neighbor_data: &NeighborData,
-    ) -> u8 {
+    ) -> RangedU8<0, 8> {
         let mut num_non_zeros_above = 0;
         let mut num_non_zeros_left = 0;
         if ALL_PRESENT || self.above_present {

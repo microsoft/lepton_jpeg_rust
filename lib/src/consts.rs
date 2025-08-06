@@ -4,6 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+use deranged::RangedU8;
+
 use crate::jpeg::jpeg_code;
 
 #[derive(PartialEq, Debug)]
@@ -22,11 +24,26 @@ pub enum JpegType {
 
 pub const COLOR_CHANNEL_NUM_BLOCK_TYPES: usize = 3;
 
-pub const RASTER_TO_ZIGZAG: [u8; 64] = [
+/// Convert a slice of u8 into an array of ConstRangedX. Useful for const initialization, eg
+/// const CONTARRAY : [ConstRangedX<1,10>;5] = ConstRangedX::<1,10>::into_array([1,2,3,4,5]);
+/// will panic if any value is out of range
+const fn into_array<const N: usize, const MIN: u8, const MAX: u8>(
+    a: [u8; N],
+) -> [RangedU8<MIN, MAX>; N] {
+    let mut r = [RangedU8::<MIN, MAX>::MIN; N];
+    let mut i = 0;
+    while i < N {
+        r[i] = RangedU8::<MIN, MAX>::new(a[i]).unwrap();
+        i += 1;
+    }
+    r
+}
+
+pub const RASTER_TO_ZIGZAG: [RangedU8<0, 63>; 64] = into_array([
     0, 1, 5, 6, 14, 15, 27, 28, 2, 4, 7, 13, 16, 26, 29, 42, 3, 8, 12, 17, 25, 30, 41, 43, 9, 11,
     18, 24, 31, 40, 44, 53, 10, 19, 23, 32, 39, 45, 52, 54, 20, 22, 33, 38, 46, 51, 55, 60, 21, 34,
     37, 47, 50, 56, 59, 61, 35, 36, 48, 49, 57, 58, 62, 63,
-];
+]);
 
 // pub const ZIGZAG_TO_RASTER: [u8; 64] = [
 //     0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
@@ -34,11 +51,11 @@ pub const RASTER_TO_ZIGZAG: [u8; 64] = [
 //     52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 // ];
 
-pub const ZIGZAG_TO_TRANSPOSED: [u8; 64] = [
+pub const ZIGZAG_TO_TRANSPOSED: [RangedU8<0, 63>; 64] = into_array([
     0, 8, 1, 2, 9, 16, 24, 17, 10, 3, 4, 11, 18, 25, 32, 40, 33, 26, 19, 12, 5, 6, 13, 20, 27, 34,
     41, 48, 56, 49, 42, 35, 28, 21, 14, 7, 15, 22, 29, 36, 43, 50, 57, 58, 51, 44, 37, 30, 23, 31,
     38, 45, 52, 59, 60, 53, 46, 39, 47, 54, 61, 62, 55, 63,
-];
+]);
 
 // pub const UNZIGZAG_49: [u8; 49] = [
 //     9, 10, 17, 25, 18, 11, 12, 19, 26, 33, 41, 34, 27, 20, 13, 14, 21, 28, 35, 42, 49, 57, 50, 43,
@@ -46,11 +63,11 @@ pub const ZIGZAG_TO_TRANSPOSED: [u8; 64] = [
 //     63,
 // ];
 
-pub const UNZIGZAG_49_TR: [u8; 49] = [
+pub const UNZIGZAG_49_TR: [RangedU8<9, 63>; 49] = into_array([
     9, 17, 10, 11, 18, 25, 33, 26, 19, 12, 13, 20, 27, 34, 41, 49, 42, 35, 28, 21, 14, 15, 22, 29,
     36, 43, 50, 57, 58, 51, 44, 37, 30, 23, 31, 38, 45, 52, 59, 60, 53, 46, 39, 47, 54, 61, 62, 55,
     63,
-];
+]);
 
 // precalculated int base values for 8x8 IDCT scaled by 8192
 // DC coef is zeroed intentionally
@@ -64,15 +81,15 @@ pub const FREQ_MAX: [u16; 14] = [
 ];
 
 // used to get prediction branches basing on nonzero-number predictor `num_non_zeros_context`
-pub const NON_ZERO_TO_BIN: [u8; 26] = [
+pub const NON_ZERO_TO_BIN: [RangedU8<0, 8>; 26] = into_array([
     0, 1, 2, 3, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
-];
+]);
 
 // used to get prediction branches basing on current `num_non_zeros_left_7x7`, 0th element is not used
-pub const NON_ZERO_TO_BIN_7X7: [u8; 50] = [
+pub const NON_ZERO_TO_BIN_7X7: [RangedU8<0, 8>; 50] = into_array([
     0, 0, 1, 2, 3, 3, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
     8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-];
+]);
 
 pub const RESIDUAL_NOISE_FLOOR: usize = 7;
 
