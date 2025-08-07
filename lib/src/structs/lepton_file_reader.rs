@@ -57,7 +57,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
         reader.consume(amt);
     }
 
-    return Ok(decoder.read_metrics());
+    return Ok(decoder.take_metrics());
 }
 
 /// this is a debug function only called by the utility EXE code
@@ -344,8 +344,13 @@ impl LeptonFileReader {
     }
 
     /// destructively reads the metrics
-    pub fn read_metrics(&mut self) -> Metrics {
+    pub fn take_metrics(&mut self) -> Metrics {
         mem::take(&mut self.metrics)
+    }
+
+    /// return metrics on decoder
+    pub fn metrics(&self) -> &Metrics {
+        &self.metrics
     }
 
     fn process_baseline(lh: &LeptonHeader, mut results: Vec<Vec<u8>>) -> Result<DecoderState> {

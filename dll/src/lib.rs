@@ -7,7 +7,13 @@
 #![forbid(trivial_numeric_casts)]
 #![forbid(unused_crate_dependencies)]
 
-use std::{io::Cursor, sync::LazyLock};
+use std::{
+    io::Cursor,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        LazyLock,
+    },
+};
 
 use lepton_jpeg::{
     catch_unwind_result, decode_lepton, encode_lepton, get_git_version, EnabledFeatures, ExitCode,
@@ -44,10 +50,12 @@ impl LeptonThreadPool for RayonThreadPool {
     }
 }
 
+static NUM_THREADS: AtomicU32 = AtomicU32::new(8);
+
 static RAYON_THREAD_POOL: RayonThreadPool = RayonThreadPool {
     pool: LazyLock::new(|| {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(8) // default to 8 threads, can be adjusted
+            .num_threads(NUM_THREADS.load(Ordering::SeqCst) as usize) // default to 8 threads, can be adjusted
             .build()
             .unwrap()
     }),
@@ -69,6 +77,13 @@ fn test_copy_cstring_utf8_to_buffer() {
     );
 }
 
+/// C ABI interface for setting the number of threads to use for compression and decompression
+/// This can only be called before any compression or decompression is done, as we cannot
+/// change the number of threads in the threadpool once it is created.
+pub unsafe extern "C" fn set_num_threads(num_threads: u32) {
+    NUM_THREADS.store(num_threads, Ordering::SeqCst);
+}
+
 /// C ABI interface for compressing image, exposed from DLL
 #[no_mangle]
 #[allow(non_snake_case)]
@@ -80,6 +95,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
+    let mut cpu_usage: u64 = 0;
     WrapperCompressImage2(
         input_buffer,
         input_buffer_size,
@@ -87,6 +103,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
         output_buffer_size,
         number_of_threads as u32,
         result_size,
+        (&mut cpu_usage) as *mut u64,
         0,
     )
 }
@@ -101,6 +118,7 @@ pub unsafe extern "C" fn WrapperCompressImage2(
     output_buffer_size: u64,
     number_of_threads: u32,
     result_size: *mut u64,
+    cpu_usage: *mut u64,
     flags: u32,
 ) -> i32 {
     match catch_unwind_result(|| {
@@ -122,9 +140,10 @@ pub unsafe extern "C" fn WrapperCompressImage2(
             &DEFAULT_THREAD_POOL
         };
 
-        let _metrics = encode_lepton(&mut reader, &mut writer, &features, thread_pool)?;
+        let metrics = encode_lepton(&mut reader, &mut writer, &features, thread_pool)?;
 
         *result_size = writer.position().into();
+        *cpu_usage = metrics.get_cpu_time_worker_time().as_millis() as u64;
 
         Ok(())
     }) {
@@ -148,6 +167,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     number_of_threads: i32,
     result_size: *mut u64,
 ) -> i32 {
+    let mut cpu_usage: u64 = 0;
     return WrapperDecompressImage3(
         input_buffer,
         input_buffer_size,
@@ -155,6 +175,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         output_buffer_size,
         number_of_threads as u32,
         result_size,
+        (&mut cpu_usage) as *mut u64,
         0,
     );
 }
@@ -173,6 +194,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     result_size: *mut u64,
     use_16bit_dc_estimate: bool,
 ) -> i32 {
+    let mut cpu_usage: u64 = 0;
     WrapperDecompressImage3(
         input_buffer,
         input_buffer_size,
@@ -180,6 +202,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
         output_buffer_size,
         number_of_threads as u32,
         result_size,
+        (&mut cpu_usage) as *mut u64,
         if use_16bit_dc_estimate {
             DECOMPRESS_USE_16BIT_DC_ESTIMATE
         } else {
@@ -198,6 +221,7 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
     output_buffer_size: u64,
     number_of_threads: u32,
     result_size: *mut u64,
+    cpu_usage: *mut u64,
     flags: u32,
 ) -> i32 {
     match catch_unwind_result(|| {
@@ -234,8 +258,9 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
             let mut writer = Cursor::new(output);
 
             match decode_lepton(&mut reader, &mut writer, &mut enabled_features, thread_pool) {
-                Ok(_) => {
+                Ok(metrics) => {
                     *result_size = writer.position().into();
+                    *cpu_usage = metrics.get_cpu_time_worker_time().as_millis() as u64;
                     return Ok(());
                 }
                 Err(e) => {
@@ -298,6 +323,14 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
 
     let context = Box::new(LeptonFileReaderContext::new(enabled_features, thread_pool));
     Box::into_raw(context) as *mut std::ffi::c_void
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
+    let context = context as *mut LeptonFileReaderContext;
+    let context = &mut *context;
+
+    context.metrics().get_cpu_time_worker_time().as_millis() as u64
 }
 
 #[no_mangle]
@@ -372,6 +405,7 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     content
 }
 
+/// test original version of external interface that just delegates to the new one
 #[test]
 fn extern_interface() {
     let input = read_file("slrcity", ".jpg");
@@ -383,6 +417,52 @@ fn extern_interface() {
     let mut result_size: u64 = 0;
 
     unsafe {
+        let retval = WrapperCompressImage(
+            input[..].as_ptr(),
+            input.len() as u64,
+            compressed[..].as_mut_ptr(),
+            compressed.len() as u64,
+            8,
+            (&mut result_size) as *mut u64,
+        );
+
+        assert_eq!(retval, 0);
+    }
+
+    let mut original = Vec::new();
+    original.resize(input.len() + 10000, 0);
+
+    let mut original_size: u64 = 0;
+    unsafe {
+        let retval = WrapperDecompressImageEx(
+            compressed[..].as_ptr(),
+            result_size,
+            original[..].as_mut_ptr(),
+            original.len() as u64,
+            8,
+            (&mut original_size) as *mut u64,
+            false,
+        );
+
+        assert_eq!(retval, 0);
+    }
+    assert_eq!(input.len() as u64, original_size);
+    assert_eq!(input[..], original[..(original_size as usize)]);
+}
+
+/// test version 2 of external interface
+#[test]
+fn extern_interface_2() {
+    let input = read_file("slrcity", ".jpg");
+
+    let mut compressed = Vec::new();
+
+    compressed.resize(input.len() + 10000, 0);
+
+    let mut result_size: u64 = 0;
+    let mut cpu_usage: u64 = 0;
+
+    unsafe {
         let retval = WrapperCompressImage2(
             input[..].as_ptr(),
             input.len() as u64,
@@ -390,6 +470,7 @@ fn extern_interface() {
             compressed.len() as u64,
             8,
             (&mut result_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             0,
         );
 
@@ -408,6 +489,7 @@ fn extern_interface() {
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             0,
         );
 
@@ -488,6 +570,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
     let mut compressed = Vec::new();
     compressed.resize(input.len() + 10000, 0);
     let mut result_size: u64 = 0;
+    let mut cpu_usage: u64 = 0;
 
     unsafe {
         let retval = WrapperCompressImage2(
@@ -497,6 +580,7 @@ fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
             compressed.len() as u64,
             8,
             (&mut result_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             0,
         );
 
@@ -517,6 +601,8 @@ fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
     decompressed.resize(original.len() + 10000, 0);
 
     let mut decompressed_size: u64 = 0;
+    let mut cpu_usage: u64 = 0;
+
     unsafe {
         let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
@@ -525,6 +611,7 @@ fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
             decompressed.len() as u64,
             8,
             (&mut decompressed_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             0,
         );
 
@@ -590,6 +677,8 @@ fn verify_decode_external_interface_with_use_16bit_dc_estimate(
     original.resize(input.len() + 10000, 0);
 
     let mut original_size: u64 = 0;
+    let mut cpu_usage: u64 = 0;
+
     unsafe {
         let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
@@ -598,6 +687,7 @@ fn verify_decode_external_interface_with_use_16bit_dc_estimate(
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             DECOMPRESS_USE_16BIT_DC_ESTIMATE,
         );
 
@@ -618,6 +708,8 @@ fn verify_extern_16bit_math_retry() {
     original.resize(input.len() + 10000, 0);
 
     let mut original_size: u64 = 0;
+    let mut cpu_usage: u64 = 0;
+
     unsafe {
         let retval = WrapperDecompressImage3(
             compressed[..].as_ptr(),
@@ -626,6 +718,7 @@ fn verify_extern_16bit_math_retry() {
             original.len() as u64,
             8,
             (&mut original_size) as *mut u64,
+            (&mut cpu_usage) as *mut u64,
             0,
         );
 
