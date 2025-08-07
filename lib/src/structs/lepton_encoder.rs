@@ -341,10 +341,19 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         }
     }
 
+    let q_tr = qt.get_quantization_table_transposed();
+
+    let mut raster_co = [0i32; 64];
+    for i in 1..64 {
+        raster_co[i] = i32::from(here_tr.get_coefficient(i)) * i32::from(q_tr[i]);
+    }
+
+    let raster: [i32x8; 8] = cast(raster_co);
+
     // Next step is the edge coefficients.
     // Here we produce the first part of edge DCT coefficients predictions for neighborhood blocks
     // and transposed raster of dequantized DCT coefficients with 0 in DC
-    let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
+    let (horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
         neighbors_data,
         &here_tr,
         model_per_color,
@@ -354,6 +363,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         num_non_zeros_7x7,
         eob_x as u8,
         eob_y as u8,
+        &raster,
     )
     .context()?;
 
@@ -412,16 +422,8 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     num_non_zeros_7x7: u8,
     eob_x: u8,
     eob_y: u8,
-) -> Result<([i32x8; 8], i32x8, i32x8)> {
-    let q_tr = qt.get_quantization_table_transposed();
-
-    let mut raster_co = [0i32; 64];
-    for i in 1..64 {
-        raster_co[i] = i32::from(here_tr.get_coefficient(i)) * i32::from(q_tr[i]);
-    }
-
-    let raster: [i32x8; 8] = cast(raster_co);
-
+    raster: &[i32x8; 8],
+) -> Result<(i32x8, i32x8)> {
     // get predictors for edge coefficients of the current block
     let (curr_horiz_pred, curr_vert_pred) =
         ProbabilityTables::predict_current_edges(neighbors_data, &raster);
@@ -455,7 +457,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     // prepare predictors for edge coefficients of the blocks below and to the right of current one
     let (next_horiz_pred, next_vert_pred) = ProbabilityTables::predict_next_edges(&raster);
 
-    Ok((raster, next_horiz_pred, next_vert_pred))
+    Ok((next_horiz_pred, next_vert_pred))
 }
 
 fn count_non_zero(v: i16) -> u8 {

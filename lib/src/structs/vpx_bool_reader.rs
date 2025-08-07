@@ -104,16 +104,6 @@ impl<R: Read> VPXBoolReader<R> {
 
         let split = mul_prob(*tmp_range, probability);
 
-        // So optimizer understands that 0 should never happen and uses a cold jump
-        // if we don't have LZCNT on x86 CPUs (older BSR instruction requires check for zero).
-        // This is better since the branch prediction figures quickly this never happens and can run
-        // the code sequentially.
-        #[cfg(all(
-            not(target_feature = "lzcnt"),
-            any(target_arch = "x86", target_arch = "x86_64")
-        ))]
-        assert!(*tmp_range - split > 0);
-
         let bit = *tmp_value >= split;
 
         branch.record_and_update_bit(bit);
