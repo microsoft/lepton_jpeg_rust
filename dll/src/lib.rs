@@ -405,8 +405,54 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     content
 }
 
+/// test original version of external interface that just delegates to the new one
 #[test]
 fn extern_interface() {
+    let input = read_file("slrcity", ".jpg");
+
+    let mut compressed = Vec::new();
+
+    compressed.resize(input.len() + 10000, 0);
+
+    let mut result_size: u64 = 0;
+
+    unsafe {
+        let retval = WrapperCompressImage(
+            input[..].as_ptr(),
+            input.len() as u64,
+            compressed[..].as_mut_ptr(),
+            compressed.len() as u64,
+            8,
+            (&mut result_size) as *mut u64,
+        );
+
+        assert_eq!(retval, 0);
+    }
+
+    let mut original = Vec::new();
+    original.resize(input.len() + 10000, 0);
+
+    let mut original_size: u64 = 0;
+    unsafe {
+        let retval = WrapperDecompressImageEx(
+            compressed[..].as_ptr(),
+            result_size,
+            original[..].as_mut_ptr(),
+            original.len() as u64,
+            8,
+            (&mut original_size) as *mut u64,
+            false,
+        );
+
+        assert_eq!(retval, 0);
+    }
+    assert_eq!(input.len() as u64, original_size);
+    assert_eq!(input[..], original[..(original_size as usize)]);
+}
+
+/// test version 2 of external interface
+#[test]
+fn extern_interface_2() {
     let input = read_file("slrcity", ".jpg");
 
     let mut compressed = Vec::new();
