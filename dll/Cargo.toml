@@ -11,3 +11,4 @@ rayon = "1"
 
 [lib]
 crate-type = ["cdylib"]
+name = "lepton_jpeg"
