@@ -28,7 +28,7 @@ default-boxed = "0.2"
 wide = "0.7"
 log = "0.4"
 git-version = "0.3"
-deranged = "0.4"
+deranged = "0.5.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpu-time = "1.0"
