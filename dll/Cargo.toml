@@ -1,6 +1,6 @@
 [package]
 name = "lepton_jpeg_dll"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
@@ -11,3 +11,4 @@ rayon = "1"
 
 [lib]
 crate-type = ["cdylib"]
+name = "lepton_jpeg"

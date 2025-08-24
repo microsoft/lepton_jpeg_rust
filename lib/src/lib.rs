@@ -138,6 +138,11 @@ impl LeptonFileReaderContext {
             self.thread_pool,
         )
     }
+
+    /// Returns the metrics collected during the decompression process.
+    pub fn metrics(&self) -> &Metrics {
+        self.reader.metrics()
+    }
 }
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes
