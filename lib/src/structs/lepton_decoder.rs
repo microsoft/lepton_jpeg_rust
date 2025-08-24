@@ -9,7 +9,7 @@ use std::io::Read;
 
 use bytemuck::cast_mut;
 use default_boxed::DefaultBoxed;
-use deranged::{RangedU32, RangedU8};
+use deranged::RangedUsize;
 use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -243,8 +243,8 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // read how many of these are non-zero, which is used both
     // to terminate the loop early and as a predictor for the model
-    let num_non_zeros_7x7 =
-        model_per_color.read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin)?;
+    let num_non_zeros_7x7 = model_per_color
+        .read_non_zero_7x7_count(bool_reader, num_non_zeros_7x7_context_bin.into())?;
 
     if num_non_zeros_7x7 > 49 {
         // most likely a stream or model synchronization error
@@ -257,11 +257,10 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // these are used as predictors for the number of non-zero edge coefficients
     // do math in 32 bits since this is faster on most platforms
-    let mut eob_x: u32 = 0;
-    let mut eob_y: u32 = 0;
+    let mut eob_x: usize = 0;
+    let mut eob_y: usize = 0;
 
-    if let Some(mut num_non_zeros_7x7_remaining) = RangedU32::<1, 49>::new(num_non_zeros_7x7 as u32)
-    {
+    if let Some(mut num_non_zeros_7x7_remaining) = RangedUsize::<1, 49>::new(num_non_zeros_7x7) {
         let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
             neighbor_data.left,
             neighbor_data.above,
@@ -273,23 +272,23 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        let mut zig49 = RangedU32::<0, 48>::MIN;
+        let mut zig49 = RangedUsize::<0, 48>::MIN;
         loop {
-            let coord_tr = UNZIGZAG_49_TR[zig49.get() as usize];
-            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr.get() as usize]);
+            let coord_tr = UNZIGZAG_49_TR[zig49.get()];
+            let best_prior_bit_length = u16_bit_length(best_priors[usize::from(coord_tr.get())]);
 
             let coef = model_per_color.read_coef(
                 bool_reader,
                 zig49,
-                num_non_zeros_bin,
-                RangedU32::<0, 11>::new(best_prior_bit_length.into()).unwrap(),
+                num_non_zeros_bin.into(),
+                RangedUsize::<0, 11>::new(best_prior_bit_length.into()).unwrap(),
             )?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let by = u32::from(coord_tr.get()) & 7;
-                let bx = u32::from(coord_tr.get()) >> 3;
+                let by = usize::from(coord_tr.get()) & 7;
+                let bx = usize::from(coord_tr.get()) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
@@ -334,12 +333,12 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
         pt,
         num_non_zeros_7x7,
         &mut raster,
-        eob_x as u8,
-        eob_y as u8,
+        RangedUsize::<0, 7>::new(eob_x).unwrap(),
+        RangedUsize::<0, 7>::new(eob_y).unwrap(),
     )?;
 
     // step 3, read the DC coefficient (0,0 of the block)
-    let q0 = qt.get_quantization_table()[0] as i32;
+    let q0 = i32::from(qt.get_quantization_table()[0]);
     let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
 
     let coef = model.read_dc(
@@ -359,7 +358,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
     let neighbor_summary = NeighborSummary::new(
         predicted_dc.next_edge_pixels_h,
         predicted_dc.next_edge_pixels_v,
-        output.get_dc() as i32 * q0,
+        i32::from(output.get_dc()) * q0,
         num_non_zeros_7x7,
         horiz_pred,
         vert_pred,
@@ -376,12 +375,12 @@ fn decode_edge<R: Read, const ALL_PRESENT: bool>(
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
+    num_non_zeros_7x7: usize,
     raster: &mut [i32x8; 8],
-    eob_x: u8,
-    eob_y: u8,
+    eob_x: RangedUsize<0, 7>,
+    eob_y: RangedUsize<0, 7>,
 ) -> Result<(i32x8, i32x8)> {
-    let num_non_zeros_bin = RangedU8::new((num_non_zeros_7x7 + 3) / 7).unwrap();
+    let num_non_zeros_bin = RangedUsize::new((num_non_zeros_7x7 + 3) / 7).unwrap();
 
     // get predictors for edge coefficients of the current block
     let (curr_horiz_pred, curr_vert_pred) =
@@ -423,8 +422,8 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     here_mut: &mut AlignedBlock,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_bin: RangedU8<0, 7>,
-    est_eob: u8,
+    num_non_zeros_bin: RangedUsize<0, 7>,
+    est_eob: RangedUsize<0, 7>,
     raster: &mut [i32; 64],
 ) -> Result<()> {
     let num_non_zeros_edge = model_per_color
@@ -435,7 +434,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         return Ok(());
     }
 
-    if let Some(mut num_non_zeros_edge) = RangedU8::<1, 7>::new(num_non_zeros_edge) {
+    if let Some(mut num_non_zeros_edge) = RangedUsize::<1, 7>::new(num_non_zeros_edge) {
         let delta;
         let mut zig15offset;
 
@@ -456,7 +455,7 @@ fn decode_one_edge<R: Read, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             let coef = model_per_color.read_edge_coefficient(
                 bool_reader,
                 qt,
-                RangedU32::<0, 13>::new(zig15offset).unwrap(),
+                RangedUsize::<0, 13>::new(zig15offset).unwrap(),
                 num_non_zeros_edge,
                 best_prior,
             )?;

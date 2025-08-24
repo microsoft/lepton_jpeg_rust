@@ -9,7 +9,7 @@ use std::io::Write;
 
 use bytemuck::cast;
 use default_boxed::DefaultBoxed;
-use deranged::{RangedU32, RangedU8};
+use deranged::RangedUsize;
 use wide::i32x8;
 
 use crate::consts::UNZIGZAG_49_TR;
@@ -288,11 +288,10 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // these are used as predictors for the number of non-zero edge coefficients
     // do math in 32 bits since this is faster on most modern platforms
-    let mut eob_x: u32 = 0;
-    let mut eob_y: u32 = 0;
+    let mut eob_x: usize = 0;
+    let mut eob_y: usize = 0;
 
-    if let Some(mut num_non_zeros_7x7_remaining) = RangedU32::<1, 49>::new(num_non_zeros_7x7 as u32)
-    {
+    if let Some(mut num_non_zeros_7x7_remaining) = RangedUsize::<1, 49>::new(num_non_zeros_7x7) {
         let best_priors = pt.calc_coefficient_context_7x7_aavg_block::<ALL_PRESENT>(
             neighbors_data.left,
             neighbors_data.above,
@@ -303,12 +302,12 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
             ProbabilityTables::num_non_zeros_to_bin_7x7(num_non_zeros_7x7_remaining);
 
         // now loop through the coefficients in zigzag, terminating once we hit the number of non-zeros
-        let mut zig49 = RangedU32::<0, 48>::MIN;
+        let mut zig49 = RangedUsize::<0, 48>::MIN;
         loop {
-            let coord_tr = UNZIGZAG_49_TR[zig49.get() as usize];
-            let best_prior_bit_length = u16_bit_length(best_priors[coord_tr.get() as usize]);
+            let coord_tr = UNZIGZAG_49_TR[zig49.get()];
+            let best_prior_bit_length = u16_bit_length(best_priors[usize::from(coord_tr.get())]);
 
-            let coef = here_tr.get_coefficient(coord_tr.get() as usize);
+            let coef = here_tr.get_coefficient(coord_tr.get().into());
 
             model_per_color
                 .write_coef(
@@ -316,15 +315,15 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
                     coef,
                     zig49,
                     num_non_zeros_remaining_bin,
-                    RangedU32::<0, 11>::new(best_prior_bit_length.into()).unwrap(),
+                    RangedUsize::<0, 11>::new(best_prior_bit_length.into()).unwrap(),
                 )
                 .context()?;
 
             if coef != 0 {
                 // here we calculate the furthest x and y coordinates that have non-zero coefficients
                 // which is later used as a predictor for the number of edge coefficients
-                let by = u32::from(coord_tr.get()) & 7;
-                let bx = u32::from(coord_tr.get()) >> 3;
+                let by = usize::from(coord_tr.get()) & 7;
+                let bx = usize::from(coord_tr.get()) >> 3;
 
                 debug_assert!(bx > 0 && by > 0, "this does the DC and the lower 7x7 AC");
 
@@ -361,13 +360,13 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         qt,
         pt,
         num_non_zeros_7x7,
-        eob_x as u8,
-        eob_y as u8,
+        RangedUsize::<0, 7>::new(eob_x).unwrap(),
+        RangedUsize::<0, 7>::new(eob_y).unwrap(),
     )
     .context()?;
 
     // finally the DC coefficient (at 0,0)
-    let q0 = qt.get_quantization_table()[0] as i32;
+    let q0 = i32::from(qt.get_quantization_table()[0]);
     let predicted_val =
         pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
 
@@ -377,7 +376,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
         predicted_val.predicted_dc,
     );
 
-    if here_tr.get_dc() as i32
+    if i32::from(here_tr.get_dc())
         != ProbabilityTables::adv_predict_or_unpredict_dc(
             avg_predicted_dc as i16,
             true,
@@ -401,7 +400,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     let neighbor_summary = NeighborSummary::new(
         predicted_val.next_edge_pixels_h,
         predicted_val.next_edge_pixels_v,
-        here_tr.get_dc() as i32 * q0,
+        i32::from(here_tr.get_dc()) * q0,
         num_non_zeros_7x7,
         horiz_pred,
         vert_pred,
@@ -418,9 +417,9 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     bool_writer: &mut VPXBoolWriter<W>,
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_7x7: u8,
-    eob_x: u8,
-    eob_y: u8,
+    num_non_zeros_7x7: usize,
+    eob_x: RangedUsize<0, 7>,
+    eob_y: RangedUsize<0, 7>,
 ) -> Result<([i32x8; 8], i32x8, i32x8)> {
     let q_tr = qt.get_quantization_table_transposed();
 
@@ -435,7 +434,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     let (curr_horiz_pred, curr_vert_pred) =
         ProbabilityTables::predict_current_edges(neighbors_data, &raster);
 
-    let num_non_zeros_bin = RangedU8::new((num_non_zeros_7x7 + 3) / 7).unwrap();
+    let num_non_zeros_bin = RangedUsize::new((num_non_zeros_7x7 + 3) / 7).unwrap();
 
     encode_one_edge::<W, ALL_PRESENT, true>(
         here_tr,
@@ -467,7 +466,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
     Ok((raster, next_horiz_pred, next_vert_pred))
 }
 
-fn count_non_zero(v: i16) -> u8 {
+fn count_non_zero(v: i16) -> usize {
     if v == 0 {
         0
     } else {
@@ -482,8 +481,8 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
     pred: &[i32; 8],
     qt: &QuantizationTables,
     pt: &ProbabilityTables,
-    num_non_zeros_bin: RangedU8<0, 7>,
-    est_eob: u8,
+    num_non_zeros_bin: RangedUsize<0, 7>,
+    est_eob: RangedUsize<0, 7>,
 ) -> Result<()> {
     let num_non_zeros_edge;
 
@@ -509,7 +508,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
         .write_non_zero_edge_count::<W, HORIZONTAL>(
             bool_writer,
             est_eob,
-            num_non_zeros_bin,
+            num_non_zeros_bin.into(),
             num_non_zeros_edge,
         )
         .context()?;
@@ -527,7 +526,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
 
     let mut coord_tr = delta;
 
-    if let Some(mut n) = RangedU8::<1, 7>::new(num_non_zeros_edge) {
+    if let Some(mut n) = RangedUsize::<1, 7>::new(num_non_zeros_edge) {
         for _lane in 0..7 {
             let best_prior =
                 pt.calc_coefficient_context8_lak::<ALL_PRESENT, HORIZONTAL>(qt, coord_tr, pred);
@@ -539,7 +538,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
                     bool_writer,
                     qt,
                     coef,
-                    RangedU32::new(zig15offset).unwrap(),
+                    RangedUsize::new(zig15offset).unwrap(),
                     n,
                     best_prior,
                 )

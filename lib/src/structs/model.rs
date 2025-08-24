@@ -8,7 +8,7 @@ use std::cmp;
 use std::io::{Read, Write};
 
 use default_boxed::DefaultBoxed;
-use deranged::{RangedU32, RangedU8};
+use deranged::RangedUsize;
 
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, u16_bit_length, u32_bit_length};
@@ -188,9 +188,9 @@ impl ModelPerColor {
     pub fn read_coef<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        zig49: RangedU32<0, 48>,
-        num_non_zeros_bin: RangedU8<0, 8>,
-        best_prior_bit_len: RangedU32<0, 11>,
+        zig49: RangedUsize<0, 48>,
+        num_non_zeros_bin: RangedUsize<0, 8>,
+        best_prior_bit_len: RangedUsize<0, 11>,
     ) -> std::io::Result<i16> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
@@ -211,9 +211,9 @@ impl ModelPerColor {
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
         coef: i16,
-        zig49: RangedU32<0, 48>,
-        num_non_zeros_bin: RangedU8<0, 8>,
-        best_prior_bit_len: RangedU32<0, 11>,
+        zig49: RangedUsize<0, 48>,
+        num_non_zeros_bin: RangedUsize<0, 8>,
+        best_prior_bit_len: RangedUsize<0, 11>,
     ) -> Result<()> {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
@@ -234,19 +234,18 @@ impl ModelPerColor {
     #[inline(always)]
     fn get_coef_branches(
         &mut self,
-        num_non_zeros_bin: RangedU8<0, 8>,
-        zig49: RangedU32<0, 48>,
-        best_prior_bit_len: RangedU32<0, 11>,
+        num_non_zeros_bin: RangedUsize<0, 8>,
+        zig49: RangedUsize<0, 48>,
+        best_prior_bit_len: RangedUsize<0, 11>,
     ) -> (
         &mut [Branch; MAX_EXPONENT],
         &mut Branch,
         &mut [Branch; COEF_BITS],
     ) {
-        let exp = &mut self.counts[num_non_zeros_bin.get() as usize][zig49.get() as usize]
-            .exponent_counts[best_prior_bit_len.get() as usize];
+        let exp = &mut self.counts[num_non_zeros_bin.get()][zig49.get()].exponent_counts
+            [best_prior_bit_len.get()];
         let sign = &mut self.sign_counts[0][0];
-        let bits = &mut self.counts[num_non_zeros_bin.get() as usize][zig49.get() as usize]
-            .residual_noise_counts;
+        let bits = &mut self.counts[num_non_zeros_bin.get()][zig49.get()].residual_noise_counts;
 
         (exp, sign, bits)
     }
@@ -254,8 +253,8 @@ impl ModelPerColor {
     pub fn write_non_zero_7x7_count<W: Write>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        num_non_zeros_7x7_context_bin: RangedU8<0, 8>,
-        num_non_zeros_7x7: u8,
+        num_non_zeros_7x7_context_bin: RangedUsize<0, 8>,
+        num_non_zeros_7x7: usize,
     ) -> Result<()> {
         let num_non_zeros_prob =
             &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin.get())];
@@ -272,9 +271,9 @@ impl ModelPerColor {
     pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
         &mut self,
         bool_writer: &mut VPXBoolWriter<W>,
-        est_eob: u8,
-        num_non_zeros_bin: RangedU8<0, 7>,
-        num_non_zeros_edge: u8,
+        est_eob: RangedUsize<0, 7>,
+        num_non_zeros_bin: RangedUsize<0, 7>,
+        num_non_zeros_edge: usize,
     ) -> Result<()> {
         let prob_edge_eob =
             self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
@@ -291,36 +290,36 @@ impl ModelPerColor {
     pub fn read_non_zero_7x7_count<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        num_non_zeros_7x7_context_bin: RangedU8<0, 8>,
-    ) -> Result<u8> {
+        num_non_zeros_7x7_context_bin: RangedUsize<0, 8>,
+    ) -> Result<usize> {
         let num_non_zeros_prob =
             &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin.get())];
 
         return Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
-            .context()? as u8);
+            .context()?);
     }
 
     pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
-        est_eob: u8,
-        num_non_zeros_bin: RangedU8<0, 7>,
-    ) -> Result<u8> {
+        est_eob: RangedUsize<0, 7>,
+        num_non_zeros_bin: RangedUsize<0, 7>,
+    ) -> Result<usize> {
         let prob_edge_eob =
             self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
 
         return Ok(bool_reader
             .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
-            .context()? as u8);
+            .context()?);
     }
 
     pub fn read_edge_coefficient<R: Read>(
         &mut self,
         bool_reader: &mut VPXBoolReader<R>,
         qt: &QuantizationTables,
-        zig15offset: RangedU32<0, 13>,
-        num_non_zeros_edge: RangedU8<1, 7>,
+        zig15offset: RangedUsize<0, 13>,
+        num_non_zeros_edge: RangedUsize<1, 7>,
         best_prior: i32,
     ) -> Result<i16> {
         // we cap the bit length since the prior prediction can be wonky
@@ -328,8 +327,7 @@ impl ModelPerColor {
         let best_prior_bit_len =
             cmp::min(MAX_EXPONENT - 1, u32_bit_length(best_prior_abs) as usize);
 
-        let length_branches = &mut self.counts_x[num_non_zeros_edge.get() as usize - 1]
-            [zig15offset.get() as usize]
+        let length_branches = &mut self.counts_x[num_non_zeros_edge.get() - 1][zig15offset.get()]
             .exponent_counts[best_prior_bit_len];
 
         let length = bool_reader
@@ -353,9 +351,7 @@ impl ModelPerColor {
             coef = 1;
 
             if length > 1 {
-                let min_threshold: i32 = qt
-                    .get_min_noise_threshold(zig15offset.get() as usize)
-                    .into();
+                let min_threshold: i32 = qt.get_min_noise_threshold(zig15offset.get()).into();
                 let mut i: i32 = length - 2;
 
                 if i >= min_threshold {
@@ -384,9 +380,9 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.counts_x[num_non_zeros_edge.get() as usize - 1]
-                        [zig15offset.get() as usize]
-                        .residual_noise_counts;
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge.get() - 1]
+                        [zig15offset.get()]
+                    .residual_noise_counts;
 
                     coef <<= i + 1;
                     coef |= bool_reader.get_n_bits(
@@ -409,8 +405,8 @@ impl ModelPerColor {
         bool_writer: &mut VPXBoolWriter<W>,
         qt: &QuantizationTables,
         coef: i16,
-        zig15offset: RangedU32<0, 13>,
-        num_non_zeros_edge: RangedU8<1, 7>,
+        zig15offset: RangedUsize<0, 13>,
+        num_non_zeros_edge: RangedUsize<1, 7>,
         best_prior: i32,
     ) -> Result<()> {
         let num_non_zeros_edge_bin = usize::from(num_non_zeros_edge.get()) - 1;
@@ -423,7 +419,7 @@ impl ModelPerColor {
         let abs_coef = coef.unsigned_abs();
         let length = u16_bit_length(abs_coef) as usize;
 
-        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset.get() as usize]
+        let exp_array = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset.get()]
             .exponent_counts[best_prior_bit_len];
 
         if length > MAX_EXPONENT {
@@ -449,8 +445,7 @@ impl ModelPerColor {
             )?;
 
             if length > 1 {
-                let min_threshold =
-                    i32::from(qt.get_min_noise_threshold(zig15offset.get() as usize));
+                let min_threshold = i32::from(qt.get_min_noise_threshold(zig15offset.get()));
                 let mut i: i32 = length as i32 - 2;
 
                 if i >= min_threshold {
@@ -483,8 +478,7 @@ impl ModelPerColor {
                 }
 
                 if i >= 0 {
-                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin]
-                        [zig15offset.get() as usize]
+                    let res_prob = &mut self.counts_x[num_non_zeros_edge_bin][zig15offset.get()]
                         .residual_noise_counts;
 
                     bool_writer
@@ -526,15 +520,13 @@ impl ModelPerColor {
 
     fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
         &mut self,
-        est_eob: u8,
-        num_nonzeros_bin: RangedU8<0, 7>,
+        est_eob: RangedUsize<0, 7>,
+        num_nonzeros_bin: RangedUsize<0, 7>,
     ) -> &mut [Branch; 8] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[est_eob as usize]
-                [num_nonzeros_bin.get() as usize];
+            return &mut self.num_non_zeros_counts8x1[est_eob.get()][num_nonzeros_bin.get()];
         } else {
-            return &mut self.num_non_zeros_counts1x8[est_eob as usize]
-                [num_nonzeros_bin.get() as usize];
+            return &mut self.num_non_zeros_counts1x8[est_eob.get()][num_nonzeros_bin.get()];
         }
     }
 }
@@ -668,16 +660,16 @@ impl Model {
         );
 
         let abs_coef = coef.unsigned_abs();
-        let coef_bit_len = u16_bit_length(abs_coef);
+        let coef_bit_len = u16_bit_length(abs_coef) as usize;
 
-        if coef_bit_len > A as u8 {
+        if coef_bit_len > A {
             return err_exit_code(
                 ExitCode::CoefficientOutOfRange,
                 "coefficient > MAX_EXPONENT",
             );
         }
 
-        bool_writer.put_unary_encoded(coef_bit_len as usize, magnitude_branches, mag_cmp)?;
+        bool_writer.put_unary_encoded(coef_bit_len, magnitude_branches, mag_cmp)?;
         if coef != 0 {
             bool_writer.put_bit(coef > 0, sign_branch, sign_cmp)?;
         }
@@ -692,12 +684,7 @@ impl Model {
                 "Beyond Biggest bit must be zero"
             );
 
-            bool_writer.put_n_bits(
-                abs_coef as usize,
-                coef_bit_len as usize - 1,
-                bits_branch,
-                bits_cmp,
-            )?;
+            bool_writer.put_n_bits(abs_coef as usize, coef_bit_len - 1, bits_branch, bits_cmp)?;
         }
 
         Ok(())

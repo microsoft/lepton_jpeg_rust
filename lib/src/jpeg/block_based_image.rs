@@ -279,7 +279,7 @@ impl AlignedBlock {
     }
 
     #[inline(always)]
-    pub fn get_count_of_non_zeros_7x7(&self) -> u8 {
+    pub fn get_count_of_non_zeros_7x7(&self) -> usize {
         /// counts a row of non-zero values in the 7x7 block
         #[inline(always)]
         fn count_non_zeros_7x7_row(v: i16x8) -> i16x8 {
@@ -291,7 +291,7 @@ impl AlignedBlock {
             sum += count_non_zeros_7x7_row(self.as_i16x8(i));
         }
 
-        return sum.reduce_add() as u8;
+        return sum.reduce_add() as usize;
     }
 
     #[inline(always)]
