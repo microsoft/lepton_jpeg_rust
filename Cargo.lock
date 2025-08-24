@@ -131,6 +131,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "deranged"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75d7cc94194b4dd0fa12845ef8c911101b7f37633cda14997a6e82099aa0b693"
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +326,7 @@ dependencies = [
  "byteorder",
  "cpu-time",
  "default-boxed",
+ "deranged 0.5.2",
  "flate2",
  "git-version",
  "log",
@@ -696,7 +703,7 @@ version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e7868883861bd0e56d9ac6efcaaca0d6d5d82a2a7ec8209ff492c07cf37b21"
 dependencies = [
- "deranged",
+ "deranged 0.3.11",
  "itoa",
  "libc",
  "num-conv",
