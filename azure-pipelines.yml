@@ -43,7 +43,7 @@ extends:
     sdl:
       sourceAnalysisPool:
         # SDL tools only support Windows.
-        name: RustSdkValidation
+        name: Azure Pipelines
         os: windows
         image: Windows2025_1ESPT
     stages:
