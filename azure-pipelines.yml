@@ -53,6 +53,66 @@ extends:
                   failOnAlert: true
               postBuildSteps:
                 - script: |
-                    echo "Running post-build steps..."
-                    echo Add your post-build commands here
-                  displayName: "Post-build steps"
+                    cargo build --workspace --locked
+
+                  displayName: "Build debug"
+                - script: |
+                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
+                    cargo build --workspace --locked --release 2>&1
+                    copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
+                    copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
+                    copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
+                    copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
+                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
+                    cargo build --workspace --locked --release 2>&1
+
+                  displayName: 'Build Release'
+                - task: UseDotNet@2
+                  inputs:
+                    packageType: 'sdk'
+                    version: '6.x'
+              
+                - task: EsrpCodeSigning@5
+                  inputs:
+                    ConnectedServiceName: 'ESRP CodeSigningV2-OneDrive Service'
+                    AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309' 
+                    AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2' 
+                    AuthAKVName: 'ODSP-ESRP' 
+                    AuthCertName: 'ODSP-ESRP-Auth-V2' 
+                    AuthSignCertName: 'CodeSigningCertificate'
+                    FolderPath: '$(Build.SourcesDirectory)'
+                    Pattern: '
+                      target\debug\lepton_jpeg.dll,
+                      target\debug\lepton_jpeg_util.exe,
+                      target\release\lepton_jpeg.dll,
+                      target\release\lepton_jpeg_avx2.dll,
+                      target\release\lepton_jpeg_util.exe,
+                      target\release\lepton_jpeg_util_avx2.exe'
+                    signConfigType: 'inlineSignParams'
+                    inlineOperation: |
+                      [
+                      {
+                        "KeyCode": "CP-401405",
+                        "OperationCode": "SigntoolSign",
+                        "ToolName": "sign",
+                        "ToolVersion": "1.0",
+                        "Parameters": {
+                        "OpusName": "Microsoft",
+                        "OpusInfo": "https://www.microsoft.com",
+                        "FileDigest": "/fd SHA256",
+                        "PageHash": "/NPH",
+                        "TimeStamp": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+                        }
+                      },
+                      {
+                        "KeyCode": "CP-401405",
+                        "OperationCode": "SigntoolVerify",
+                        "ToolName": "sign",
+                        "ToolVersion": "1.0",
+                        "Parameters": {}
+                      }
+                      ]
+                    SessionTimeout: '60'
+                    MaxConcurrency: '50'
+                    MaxRetryAttempts: '5'
+                    PendingAnalysisWaitTimeoutMinutes: '5'
