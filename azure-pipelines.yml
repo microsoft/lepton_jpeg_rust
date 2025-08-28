@@ -140,11 +140,6 @@ extends:
                     
                     TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
-                - task: PublishBuildArtifacts@1
-                  displayName: 'Publish Artifact'
-                  inputs:
-                    ArtifactName: 'drop_lepton_jpeg_rust'
-
                 - task: PublishSymbols@2
                   displayName: 'Publish symbols copy'
                   inputs:
@@ -158,11 +153,11 @@ extends:
                     command: pack
                     packagesToPack: package/Lepton.Jpeg.Rust.nuspec
 
-                - task: NuGetCommand@2
+                - task: 1ES.PublishNuGet@1
                   displayName: 'NuGet push'
+                  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
                   inputs:
-                    command: push
+                    packageParentPath: '$(Pipeline.Workspace)'
                     packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
                     publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
                     allowPackageConflicts: true
-                  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
