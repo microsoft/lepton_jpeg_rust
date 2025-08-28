@@ -53,9 +53,21 @@ extends:
                   failOnAlert: true
               postBuildSteps:
                 - script: |
-                    cargo build --workspace --locked
+                    cargo build --workspace --locked 2>&1
 
                   displayName: "Build debug"
+
+                - script: |
+                    cargo install junit-test
+                    junit-test
+                    copy junit.xml $(System.DefaultWorkingDirectory)\TEST-rust.xml
+                  displayName: 'Test debug'
+
+                - task: PublishTestResults@2
+                  displayName: 'Publish Test Results **/TEST-*.xml'
+                  inputs:
+                    mergeTestResults: true
+
                 - script: |
                     set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
                     cargo build --workspace --locked --release 2>&1
@@ -67,6 +79,7 @@ extends:
                     cargo build --workspace --locked --release 2>&1
 
                   displayName: 'Build Release'
+                  
                 - task: UseDotNet@2
                   inputs:
                     packageType: 'sdk'
