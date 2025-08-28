@@ -8,7 +8,7 @@ parameters:
   type: object
   # You should change the pool name defaults to a 1ES PT pool for your project.
   default:
-  - target: i686-pc-windows-msvc
+  - target: x86_64-pc-windows-msvc
     pool:
       name: Azure-Pipelines-1ESPT-ExDShared
       os: windows
