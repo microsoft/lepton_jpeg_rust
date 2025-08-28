@@ -64,9 +64,13 @@ extends:
                   cratesIoFeed: $(cratesIoFeed)
                 target: ${{ target.target }}
                 profile: ${{ profile }}
+                command: custom
               sdl:
                 componentgovernance:
                   enabled: true
                   failOnAlert: true
-
-
+              postBuildSteps:
+                - script: |
+                    echo "Running post-build steps..."
+                    # Add your post-build commands here
+                  displayName: "Post-build steps"
