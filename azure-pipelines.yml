@@ -15,7 +15,7 @@ parameters:
   default:
   - target: i686-pc-windows-msvc
     pool:
-      name: Azure Pipelines
+      name: Azure-Pipelines-1ESPT-ExDShared
       os: windows
       image: Windows2025_1ESPT
 - name: profiles
@@ -43,7 +43,7 @@ extends:
     sdl:
       sourceAnalysisPool:
         # SDL tools only support Windows.
-        name: Azure Pipelines
+        name: Azure-Pipelines-1ESPT-ExDShared
         os: windows
         image: Windows2025_1ESPT
     stages:
