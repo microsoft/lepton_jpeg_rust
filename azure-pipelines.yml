@@ -62,6 +62,7 @@ extends:
               workflow: Rust
               rust:
                 rustToolchain:
+                  version: ms-1.89
                   toolchainFeed: $(toolchainFeed)
                   cratesIoFeed: $(cratesIoFeed)
                 target: ${{ target.target }}
