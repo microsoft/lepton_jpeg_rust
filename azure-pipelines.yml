@@ -116,3 +116,40 @@ extends:
                     MaxConcurrency: '50'
                     MaxRetryAttempts: '5'
                     PendingAnalysisWaitTimeoutMinutes: '5'
+
+                - task: CopyFiles@2
+                  displayName: 'Copy Rust output files to: $(Build.ArtifactStagingDirectory) copy'
+                  inputs:
+                    SourceFolder: '$(Build.SourcesDirectory)'
+                    Contents: |
+                    target\debug\?(*.dll|*.exe|*.pdb)
+                    target\release\?(*.dll|*.exe|*.pdb)
+                    
+                    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+                - task: PublishBuildArtifacts@1
+                  displayName: 'Publish Artifact'
+                  inputs:
+                    ArtifactName: 'drop_lepton_jpeg_rust'
+
+                - task: PublishSymbols@2
+                  displayName: 'Publish symbols copy'
+                  inputs:
+                    SymbolsFolder: '$(Build.ArtifactStagingDirectory)'
+                    SearchPattern: '**\*.pdb'
+                    SymbolServerType: TeamServices
+
+                - task: NuGetCommand@2
+                  displayName: 'NuGet pack'
+                  inputs:
+                    command: pack
+                    packagesToPack: package/Lepton.Jpeg.Rust.nuspec
+
+                - task: NuGetCommand@2
+                  displayName: 'NuGet push'
+                  inputs:
+                    command: push
+                    packagesToPush: '$(Build.ArtifactStagingDirectory)\*.nupkg'
+                    publishVstsFeed: 'b87285d9-99ab-48db-a000-cb0cc8a2a1b5'
+                    allowPackageConflicts: true
+                  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'), eq(variables['Build.SourceBranch'], 'main'))
