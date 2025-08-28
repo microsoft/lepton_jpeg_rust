@@ -1,24 +1,6 @@
 trigger:
 - main
 
-# 1ES Pipeline template does not support matrix strategy. Instead, we will use a template to define the matrix.
-# Note that one can also use variables to define the matrix, but we will use a template for this example to avoid string manipulation.
-parameters:
-- name: targets
-  type: object
-  # You should change the pool name defaults to a 1ES PT pool for your project.
-  default:
-  - target: x86_64-pc-windows-msvc
-    pool:
-      name: Azure-Pipelines-1ESPT-ExDShared
-      os: windows
-      image: windows-latest
-- name: profiles
-  type: object
-  default:
-  - dev
-  - release
-
 resources:
   repositories:
   - repository: 1ESPipelineTemplates
@@ -49,11 +31,12 @@ extends:
     - stage: BuildStage
       displayName: 🏗️ Cargo build
       jobs:
-      - ${{ each target in parameters.targets }}:
-        - ${{ each profile in parameters.profiles }}:
-          - job: BuildJob_${{ target.pool.os }}_${{ profile }}
-            displayName: 🏗️ Cargo build for ${{ target.target }} ${{ profile }}
-            pool: ${{ target.pool }}
+          - job: BuildJob
+            displayName: 🏗️ Cargo build
+            pool:
+              name: Azure-Pipelines-1ESPT-ExDShared
+              os: windows
+              image: windows-latest
             templateContext:
               type: buildJob
               workflow: Rust
@@ -62,8 +45,7 @@ extends:
                   version: ms-prod-1.88
                   toolchainFeed: $(toolchainFeed)
                   cratesIoFeed: $(cratesIoFeed)
-                target: ${{ target.target }}
-                profile: ${{ profile }}
+                target: x86_64-pc-windows-msvc
                 command: custom
               sdl:
                 componentgovernance:
@@ -72,5 +54,5 @@ extends:
               postBuildSteps:
                 - script: |
                     echo "Running post-build steps..."
-                    # Add your post-build commands here
+                    echo Add your post-build commands here
                   displayName: "Post-build steps"
