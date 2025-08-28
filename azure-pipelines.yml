@@ -15,7 +15,7 @@ parameters:
   default:
   - target: i686-pc-windows-msvc
     pool:
-      name: RustSdkValidation
+      name: Azure Pipelines
       os: windows
       image: Windows2025_1ESPT
 - name: profiles
