@@ -17,7 +17,7 @@ parameters:
     pool:
       name: Azure-Pipelines-1ESPT-ExDShared
       os: windows
-      image: Windows2025_1ESPT
+      image: windows-latest
 - name: profiles
   type: object
   default:
@@ -45,7 +45,7 @@ extends:
         # SDL tools only support Windows.
         name: Azure-Pipelines-1ESPT-ExDShared
         os: windows
-        image: Windows2025_1ESPT
+        image: windows-latest
     stages:
 
     ## For more details on the Rust build workflow, see https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/1es-pipeline-templates/features/buildworkflows/rust
