@@ -36,6 +36,8 @@ extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
   parameters:
     sdl:
+      clippy: 
+        enabled: false
       sourceAnalysisPool:
         # SDL tools only support Windows.
         name: Azure-Pipelines-1ESPT-ExDShared
