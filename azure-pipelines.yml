@@ -135,8 +135,8 @@ extends:
                   inputs:
                     SourceFolder: '$(Build.SourcesDirectory)'
                     Contents: |
-                    target\debug\?(*.dll|*.exe|*.pdb)
-                    target\release\?(*.dll|*.exe|*.pdb)
+                      target\debug\?(*.dll|*.exe|*.pdb)
+                      target\release\?(*.dll|*.exe|*.pdb)
                     
                     TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
