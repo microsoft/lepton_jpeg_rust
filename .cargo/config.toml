@@ -1,5 +1,0 @@
-[registries]
-#MyRustRegistry = { index = "sparse+https://onedrive.pkgs.visualstudio.com/b52099a6-3b13-4b08-9270-a07884a10e3d/_packaging/RustCratesIO/Cargo/index/" }
-
-[source.crates-io]
-#replace-with = "MyRustRegistry"
