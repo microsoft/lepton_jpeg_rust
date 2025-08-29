@@ -17,6 +17,8 @@ variables:
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
   parameters:
+    settings:
+      networkIsolationPolicy: Preferred,CFSClean
     sdl:
       clippy: 
         enabled: false
