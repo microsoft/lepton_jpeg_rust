@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use crate::consts::{JpegDecodeStatus, JpegType};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::{LeptonError, Result};
 
 use super::jpeg_header::{HuffCodes, JpegHeader};
@@ -44,7 +44,7 @@ impl JpegPositionState {
         let cmp = jf.cs_cmp[0];
         let mcumul = jf.cmp_info[cmp].sfv * jf.cmp_info[cmp].sfh;
 
-        let state = JpegPositionState {
+        JpegPositionState {
             cmp,
             mcu,
             csc: 0,
@@ -57,8 +57,7 @@ impl JpegPositionState {
             },
             eobrun: 0,
             prev_eobrun: 0,
-        };
-        return state;
+        }
     }
 
     pub fn get_mcu(&self) -> u32 {
@@ -118,7 +117,7 @@ impl JpegPositionState {
             }
         }
 
-        return JpegDecodeStatus::DecodeInProgress;
+        JpegDecodeStatus::DecodeInProgress
     }
 
     /// calculates next position for MCU
@@ -189,7 +188,7 @@ impl JpegPositionState {
             self.dpos = self.mcu;
         }
 
-        return sta;
+        sta
     }
 
     /// skips the eobrun, calculates next position
@@ -267,14 +266,12 @@ impl JpegPositionState {
     ) -> Result<()> {
         // if we got an empty block, make sure that the previous zero run was as high as it could be
         // otherwise we won't reencode the file in the same way
-        if is_current_block_empty {
-            if self.prev_eobrun > 0 && self.prev_eobrun < hc.max_eob_run - 1 {
-                return err_exit_code(
+        if is_current_block_empty && self.prev_eobrun > 0 && self.prev_eobrun < hc.max_eob_run - 1 {
+            return err_exit_code(
                     ExitCode::UnsupportedJpeg,
                     format!("non optimial eobruns not supported (could have encoded up to {0} zero runs in a row, but only did {1} followed by {2}",
                         hc.max_eob_run, self.prev_eobrun + 1,
                         self.eobrun + 1).as_str());
-            }
         }
 
         self.prev_eobrun = self.eobrun;

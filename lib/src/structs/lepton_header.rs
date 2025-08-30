@@ -3,16 +3,16 @@ use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use default_boxed::DefaultBoxed;
+use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
 
+use crate::EnabledFeatures;
 use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::EnabledFeatures;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
 
@@ -77,7 +77,7 @@ impl LeptonHeader {
         // flags to detect the SIMD flavor that was used to encode, since
         // previously the encoder would generate different incompatible files depending on
         // whether SIMD or scalar was selected by the build options.
-        if header[8] == 'M' as u8 && header[9] == 'S' as u8 {
+        if header[8] == b'M' && header[9] == b'S' {
             self.uncompressed_lepton_header_size =
                 Some(u32::from_le_bytes(header[10..14].try_into().unwrap()));
 
@@ -137,7 +137,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.rinfo.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor, &enabled_features)
+                .parse(&mut header_data_cursor, enabled_features)
                 .context()?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -219,11 +219,10 @@ impl LeptonHeader {
 
         let hdrs = header_reader.read_u32::<LittleEndian>()? as usize;
 
-        let mut hdr_data = Vec::new();
-        hdr_data.resize(hdrs, 0);
+        let mut hdr_data = vec![0; hdrs];
         header_reader.read_exact(&mut hdr_data)?;
 
-        if self.rinfo.garbage_data.len() == 0 {
+        if self.rinfo.garbage_data.is_empty() {
             // if we don't have any garbage, assume 0xFF 0xD9 EOI (end of image marker)
 
             // Kind of broken logic since this assumes a EOI even if the file was
@@ -280,8 +279,7 @@ impl LeptonHeader {
                 // read number of false set RST markers per scan from file
                 let rst_err_count = header_reader.read_u32::<LittleEndian>()? as usize;
 
-                let mut rst_err_data = Vec::<u8>::new();
-                rst_err_data.resize(rst_err_count, 0);
+                let mut rst_err_data = vec![0; rst_err_count];
 
                 header_reader.read_exact(&mut rst_err_data)?;
 
@@ -294,8 +292,7 @@ impl LeptonHeader {
                 // read garbage (data after end of JPG) from file
                 let garbage_size = header_reader.read_u32::<LittleEndian>()? as usize;
 
-                let mut garbage_data_array = Vec::<u8>::new();
-                garbage_data_array.resize(garbage_size, 0);
+                let mut garbage_data_array = vec![0; garbage_size];
 
                 header_reader.read_exact(&mut garbage_data_array)?;
                 self.rinfo.garbage_data = garbage_data_array;
@@ -321,7 +318,7 @@ impl LeptonHeader {
         let remaining = header_reader.read_to_end(&mut remaining_buf)?;
         assert!(remaining == 0);
 
-        return Ok(hdr_data);
+        Ok(hdr_data)
     }
 
     pub fn write_lepton_header<W: Write>(
@@ -368,8 +365,8 @@ impl LeptonHeader {
 
         // Original lepton format reserves 12 bytes for git revision. We use this space for additional info
         // to store information about the version that wrote this.
-        writer.write_u8('M' as u8)?;
-        writer.write_u8('S' as u8)?;
+        writer.write_u8(b'M')?;
+        writer.write_u8(b'S')?;
 
         // write the uncompressed lepton header size
         // (historical, used by a previous version of the decoder)
@@ -437,7 +434,7 @@ impl LeptonHeader {
     }
 
     fn write_lepton_jpeg_restarts_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
-        if self.rinfo.rst_cnt.len() > 0 {
+        if !self.rinfo.rst_cnt.is_empty() {
             // marker: CRS
             mrw.write_all(&LEPTON_HEADER_JPG_RESTARTS_MARKER)?;
 
@@ -453,7 +450,7 @@ impl LeptonHeader {
 
     fn write_lepton_jpeg_restart_errors_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
         // write number of false set RST markers per scan (if available) to file
-        if self.rinfo.rst_err.len() > 0 {
+        if !self.rinfo.rst_err.is_empty() {
             // marker: "FRS" + [number of scans]
             mrw.write_all(&LEPTON_HEADER_JPG_RESTART_ERRORS_MARKER)?;
 
@@ -491,7 +488,7 @@ impl LeptonHeader {
         prefix_garbage: bool,
     ) -> Result<()> {
         // write garbage (if any) to file
-        if self.rinfo.garbage_data.len() > 0 {
+        if !self.rinfo.garbage_data.is_empty() {
             // marker: "PGR/GRB" + [size of garbage]
             if prefix_garbage {
                 mrw.write_all(&LEPTON_HEADER_PREFIX_GARBAGE_MARKER)?;

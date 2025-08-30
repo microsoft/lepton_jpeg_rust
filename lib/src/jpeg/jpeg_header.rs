@@ -36,11 +36,11 @@ use std::fmt::Debug;
 use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
+use crate::LeptonError;
 use crate::consts::JpegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::LeptonError;
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 
 use super::component_info::ComponentInfo;
 use super::jpeg_code;
@@ -155,7 +155,7 @@ pub fn parse_jpeg_header<R: Read>(
     if jpeg_header.parse(&mut mirror, enabled_features).context()? {
         // append the header if it was not the end of file marker
         rinfo.raw_jpeg_header.append(&mut output);
-        return Ok(true);
+        Ok(true)
     } else {
         // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
         // but we don't want the EOI since that goes into the garbage data.
@@ -163,7 +163,7 @@ pub fn parse_jpeg_header<R: Read>(
             rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
         }
 
-        return Ok(false);
+        Ok(false)
     }
 }
 
@@ -258,7 +258,7 @@ impl HuffCodes {
                 j += 1;
             }
 
-            code = code << 1;
+            code <<= 1;
         }
 
         hc.post_initialize();
@@ -514,7 +514,7 @@ enum ParseSegmentResult {
 
 impl Default for JpegHeader {
     fn default() -> Self {
-        return JpegHeader {
+        JpegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
@@ -541,7 +541,7 @@ impl Default for JpegHeader {
             cs_sah: 0,
             cs_sal: 0,
             cs_cmp: [0; 4],
-        };
+        }
     }
 }
 
@@ -661,7 +661,7 @@ impl JpegHeader {
             }
         }
 
-        return Ok(true);
+        Ok(true)
     }
 
     /// verifies that the huffman tables for the given types are present for the current scan, and if not, return an error
@@ -889,7 +889,7 @@ impl JpegHeader {
 
                 ensure_space(segment,hpos, 3).context()?;
 
-                self.cs_from = segment[hpos + 0];
+                self.cs_from = segment[hpos];
                 self.cs_to = segment[hpos + 1];
                 self.cs_sah = lbits(segment[hpos + 2], 4);
                 self.cs_sal = rbits(segment[hpos + 2], 4);
@@ -1096,7 +1096,7 @@ impl JpegHeader {
                     return err_exit_code(ExitCode::UnsupportedJpeg, format!("unknown marker found: FF {0:X}", btype).as_str());
                 }
         }
-        return Ok(ParseSegmentResult::Continue);
+        Ok(ParseSegmentResult::Continue)
     }
 }
 

@@ -33,11 +33,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use bytemuck::{cast, cast_ref};
-use wide::{i16x16, CmpEq};
+use wide::{CmpEq, i16x16};
 
 use crate::consts::{JpegDecodeStatus, JpegType};
 use crate::helpers::u16_bit_length;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 
 use crate::Result;
 
@@ -212,7 +212,7 @@ fn recode_one_mcu_row(
                     &block,
                 );
 
-                sta = state.next_mcu_pos(&jf);
+                sta = state.next_mcu_pos(jf);
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
                 if jf.cs_sah == 0 {
@@ -326,7 +326,7 @@ fn recode_one_mcu_row(
 
             // status 1 means restart
             if jf.rsti > 0 {
-                if rinfo.rst_cnt.len() == 0
+                if rinfo.rst_cnt.is_empty()
                     || (!rinfo.rst_cnt_set)
                     || cumulative_reset_markers < rinfo.rst_cnt[current_scan_index]
                 {
@@ -641,7 +641,7 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
     use std::io::Cursor;
 
     use super::bit_reader::BitReader;
-    use super::jpeg_header::{generate_huff_table_from_distribution, HuffTree};
+    use super::jpeg_header::{HuffTree, generate_huff_table_from_distribution};
     use super::jpeg_read::decode_block_seq;
 
     let mut bitwriter = BitWriter::new(1024);

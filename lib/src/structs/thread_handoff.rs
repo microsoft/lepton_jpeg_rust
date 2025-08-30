@@ -51,7 +51,7 @@ impl ThreadHandoff {
         }
 
         // last LumaYEnd is not serialzed, filled in later
-        return Ok(retval);
+        Ok(retval)
     }
 
     pub fn serialize<W: Write>(data: &Vec<ThreadHandoff>, retval: &mut W) -> Result<()> {
@@ -72,7 +72,7 @@ impl ThreadHandoff {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     // Combine two ThreadHandoff objects into a range, starting with the "from" segment, and
@@ -81,12 +81,11 @@ impl ThreadHandoff {
         from: &ThreadHandoff,
         to: &ThreadHandoff,
     ) -> usize {
-        return (to.segment_offset_in_file - from.segment_offset_in_file + to.segment_size)
-            as usize;
+        (to.segment_offset_in_file - from.segment_offset_in_file + to.segment_size) as usize
     }
 
     pub fn combine_thread_ranges(from: &ThreadHandoff, to: &ThreadHandoff) -> ThreadHandoff {
-        let ret = ThreadHandoff {
+        ThreadHandoff {
             segment_offset_in_file: from.segment_offset_in_file,
             luma_y_start: from.luma_y_start,
             overhang_byte: from.overhang_byte,
@@ -94,8 +93,6 @@ impl ThreadHandoff {
             luma_y_end: to.luma_y_end,
             segment_size: ThreadHandoff::get_combine_thread_range_segment_size(from, to) as u32,
             last_dc: from.last_dc,
-        };
-
-        return ret;
+        }
     }
 }

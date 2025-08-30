@@ -25,7 +25,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 use std::io::{Read, Result};
 
 use crate::lepton_error;
-use crate::lepton_error::{err_exit_code, ExitCode};
+use crate::lepton_error::{ExitCode, err_exit_code};
 use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;
@@ -60,7 +60,7 @@ impl<R: Read> VPXBoolReader<R> {
             return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
         }
 
-        return Ok(r);
+        Ok(r)
     }
 
     pub fn drain_stats(&mut self) -> Metrics {
@@ -321,7 +321,7 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value;
         self.range = tmp_range;
 
-        return Ok(coef);
+        Ok(coef)
     }
 
     #[inline(always)]
@@ -340,7 +340,7 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value;
         self.range = tmp_range;
 
-        return Ok(bit);
+        Ok(bit)
     }
 
     // Fill `tmp_value` maximally still preserving space for the guard bit,
@@ -369,7 +369,7 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
-        return Ok(tmp_value);
+        Ok(tmp_value)
     }
 }
 

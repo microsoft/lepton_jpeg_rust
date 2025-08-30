@@ -11,13 +11,14 @@ use bytemuck::cast;
 use default_boxed::DefaultBoxed;
 use wide::i32x8;
 
+use crate::Result;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::jpeg::row_spec::RowSpec;
 use crate::jpeg::truncate_components::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::metrics::Metrics;
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
@@ -25,7 +26,6 @@ use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::vpx_bool_writer::VPXBoolWriter;
-use crate::Result;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -346,7 +346,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     // and transposed raster of dequantized DCT coefficients with 0 in DC
     let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
         neighbors_data,
-        &here_tr,
+        here_tr,
         model_per_color,
         bool_writer,
         qt,
@@ -359,8 +359,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // finally the DC coefficient (at 0,0)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
+    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         here_tr.get_dc(),
@@ -459,11 +458,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 }
 
 fn count_non_zero(v: i16) -> u8 {
-    if v == 0 {
-        0
-    } else {
-        1
-    }
+    if v == 0 { 0 } else { 1 }
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
@@ -487,7 +482,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             + count_non_zero(block.get_coefficient(6))
             + count_non_zero(block.get_coefficient(7));
     } else {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient(1 * 8))
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(8))
             + count_non_zero(block.get_coefficient(2 * 8))
             + count_non_zero(block.get_coefficient(3 * 8))
             + count_non_zero(block.get_coefficient(4 * 8))

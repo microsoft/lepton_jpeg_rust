@@ -11,7 +11,7 @@ use default_boxed::DefaultBoxed;
 
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, u16_bit_length, u32_bit_length};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use crate::structs::quantization_tables::QuantizationTables;
@@ -194,7 +194,7 @@ impl ModelPerColor {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
-        return Model::read_length_sign_coef(
+        Model::read_length_sign_coef(
             bool_reader,
             exp,
             sign,
@@ -202,7 +202,7 @@ impl ModelPerColor {
             ModelComponent::Coef(ModelSubComponent::Exp),
             ModelComponent::Coef(ModelSubComponent::Sign),
             ModelComponent::Coef(ModelSubComponent::Noise),
-        );
+        )
     }
 
     #[inline(never)]
@@ -217,7 +217,7 @@ impl ModelPerColor {
         let (exp, sign, bits) =
             self.get_coef_branches(num_non_zeros_bin, zig49, best_prior_bit_len);
 
-        return Model::write_length_sign_coef(
+        Model::write_length_sign_coef(
             bool_writer,
             coef,
             exp,
@@ -227,7 +227,7 @@ impl ModelPerColor {
             ModelComponent::Coef(ModelSubComponent::Sign),
             ModelComponent::Coef(ModelSubComponent::Noise),
         )
-        .context();
+        .context()
     }
 
     #[inline(always)]
@@ -272,13 +272,13 @@ impl ModelPerColor {
         let num_non_zeros_prob =
             &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
-        return bool_writer
+        bool_writer
             .put_grid(
                 num_non_zeros_7x7,
                 num_non_zeros_prob,
                 ModelComponent::NonZero7x7Count,
             )
-            .context();
+            .context()
     }
 
     pub fn write_non_zero_edge_count<W: Write, const HORIZONTAL: bool>(
@@ -291,13 +291,13 @@ impl ModelPerColor {
         let prob_edge_eob =
             self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
 
-        return bool_writer
+        bool_writer
             .put_grid(
                 num_non_zeros_edge,
                 prob_edge_eob,
                 ModelComponent::NonZeroEdgeCount,
             )
-            .context();
+            .context()
     }
 
     pub fn read_non_zero_7x7_count<R: Read>(
@@ -308,9 +308,9 @@ impl ModelPerColor {
         let num_non_zeros_prob =
             &mut self.num_non_zeros_counts7x7[usize::from(num_non_zeros_7x7_context_bin)];
 
-        return Ok(bool_reader
+        Ok(bool_reader
             .get_grid(num_non_zeros_prob, ModelComponent::NonZero7x7Count)
-            .context()? as u8);
+            .context()? as u8)
     }
 
     pub fn read_non_zero_edge_count<R: Read, const HORIZONTAL: bool>(
@@ -322,9 +322,9 @@ impl ModelPerColor {
         let prob_edge_eob =
             self.get_non_zero_counts_edge_mut::<HORIZONTAL>(est_eob, num_non_zeros_bin);
 
-        return Ok(bool_reader
+        Ok(bool_reader
             .get_grid(prob_edge_eob, ModelComponent::NonZeroEdgeCount)
-            .context()? as u8);
+            .context()? as u8)
     }
 
     pub fn read_edge_coefficient<R: Read>(
@@ -543,13 +543,13 @@ impl ModelPerColor {
         // interest of correctness we should match the C++ behavior.
         // This function was invoked only with `length - 2 >= min_threshold`,
         // then 2nd array index range can be shortened by 2.
-        return &mut self.residual_threshold_counts[cmp::min(
+        &mut self.residual_threshold_counts[cmp::min(
             ((best_prior_abs & 0xffff) >> min_threshold) as usize,
             self.residual_threshold_counts.len() - 1,
         )][cmp::min(
             (length - min_threshold - 2) as usize,
             self.residual_threshold_counts[0].len() - 1,
-        )];
+        )]
     }
 
     fn get_non_zero_counts_edge_mut<const HORIZONTAL: bool>(
@@ -558,9 +558,9 @@ impl ModelPerColor {
         num_nonzeros_bin: u8,
     ) -> &mut [Branch; 8] {
         if HORIZONTAL {
-            return &mut self.num_non_zeros_counts8x1[est_eob as usize][num_nonzeros_bin as usize];
+            &mut self.num_non_zeros_counts8x1[est_eob as usize][num_nonzeros_bin as usize]
         } else {
-            return &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize];
+            &mut self.num_non_zeros_counts1x8[est_eob as usize][num_nonzeros_bin as usize]
         }
     }
 }
@@ -579,7 +579,7 @@ impl Model {
     ) -> Result<i16> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::read_length_sign_coef(
+        Model::read_length_sign_coef(
             bool_reader,
             exp,
             sign,
@@ -588,7 +588,7 @@ impl Model {
             ModelComponent::DC(ModelSubComponent::Sign),
             ModelComponent::DC(ModelSubComponent::Noise),
         )
-        .context();
+        .context()
     }
 
     pub fn write_dc<W: Write>(
@@ -601,7 +601,7 @@ impl Model {
     ) -> Result<()> {
         let (exp, sign, bits) = self.get_dc_branches(uncertainty, uncertainty2, color_index);
 
-        return Model::write_length_sign_coef(
+        Model::write_length_sign_coef(
             bool_writer,
             coef,
             exp,
@@ -611,7 +611,7 @@ impl Model {
             ModelComponent::DC(ModelSubComponent::Sign),
             ModelComponent::DC(ModelSubComponent::Noise),
         )
-        .context();
+        .context()
     }
 
     #[inline(always)]
@@ -672,7 +672,7 @@ impl Model {
             }
         }
 
-        return Ok(coef);
+        Ok(coef)
     }
 
     fn write_length_sign_coef<const A: usize, const B: usize, W: Write>(

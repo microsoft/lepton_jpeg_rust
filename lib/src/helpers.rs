@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::lepton_error::{ExitCode, LeptonError};
 
@@ -13,10 +13,10 @@ pub fn catch_unwind_result<R>(
     f: impl FnOnce() -> Result<R, LeptonError>,
 ) -> Result<R, LeptonError> {
     match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(r) => r.map_err(|e| e.into()),
+        Ok(r) => r,
         Err(err) => {
             if let Some(message) = err.downcast_ref::<&str>() {
-                Err(LeptonError::new(ExitCode::AssertionFailure, *message))
+                Err(LeptonError::new(ExitCode::AssertionFailure, message))
             } else if let Some(message) = err.downcast_ref::<String>() {
                 Err(LeptonError::new(
                     ExitCode::AssertionFailure,
@@ -34,12 +34,12 @@ pub fn catch_unwind_result<R>(
 
 #[inline(always)]
 pub const fn u16_bit_length(v: u16) -> u8 {
-    return 16 - v.leading_zeros() as u8;
+    16 - v.leading_zeros() as u8
 }
 
 #[inline(always)]
 pub const fn u32_bit_length(v: u32) -> u8 {
-    return 32 - v.leading_zeros() as u8;
+    32 - v.leading_zeros() as u8
 }
 
 pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
@@ -53,7 +53,7 @@ pub fn buffer_prefix_matches_marker<const BS: usize, const MS: usize>(
         }
     }
 
-    return true;
+    true
 }
 
 /// returns true if the 64 bit value contains an 0xff byte.
@@ -100,29 +100,27 @@ pub const fn b_short(v1: u8, v2: u8) -> u16 {
 
 #[inline(always)]
 pub const fn rbits(c: u8, n: usize) -> u8 {
-    return c & (0xFF >> (8 - n));
+    c & (0xFF >> (8 - n))
 }
 
 #[inline(always)]
 pub const fn lbits(c: u8, n: usize) -> u8 {
-    return c >> (8 - n);
+    c >> (8 - n)
 }
 
 #[inline(always)]
 pub const fn bitn(c: u16, n: u16) -> u8 {
-    return ((c >> n) & 0x1) as u8;
+    ((c >> n) & 0x1) as u8
 }
 
 #[inline(always)]
 pub fn calc_sign_index(val: i16) -> usize {
     if val == 0 {
         0
+    } else if val > 0 {
+        1
     } else {
-        if val > 0 {
-            1
-        } else {
-            2
-        }
+        2
     }
 }
 
@@ -136,8 +134,8 @@ pub fn needs_to_grow<T>(v: &Vec<T>, additional: usize) -> bool {
 
 #[cfg(test)]
 pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
-    use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha12Rng;
+    use rand_chacha::rand_core::SeedableRng;
 
     ChaCha12Rng::from_seed(seed)
 }

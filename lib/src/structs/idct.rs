@@ -82,8 +82,16 @@ pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
     ];
 
     // transpose and now do vertical
-    let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
-        i32x8::transpose(row);
+    let [
+        mut yv0,
+        mut yv1,
+        mut yv2,
+        mut yv3,
+        mut yv4,
+        mut yv5,
+        mut yv6,
+        mut yv7,
+    ] = i32x8::transpose(row);
 
     yv0 = (yv0 << 8) + 8192;
     yv4 = yv4 << 8;

@@ -17,7 +17,7 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JpegHeader;
 use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::lepton_file_reader::decode_lepton;
@@ -25,7 +25,7 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool, StreamPosition};
+use crate::{LeptonThreadPool, StreamPosition, consts::*};
 
 /// Reads a jpeg and writes it out as a lepton file
 ///
@@ -82,7 +82,7 @@ pub fn encode_lepton_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
+        encode_lepton(&mut reader, &mut writer, enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -352,7 +352,7 @@ fn split_row_handoffs_to_threads(
         }
     }
 
-    return selected_splits;
+    selected_splits
 }
 
 fn get_number_of_threads_for_encoding(
@@ -374,7 +374,7 @@ fn get_number_of_threads_for_encoding(
         num_threads = cmp::min(4, num_threads);
     }
 
-    return num_threads;
+    num_threads
 }
 
 #[test]

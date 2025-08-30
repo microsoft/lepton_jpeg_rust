@@ -74,7 +74,7 @@ impl<'a> PartialBuffer<'a> {
         }
 
         debug_assert!(retval.len() == size);
-        return Some(retval);
+        Some(retval)
     }
 
     /// Same as take, except returns a fixed size array instead of a vector.

@@ -19,25 +19,25 @@ pub trait SimpleHashProvider {
 
 impl SimpleHashProvider for i32 {
     fn get_u64(&self) -> u64 {
-        return *self as u64;
+        *self as u64
     }
 }
 
 impl SimpleHashProvider for u32 {
     fn get_u64(&self) -> u64 {
-        return *self as u64;
+        *self as u64
     }
 }
 
 impl SimpleHashProvider for u64 {
     fn get_u64(&self) -> u64 {
-        return *self;
+        *self
     }
 }
 
 impl SimpleHash {
     pub fn new() -> Self {
-        return SimpleHash { hash: 0 };
+        SimpleHash { hash: 0 }
     }
 
     pub fn hash<T: SimpleHashProvider>(&mut self, v: T) {
@@ -45,6 +45,6 @@ impl SimpleHash {
     }
 
     pub fn get(&self) -> u32 {
-        return self.hash as u32;
+        self.hash as u32
     }
 }

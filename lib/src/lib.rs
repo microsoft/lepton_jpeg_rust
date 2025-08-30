@@ -50,7 +50,7 @@ pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
-    LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
+    DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
 };
 
 /// Trait for types that can provide the current position in a stream. This
@@ -175,10 +175,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
             let s = format!("{0:?}", lh.jpeg_header);
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
 
-            if !lh
-                .advance_next_header_segment(&enabled_features)
-                .context()?
-            {
+            if !lh.advance_next_header_segment(enabled_features).context()? {
                 break;
             }
         }
@@ -204,5 +201,5 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
         }
     }
 
-    return Ok(());
+    Ok(())
 }

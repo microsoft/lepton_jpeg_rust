@@ -18,15 +18,15 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
-use crate::structs::lepton_header::{LeptonHeader, FIXED_HEADER_SIZE};
+use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool};
+use crate::{LeptonThreadPool, consts::*};
 
 /// Reads an entire lepton file and writes it out as a JPEG
 ///
@@ -50,14 +50,14 @@ pub fn decode_lepton<R: BufRead, W: Write>(
         let buffer = reader.fill_buf().context()?;
 
         done = decoder
-            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX, thread_pool)
+            .process_buffer(buffer, buffer.is_empty(), writer, usize::MAX, thread_pool)
             .context()?;
 
         let amt = buffer.len();
         reader.consume(amt);
     }
 
-    return Ok(decoder.take_metrics());
+    Ok(decoder.take_metrics())
 }
 
 /// this is a debug function only called by the utility EXE code
@@ -95,7 +95,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
         thread_pool,
         |_thread_handoff, image_data, _, _| {
             // just return the image data directly to be merged together
-            return Ok(image_data);
+            Ok(image_data)
         },
     )
     .context()?;
@@ -187,7 +187,7 @@ impl LeptonFileReader {
         mut output_max_size: usize,
         thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
-        if self.input_complete && in_buffer.len() > 0 {
+        if self.input_complete && !in_buffer.is_empty() {
             return err_exit_code(
                 ExitCode::SyntaxError,
                 "ERROR: input was marked as complete but more data was provided",
@@ -307,7 +307,7 @@ impl LeptonFileReader {
                             leftover.remove(0);
                             *offset = 0;
 
-                            if leftover.len() == 0 {
+                            if leftover.is_empty() {
                                 self.state = DecoderState::EOI;
                                 break;
                             }
@@ -367,7 +367,7 @@ impl LeptonFileReader {
         //
         // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
         // data to store any extra RST codes or whatever else might be at the end of the file.
-        if lh.rinfo.rst_err.len() > 0 {
+        if !lh.rinfo.rst_err.is_empty() {
             let mut markers = Vec::new();
 
             let cumulative_reset_markers = if lh.jpeg_header.rsti != 0 {
@@ -449,7 +449,7 @@ impl LeptonFileReader {
                 thread_pool,
                 |_thread_handoff, image_data, _, _| {
                     // just return the image data directly to be merged together
-                    return Ok(image_data);
+                    Ok(image_data)
                 },
             )
             .context()?;
@@ -457,8 +457,8 @@ impl LeptonFileReader {
             DecoderState::ScanProgressive(mux)
         } else {
             let mux = Self::run_lepton_decoder_threads(
-                &lh,
-                &enabled_features,
+                lh,
+                enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
                 |thread_handoff, image_data, jpeg_header, rinfo| {
@@ -474,8 +474,8 @@ impl LeptonFileReader {
                         thread_handoff.segment_size as usize,
                         &restart_info,
                         &image_data,
-                        &jpeg_header,
-                        &rinfo,
+                        jpeg_header,
+                        rinfo,
                     )
                     .context()?;
 
@@ -495,7 +495,7 @@ impl LeptonFileReader {
                         result_buffer.resize(thread_handoff.segment_size as usize, 0);
                     }
 
-                    return Ok(result_buffer);
+                    Ok(result_buffer)
                 },
             )?;
             DecoderState::ScanBaseline(mux)
@@ -598,7 +598,7 @@ impl LeptonFileReader {
         let mut image_data = Vec::new();
         for i in 0..jpeg_header.cmpc {
             image_data.push(BlockBasedImage::new(
-                &jpeg_header,
+                jpeg_header,
                 i,
                 thread_handoff.luma_y_start,
                 if is_last_thread {
@@ -614,7 +614,7 @@ impl LeptonFileReader {
 
         metrics.merge_from(
             lepton_decode_row_range(
-                &qt,
+                qt,
                 &rinfo.truncate_components,
                 &mut image_data,
                 reader,
@@ -622,7 +622,7 @@ impl LeptonFileReader {
                 thread_handoff.luma_y_end,
                 is_last_thread,
                 true,
-                &features,
+                features,
             )
             .context()?,
         );

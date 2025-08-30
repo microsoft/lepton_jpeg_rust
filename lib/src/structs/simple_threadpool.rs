@@ -13,8 +13,8 @@
 /// No unsafe code is used.
 use std::{
     sync::{
-        mpsc::{channel, Sender},
         LazyLock, Mutex,
+        mpsc::{Sender, channel},
     },
     thread::{self, spawn},
 };
@@ -133,8 +133,8 @@ static NUM_CPUS: LazyLock<usize> = LazyLock::new(|| thread::available_parallelis
 
 #[test]
 fn test_threadpool() {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let a: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 

@@ -11,13 +11,14 @@ use bytemuck::cast_mut;
 use default_boxed::DefaultBoxed;
 use wide::i32x8;
 
+use crate::Result;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::u16_bit_length;
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::jpeg::row_spec::RowSpec;
 use crate::jpeg::truncate_components::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::metrics::Metrics;
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
@@ -25,7 +26,6 @@ use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::vpx_bool_reader::VPXBoolReader;
-use crate::Result;
 
 // reads stream from reader and populates image_data with the decoded data
 
@@ -335,7 +335,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, neighbor_data, features);
 
     let coef = model.read_dc(
         bool_reader,

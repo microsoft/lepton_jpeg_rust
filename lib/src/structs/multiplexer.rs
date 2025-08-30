@@ -2,7 +2,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
@@ -54,7 +54,7 @@ impl Write for MultiplexWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if self.buffer.len() > 0 {
+        if !self.buffer.is_empty() {
             let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
             swap(&mut new_buffer, &mut self.buffer);
 
@@ -79,10 +79,10 @@ impl<RESULT> ThreadResults<RESULT> {
     }
     /// creates a closure that wraps the passed in closure, catches any panics,
     /// collects the return result and send it to the receiver to collect.
-    fn send_results(
+    fn send_results<T: FnOnce() -> Result<RESULT> + Send + 'static>(
         &mut self,
-        f: impl FnOnce() -> Result<RESULT> + Send + 'static,
-    ) -> impl FnOnce() {
+        f: T,
+    ) -> impl FnOnce() + use<RESULT, T> {
         let (tx, rx) = channel();
 
         self.results.push(rx);
@@ -148,7 +148,7 @@ where
         let (tx, rx) = channel();
 
         let mut thread_writer = MultiplexWriter {
-            thread_id: thread_id,
+            thread_id,
             sender: tx,
             buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
         };
@@ -198,11 +198,11 @@ where
             }
             Ok(Message::Eof(_)) | Err(_) => {
                 packet_receivers.remove(current_thread_writer);
-                if packet_receivers.len() == 0 {
+                if packet_receivers.is_empty() {
                     break;
                 }
 
-                current_thread_writer = current_thread_writer % packet_receivers.len();
+                current_thread_writer %= packet_receivers.len();
             }
         }
     }
@@ -267,13 +267,13 @@ impl MultiplexReader {
                     }
                 },
                 Err(e) => {
-                    return std::io::Result::Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+                    return std::io::Result::Err(std::io::Error::other(e));
                 }
             }
         }
 
         // nothing if we reached the end of file
-        return Ok(0);
+        Ok(0)
     }
 }
 
@@ -327,7 +327,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             let f = result_receiver.send_results(move || {
                 // get the appropriate receiver so we can read out data from it
                 let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id,
+                    thread_id,
                     current_buffer: Cursor::new(Vec::new()),
                     receiver: rx,
                     end_of_file: false,
@@ -362,7 +362,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
         MultiplexReaderState {
             sender_channels: channel_to_sender,
-            result_receiver: result_receiver,
+            result_receiver,
             current_state: State::StartBlock,
             retention_bytes,
         }

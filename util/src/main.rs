@@ -6,16 +6,16 @@
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::fs::{remove_file, File, OpenOptions};
-use std::io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write};
+use std::fs::{File, OpenOptions, remove_file};
+use std::io::{Cursor, IsTerminal, Read, Seek, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
-    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
-    ExitCode, LeptonError, LeptonThreadPool, LeptonThreadPriority, Metrics, SimpleThreadPool,
-    DEFAULT_THREAD_POOL,
+    CpuTimeMeasure, DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonThreadPool,
+    LeptonThreadPriority, Metrics, SimpleThreadPool, decode_lepton, dump_jpeg, encode_lepton,
+    encode_lepton_verify,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -248,7 +248,7 @@ Options:
     if let Some(verify_dir) = verify_dir {
         execute_verify_dir(
             &cppverify,
-            &verify_dir.as_path(),
+            verify_dir.as_path(),
             &enabled_features,
             verify,
             &mut corrupt,
@@ -320,7 +320,7 @@ Options:
         let thread_cpu = CpuTimeMeasure::new();
         let walltime = Instant::now();
 
-        corrupt_data_if_enabled(&mut corrupt, &mut writable_input_data.to_mut());
+        corrupt_data_if_enabled(&mut corrupt, writable_input_data.to_mut());
 
         // do the encoding/decoding, if we got an error and were corrupting the file, then restore the
         // original data and continue so we can try corrupting the file in different ways
@@ -412,7 +412,7 @@ fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>) {
     }
 
     if let Some(seed) = seed {
-        if input_data.len() > 0 {
+        if !input_data.is_empty() {
             let r = simple_lcg(seed) as usize % input_data.len();
 
             let bitnumber = simple_lcg(seed) as usize % 8;
@@ -432,14 +432,13 @@ fn execute_verify_dir(
     corrupt_data_seed: &mut Option<u64>,
     thread_pool: &'static dyn LeptonThreadPool,
 ) -> Result<(), LeptonError> {
-    let entries;
-    match std::fs::read_dir(dir) {
-        Ok(e) => entries = e,
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
         Err(e) => {
             eprintln!("error reading directory {:?} {:?}", dir, e);
             return Ok(());
         }
-    }
+    };
 
     for entry in entries {
         let entry = entry.unwrap();
@@ -480,7 +479,7 @@ fn execute_verify_dir(
                 FileType::Jpeg,
                 verify,
                 &original_contents,
-                &enabled_features,
+                enabled_features,
                 thread_pool,
             ) {
                 Err(e) => {
@@ -529,7 +528,7 @@ fn execute_cpp_verify(
     if exit_code != 0 {
         log::error!("cpp exit code: {}", exit_code);
 
-        return Err(LeptonError::new(
+        Err(LeptonError::new(
             ExitCode::ExternalVerificationFailed,
             format!(
                 "cpp verify failed with exit code {0} stderr: {1}",
@@ -553,8 +552,7 @@ fn execute_cpp_verify(
         return Err(LeptonError::new(
             ExitCode::ExternalVerificationFailed,
             "verify failed with different data",
-        )
-        .into());
+        ));
     }
     log::info!("verify succeeded with cpp version");
     Ok(())
@@ -596,7 +594,7 @@ fn do_work(
 
             output = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton(&mut reader, &mut output, &enabled_features, thread_pool)?;
+            metrics = decode_lepton(&mut reader, &mut output, enabled_features, thread_pool)?;
         }
     }
 
@@ -647,11 +645,11 @@ impl<W: Write + Seek> Write for VerifyWriter<W> {
 
         self.offset += buf.len();
         self.output.write_all(buf)?;
-        return Ok(buf.len());
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        return self.output.flush();
+        self.output.flush()
     }
 }
 
@@ -701,7 +699,7 @@ pub fn call_executable_with_input(
     // Wait for the child process to exit and collect output
     let output = child.wait_with_output()?;
 
-    let mut file_in = File::open(&temp_filename).unwrap();
+    let mut file_in = File::open(temp_filename).unwrap();
     let mut contents = Vec::new();
     file_in.read_to_end(&mut contents).unwrap();
 

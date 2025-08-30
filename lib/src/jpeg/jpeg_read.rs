@@ -36,14 +36,14 @@ use std::cmp::{self, max};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::{consts::*, EnabledFeatures};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::{EnabledFeatures, consts::*};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_code;
 use super::jpeg_header::{
-    parse_jpeg_header, HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
+    HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo, parse_jpeg_header,
 };
 use super::jpeg_position_state::JpegPositionState;
 
@@ -83,7 +83,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     u64,
 )> {
     let mut startheader = [0u8; 2];
-    reader.read(&mut startheader)?;
+    reader.read_exact(&mut startheader)?;
     if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
@@ -118,7 +118,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     for i in 0..jpeg_header.cmpc {
         // constructor takes height in proportion to the component[0]
         image_data.push(BlockBasedImage::new(
-            &jpeg_header,
+            jpeg_header,
             i,
             0,
             jpeg_header.cmp_info[0].bcv,
@@ -129,7 +129,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
     let mut partitions = Vec::new();
     read_first_scan(
-        &jpeg_header,
+        jpeg_header,
         reader,
         &mut partitions,
         &mut image_data[..],
@@ -143,7 +143,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             .context();
     }
 
-    if partitions.len() == 0 {
+    if partitions.is_empty() {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
             "no scan information found in JPEG file",
@@ -159,7 +159,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
             rinfo
                 .truncate_components
-                .set_truncation_bounds(&jpeg_header, rinfo.max_dpos);
+                .set_truncation_bounds(jpeg_header, rinfo.max_dpos);
 
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
@@ -216,11 +216,11 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
         while prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
             on_header_callback(
                 jpeg_header,
-                &&rinfo.raw_jpeg_header[prev_raw_jpeg_header_len..],
+                &rinfo.raw_jpeg_header[prev_raw_jpeg_header_len..],
             );
             prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
 
-            read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
+            read_progressive_scan(jpeg_header, reader, &mut image_data[..], rinfo).context()?;
 
             if rinfo.early_eof_encountered {
                 return err_exit_code(
@@ -274,7 +274,7 @@ fn prepare_to_decode_next_scan<R: Read>(
         rinfo.max_cmp = cmp::max(rinfo.max_cmp, jpeg_header.cs_cmp[i] as u32);
     }
 
-    return Ok(true);
+    Ok(true)
 }
 
 /// Reads the scan from the JPEG file, writes the image data to the image_data array and
@@ -401,7 +401,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
     let mut sta = JpegDecodeStatus::DecodeInProgress;
     while sta != JpegDecodeStatus::ScanCompleted {
         // decoding for interleaved data
-        state.reset_rstw(&jf); // restart wait counter
+        state.reset_rstw(jf); // restart wait counter
 
         if jf.cs_to == 0 {
             if jf.cs_sah == 0 {
@@ -490,7 +490,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                         }
                     }
 
-                    sta = state.skip_eobrun(&jf).context()?;
+                    sta = state.skip_eobrun(jf).context()?;
 
                     // proceed only if no error encountered
                     if sta == JpegDecodeStatus::DecodeInProgress {
@@ -600,7 +600,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
                     bits_already_read,
                     lastdc,
                     state.get_mcu(),
-                    &jpeg_header,
+                    jpeg_header,
                 ),
             ));
 
@@ -617,8 +617,8 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         let mut block = [0i16; 64];
         let eob = decode_block_seq(
             bit_reader,
-            &jpeg_header.get_huff_dc_tree(state.get_cmp()),
-            &jpeg_header.get_huff_ac_tree(state.get_cmp()),
+            jpeg_header.get_huff_dc_tree(state.get_cmp()),
+            jpeg_header.get_huff_ac_tree(state.get_cmp()),
             &mut block,
         )?;
 
@@ -640,7 +640,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
 
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();
-        sta = state.next_mcu_pos(&jpeg_header);
+        sta = state.next_mcu_pos(jpeg_header);
 
         if state.get_mcu() % jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
             *do_handoff = true;
@@ -652,7 +652,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         }
     }
 
-    return Ok(sta);
+    Ok(sta)
 }
 
 /// <summary>
@@ -715,7 +715,7 @@ pub(super) fn decode_block_seq<R: BufRead>(
     }
 
     // return position of eob
-    return Ok(eob);
+    Ok(eob)
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
@@ -841,7 +841,7 @@ fn decode_ac_prg_fs<R: BufRead>(
     }
 
     // return position of eob
-    return Ok(bpos);
+    Ok(bpos)
 }
 
 /// progressive AC SA decoding routine
@@ -919,7 +919,7 @@ fn decode_ac_prg_sa<R: BufRead>(
         }
     }
 
-    return Ok(eob);
+    Ok(eob)
 }
 
 /// fast eobrun decoding routine for succesive approximation when the entire block is zero

@@ -40,7 +40,7 @@ const fn problookup() -> [u8; 65536] {
         i += 1;
     }
 
-    return retval;
+    retval
 }
 
 /// precalculated probabilities for the next bit being false
@@ -67,7 +67,7 @@ impl Branch {
     #[allow(dead_code)]
     pub fn get_u64(&self) -> u64 {
         let c = self.counts;
-        return ((PROB_LOOKUP[self.counts as usize] as u64) << 16) + c as u64;
+        ((PROB_LOOKUP[self.counts as usize] as u64) << 16) + c as u64
     }
 
     /// Returns the probability of the next bit being a false as a value between 1 and 255

@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
-use crate::structs::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
+use crate::structs::neighbor_summary::{NEIGHBOR_DATA_EMPTY, NeighborSummary};
 use crate::structs::probability_tables::ProbabilityTables;
 pub struct BlockContext {
     block_width: u32,
@@ -58,8 +58,7 @@ impl BlockContext {
     }
 
     pub fn here<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
-        let retval = image_data.get_block(self.cur_block_index);
-        return retval;
+        image_data.get_block(self.cur_block_index)
     }
 
     pub fn get_neighbor_data<'a, const ALL_PRESENT: bool>(

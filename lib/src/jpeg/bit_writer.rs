@@ -15,11 +15,11 @@ pub struct BitWriter {
 // use to write varying sized bits for coding JPEG. Escapes 0xff -> [0xff,0]
 impl BitWriter {
     pub fn new(capacity: usize) -> Self {
-        return BitWriter {
+        BitWriter {
             current_bit: 64,
             fill_register: 0,
             data_buffer: Vec::<u8>::with_capacity(capacity),
-        };
+        }
     }
 
     /// flushes whole bytes from the register into the data buffer
@@ -75,13 +75,13 @@ impl BitWriter {
         // first see if everything fits in the current register
         if new_bits <= self.current_bit {
             self.fill_register |= (val as u64).wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = self.current_bit - new_bits;
+            self.current_bit -= new_bits;
         } else {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
             let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
 
             let leftover_new_bits = new_bits - self.current_bit;
-            let leftover_val = val & (1 << leftover_new_bits) - 1;
+            let leftover_val = val & ((1 << leftover_new_bits) - 1);
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
@@ -135,7 +135,7 @@ impl BitWriter {
     }
 
     pub fn has_no_remainder(&self) -> bool {
-        return self.current_bit == 64;
+        self.current_bit == 64
     }
 }
 

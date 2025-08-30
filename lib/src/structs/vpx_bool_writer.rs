@@ -45,7 +45,7 @@ impl<W: Write> VPXBoolWriter<W> {
             low_value: 1 << 9, // this divider bit keeps track of stream bits number
             range: 255,
             buffer: Vec::new(),
-            writer: writer,
+            writer,
             model_statistics: Metrics::default(),
             hash: SimpleHash::new(),
         };
