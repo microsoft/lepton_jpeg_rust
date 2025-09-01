@@ -6,7 +6,7 @@
 
 use bytemuck::{cast, cast_ref};
 use log::info;
-use wide::{i16x8, CmpEq};
+use wide::{CmpEq, i16x8};
 
 use crate::consts::ZIGZAG_TO_TRANSPOSED;
 

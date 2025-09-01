@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::lepton_error::{ExitCode, LeptonError};
 
@@ -118,11 +118,7 @@ pub fn calc_sign_index(val: i16) -> usize {
     if val == 0 {
         0
     } else {
-        if val > 0 {
-            1
-        } else {
-            2
-        }
+        if val > 0 { 1 } else { 2 }
     }
 }
 
@@ -136,8 +132,8 @@ pub fn needs_to_grow<T>(v: &Vec<T>, additional: usize) -> bool {
 
 #[cfg(test)]
 pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
-    use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha12Rng;
+    use rand_chacha::rand_core::SeedableRng;
 
     ChaCha12Rng::from_seed(seed)
 }

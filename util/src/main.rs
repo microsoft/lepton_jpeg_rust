@@ -6,16 +6,16 @@
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::fs::{remove_file, File, OpenOptions};
-use std::io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write};
+use std::fs::{File, OpenOptions, remove_file};
+use std::io::{Cursor, IsTerminal, Read, Seek, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
-    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
-    ExitCode, LeptonError, LeptonThreadPool, LeptonThreadPriority, Metrics, SimpleThreadPool,
-    DEFAULT_THREAD_POOL,
+    CpuTimeMeasure, DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonThreadPool,
+    LeptonThreadPriority, Metrics, SimpleThreadPool, decode_lepton, dump_jpeg, encode_lepton,
+    encode_lepton_verify,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;

@@ -3,16 +3,16 @@ use std::io::{Cursor, ErrorKind, Read, Seek, Write};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use default_boxed::DefaultBoxed;
+use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
 
+use crate::EnabledFeatures;
 use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::EnabledFeatures;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
 

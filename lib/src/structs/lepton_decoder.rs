@@ -11,13 +11,14 @@ use bytemuck::cast_mut;
 use default_boxed::DefaultBoxed;
 use wide::i32x8;
 
+use crate::Result;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::u16_bit_length;
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::jpeg::row_spec::RowSpec;
 use crate::jpeg::truncate_components::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::metrics::Metrics;
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
@@ -25,7 +26,6 @@ use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::vpx_bool_reader::VPXBoolReader;
-use crate::Result;
 
 // reads stream from reader and populates image_data with the decoded data
 

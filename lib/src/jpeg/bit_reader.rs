@@ -8,7 +8,7 @@ use std::io::BufRead;
 
 use super::jpeg_code;
 use crate::helpers::has_ff;
-use crate::lepton_error::{err_exit_code, ExitCode};
+use crate::lepton_error::{ExitCode, err_exit_code};
 use crate::{LeptonError, StreamPosition};
 
 // Implemenation of bit reader on top of JPEG data stream as read by a reader

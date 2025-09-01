@@ -11,13 +11,14 @@ use bytemuck::cast;
 use default_boxed::DefaultBoxed;
 use wide::i32x8;
 
+use crate::Result;
 use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
 use crate::jpeg::row_spec::RowSpec;
 use crate::jpeg::truncate_components::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::metrics::Metrics;
 use crate::structs::block_context::{BlockContext, NeighborData};
 use crate::structs::model::{Model, ModelPerColor};
@@ -25,7 +26,6 @@ use crate::structs::neighbor_summary::NeighborSummary;
 use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::vpx_bool_writer::VPXBoolWriter;
-use crate::Result;
 
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_encode_row_range<W: Write>(
@@ -459,11 +459,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 }
 
 fn count_non_zero(v: i16) -> u8 {
-    if v == 0 {
-        0
-    } else {
-        1
-    }
+    if v == 0 { 0 } else { 1 }
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(

@@ -314,7 +314,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lepton_jpeg"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_dll"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "lepton_jpeg",
  "rayon",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_root"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "lepton_jpeg",
  "rand",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_util"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "lepton_jpeg",
  "log",

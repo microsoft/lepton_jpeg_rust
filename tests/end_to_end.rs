@@ -10,7 +10,7 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use lepton_jpeg::{
-    decode_lepton, encode_lepton, encode_lepton_verify, EnabledFeatures, DEFAULT_THREAD_POOL,
+    DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, encode_lepton, encode_lepton_verify,
 };
 use lepton_jpeg::{ExitCode, LeptonError};
 use rstest::rstest;
