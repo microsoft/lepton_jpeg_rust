@@ -83,7 +83,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     u64,
 )> {
     let mut startheader = [0u8; 2];
-    reader.read(&mut startheader)?;
+    reader.read_exact(&mut startheader)?;
     if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,

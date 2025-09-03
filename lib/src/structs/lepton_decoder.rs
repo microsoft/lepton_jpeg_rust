@@ -335,7 +335,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, neighbor_data, features);
 
     let coef = model.read_dc(
         bool_reader,

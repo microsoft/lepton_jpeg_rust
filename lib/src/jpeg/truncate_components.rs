@@ -91,7 +91,7 @@ impl TruncateComponents {
             (trunc_bc / ci.bch) + (if trunc_bc % ci.bch != 0 { 1 } else { 0 }),
             ci.bcv,
         );
-        let ratio = TruncateComponents::get_min_vertical_extcmp_multiple(&ci, mcu_count_vertical);
+        let ratio = TruncateComponents::get_min_vertical_extcmp_multiple(ci, mcu_count_vertical);
 
         while vertical_scan_lines % ratio != 0 && vertical_scan_lines + 1 <= ci.bcv {
             vertical_scan_lines += 1;

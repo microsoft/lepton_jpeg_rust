@@ -212,7 +212,7 @@ fn recode_one_mcu_row(
                     &block,
                 );
 
-                sta = state.next_mcu_pos(&jf);
+                sta = state.next_mcu_pos(jf);
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
                 if jf.cs_sah == 0 {
@@ -659,7 +659,7 @@ fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
     }
     let actbl = generate_huff_table_from_distribution(&acdistribution);
 
-    encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
+    encode_block_seq(&mut bitwriter, &dctbl, &actbl, block);
 
     bitwriter.pad(0);
 
@@ -781,7 +781,7 @@ fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(
         reader,
         &mut jpeg_header,
         &mut rinfo,
-        &enabled_features,
+        enabled_features,
         |header, raw_header| {
             headers.push((header.clone(), raw_header.to_vec()));
         },

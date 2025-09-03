@@ -457,8 +457,8 @@ impl LeptonFileReader {
             DecoderState::ScanProgressive(mux)
         } else {
             let mux = Self::run_lepton_decoder_threads(
-                &lh,
-                &enabled_features,
+                lh,
+                enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
                 |thread_handoff, image_data, jpeg_header, rinfo| {
@@ -474,8 +474,8 @@ impl LeptonFileReader {
                         thread_handoff.segment_size as usize,
                         &restart_info,
                         &image_data,
-                        &jpeg_header,
-                        &rinfo,
+                        jpeg_header,
+                        rinfo,
                     )
                     .context()?;
 
@@ -598,7 +598,7 @@ impl LeptonFileReader {
         let mut image_data = Vec::new();
         for i in 0..jpeg_header.cmpc {
             image_data.push(BlockBasedImage::new(
-                &jpeg_header,
+                jpeg_header,
                 i,
                 thread_handoff.luma_y_start,
                 if is_last_thread {
@@ -614,7 +614,7 @@ impl LeptonFileReader {
 
         metrics.merge_from(
             lepton_decode_row_range(
-                &qt,
+                qt,
                 &rinfo.truncate_components,
                 &mut image_data,
                 reader,
@@ -622,7 +622,7 @@ impl LeptonFileReader {
                 thread_handoff.luma_y_end,
                 is_last_thread,
                 true,
-                &features,
+                features,
             )
             .context()?,
         );

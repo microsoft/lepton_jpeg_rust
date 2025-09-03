@@ -137,7 +137,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.rinfo.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor, &enabled_features)
+                .parse(&mut header_data_cursor, enabled_features)
                 .context()?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -666,7 +666,7 @@ fn verify_roundtrip(
 ) -> (Box<LeptonHeader>, EnabledFeatures) {
     let mut output = Vec::new();
     header
-        .write_lepton_header(&mut output, &enabled_features)
+        .write_lepton_header(&mut output, enabled_features)
         .unwrap();
 
     let mut read_header = LeptonHeader::default_boxed();

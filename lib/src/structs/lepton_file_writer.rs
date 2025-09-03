@@ -82,7 +82,7 @@ pub fn encode_lepton_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
+        encode_lepton(&mut reader, &mut writer, enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
