@@ -50,7 +50,7 @@ pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
-    LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
+    DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
 };
 
 /// Trait for types that can provide the current position in a stream. This

@@ -36,14 +36,14 @@ use std::cmp::{self, max};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::{consts::*, EnabledFeatures};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::{EnabledFeatures, consts::*};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_code;
 use super::jpeg_header::{
-    parse_jpeg_header, HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
+    HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo, parse_jpeg_header,
 };
 use super::jpeg_position_state::JpegPositionState;
 

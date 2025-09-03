@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use crate::consts::{JpegDecodeStatus, JpegType};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode};
+use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::{LeptonError, Result};
 
 use super::jpeg_header::{HuffCodes, JpegHeader};

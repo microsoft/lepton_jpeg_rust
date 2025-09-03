@@ -10,14 +10,14 @@
 use std::{
     io::Cursor,
     sync::{
-        atomic::{AtomicU32, Ordering},
         LazyLock,
+        atomic::{AtomicU32, Ordering},
     },
 };
 
 use lepton_jpeg::{
-    catch_unwind_result, decode_lepton, encode_lepton, get_git_version, EnabledFeatures, ExitCode,
-    LeptonFileReaderContext, LeptonThreadPool, DEFAULT_THREAD_POOL,
+    DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReaderContext, LeptonThreadPool,
+    catch_unwind_result, decode_lepton, encode_lepton, get_git_version,
 };
 use rstest::rstest;
 
@@ -85,8 +85,8 @@ pub unsafe extern "C" fn set_num_threads(num_threads: u32) {
 }
 
 /// C ABI interface for compressing image, exposed from DLL
-#[no_mangle]
-#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperCompressImage(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -109,8 +109,8 @@ pub unsafe extern "C" fn WrapperCompressImage(
 }
 
 /// C ABI interface for compressing image, exposed from DLL
-#[no_mangle]
-#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperCompressImage2(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -157,8 +157,8 @@ pub unsafe extern "C" fn WrapperCompressImage2(
 }
 
 /// C ABI interface for decompressing image, exposed from DLL
-#[no_mangle]
-#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImage(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -183,8 +183,8 @@ pub unsafe extern "C" fn WrapperDecompressImage(
 /// C ABI interface for decompressing image, exposed from DLL.
 /// use_16bit_dc_estimate argument should be set to true only for images
 /// that were compressed by C++ version of Leptron (see comments below).
-#[no_mangle]
-#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImageEx(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -212,8 +212,8 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
 }
 
 /// C ABI interface for decompressing image, exposed from DLL.
-#[no_mangle]
-#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImage3(
     input_buffer: *const u8,
     input_buffer_size: u64,
@@ -296,7 +296,7 @@ pub fn get_version_string() -> String {
     format!("{}-{}", PACKAGE_VERSION, get_git_version())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn get_version(
     package: &mut *const std::os::raw::c_char,
     git: &mut *const std::os::raw::c_char,
@@ -308,7 +308,7 @@ pub unsafe extern "C" fn get_version(
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 const USE_RAYON_THREAD_POOL: u32 = 2;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
     let enabled_features = EnabledFeatures {
         use_16bit_dc_estimate: (features & DECOMPRESS_USE_16BIT_DC_ESTIMATE != 0),
@@ -325,7 +325,8 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
     Box::into_raw(context) as *mut std::ffi::c_void
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
     let context = context as *mut LeptonFileReaderContext;
     let context = &mut *context;
@@ -333,7 +334,8 @@ pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -
     context.metrics().get_cpu_time_worker_time().as_millis() as u64
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
     let _ = Box::from_raw(context as *mut LeptonFileReaderContext);
     // let Box destroy the object
@@ -343,7 +345,8 @@ pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_vo
 ///
 /// Returns -1 if more data is needed or if there is more data available, or 0 if done successfully.
 /// Returns > 0 if there is an error
-#[no_mangle]
+#[unsafe(no_mangle)]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn decompress_image(
     context: *mut std::ffi::c_void,
     input_buffer: *const u8,

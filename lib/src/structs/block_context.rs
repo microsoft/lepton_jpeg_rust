@@ -5,7 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage, EMPTY_BLOCK};
-use crate::structs::neighbor_summary::{NeighborSummary, NEIGHBOR_DATA_EMPTY};
+use crate::structs::neighbor_summary::{NEIGHBOR_DATA_EMPTY, NeighborSummary};
 use crate::structs::probability_tables::ProbabilityTables;
 pub struct BlockContext {
     block_width: u32,

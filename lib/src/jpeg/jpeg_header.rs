@@ -36,11 +36,11 @@ use std::fmt::Debug;
 use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
+use crate::LeptonError;
 use crate::consts::JpegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::LeptonError;
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 
 use super::component_info::ComponentInfo;
 use super::jpeg_code;
