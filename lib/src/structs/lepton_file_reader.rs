@@ -41,7 +41,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let mut decoder = LeptonFileReader::new(enabled_features.clone(), thread_pool);
 
@@ -155,9 +155,9 @@ pub struct LeptonFileReader<'a> {
     thread_pool: &'a dyn LeptonThreadPool,
 }
 
-impl LeptonFileReader<'_> {
+impl<'a> LeptonFileReader<'a> {
     /// Creates a new LeptonFileReader.
-    pub fn new(features: EnabledFeatures, thread_pool: &'static dyn LeptonThreadPool) -> Self {
+    pub fn new(features: EnabledFeatures, thread_pool: &'a dyn LeptonThreadPool) -> Self {
         LeptonFileReader {
             state: DecoderState::FixedHeader(),
             lh: LeptonHeader::default_boxed(),

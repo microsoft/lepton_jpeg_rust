@@ -72,7 +72,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
