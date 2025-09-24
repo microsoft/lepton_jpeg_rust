@@ -144,7 +144,7 @@ enum DecoderState {
 /// This is the state machine for the decoder for reading lepton files. The
 /// data is pushed into the state machine and processed in chuncks. Once
 /// the calculations are done the data is retrieved from the output buffers.
-pub struct LeptonFileReader {
+pub struct LeptonFileReader<'a> {
     state: DecoderState,
     lh: Box<LeptonHeader>,
     enabled_features: EnabledFeatures,
@@ -152,10 +152,10 @@ pub struct LeptonFileReader {
     metrics: Metrics,
     total_read_size: u64,
     input_complete: bool,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &'a dyn LeptonThreadPool,
 }
 
-impl LeptonFileReader {
+impl LeptonFileReader<'_> {
     /// Creates a new LeptonFileReader.
     pub fn new(features: EnabledFeatures, thread_pool: &'static dyn LeptonThreadPool) -> Self {
         LeptonFileReader {
@@ -448,7 +448,7 @@ impl LeptonFileReader {
         v: Vec<u8>,
         lh: &LeptonHeader,
         enabled_features: &EnabledFeatures,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
     ) -> Result<DecoderState> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -550,7 +550,7 @@ impl LeptonFileReader {
         lh: &LeptonHeader,
         features: &EnabledFeatures,
         retention_bytes: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,

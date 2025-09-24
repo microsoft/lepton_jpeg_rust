@@ -45,7 +45,7 @@ struct RayonThreadPool {
 }
 
 impl LeptonThreadPool for RayonThreadPool {
-    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>) {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.pool.spawn(f);
     }
 }

@@ -39,7 +39,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
@@ -239,7 +239,7 @@ fn run_lepton_encoder_threads<W: Write>(
     thread_handoffs: &[ThreadHandoff],
     image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
