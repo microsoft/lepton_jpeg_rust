@@ -16,7 +16,7 @@ use std::{
 };
 
 use lepton_jpeg::{
-    DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReaderContext, LeptonThreadPool,
+    DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReader, LeptonThreadPool,
     catch_unwind_result, decode_lepton, encode_lepton, get_git_version,
 };
 use rstest::rstest;
@@ -321,14 +321,14 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         &DEFAULT_THREAD_POOL
     };
 
-    let context = Box::new(LeptonFileReaderContext::new(enabled_features, thread_pool));
+    let context = Box::new(LeptonFileReader::new(enabled_features, thread_pool));
     Box::into_raw(context) as *mut std::ffi::c_void
 }
 
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
-    let context = context as *mut LeptonFileReaderContext;
+    let context = context as *mut LeptonFileReader;
     let context = &mut *context;
 
     context.metrics().get_cpu_time_worker_time().as_millis() as u64
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(context as *mut LeptonFileReaderContext);
+    let _ = Box::from_raw(context as *mut LeptonFileReader);
     // let Box destroy the object
 }
 
@@ -359,7 +359,7 @@ pub unsafe extern "C" fn decompress_image(
     error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
-        let context = context as *mut LeptonFileReaderContext;
+        let context = context as *mut LeptonFileReader;
         let context = &mut *context;
 
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
