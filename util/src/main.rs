@@ -430,7 +430,7 @@ fn execute_verify_dir(
     enabled_features: &EnabledFeatures,
     verify: bool,
     corrupt_data_seed: &mut Option<u64>,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(), LeptonError> {
     let entries;
     match std::fs::read_dir(dir) {
@@ -566,7 +566,7 @@ fn do_work(
     verify: bool,
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics), LeptonError> {
     let metrics;
     let mut output;

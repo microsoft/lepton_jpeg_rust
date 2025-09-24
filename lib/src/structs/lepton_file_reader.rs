@@ -41,16 +41,16 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    let mut decoder = LeptonFileReader::new(enabled_features.clone());
+    let mut decoder = LeptonFileReader::new(enabled_features.clone(), thread_pool);
 
     let mut done = false;
     while !done {
         let buffer = reader.fill_buf().context()?;
 
         done = decoder
-            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX, thread_pool)
+            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX)
             .context()?;
 
         let amt = buffer.len();
@@ -144,7 +144,7 @@ enum DecoderState {
 /// This is the state machine for the decoder for reading lepton files. The
 /// data is pushed into the state machine and processed in chuncks. Once
 /// the calculations are done the data is retrieved from the output buffers.
-pub struct LeptonFileReader {
+pub struct LeptonFileReader<'a> {
     state: DecoderState,
     lh: Box<LeptonHeader>,
     enabled_features: EnabledFeatures,
@@ -152,10 +152,12 @@ pub struct LeptonFileReader {
     metrics: Metrics,
     total_read_size: u64,
     input_complete: bool,
+    thread_pool: &'a dyn LeptonThreadPool,
 }
 
-impl LeptonFileReader {
-    pub fn new(features: EnabledFeatures) -> Self {
+impl<'a> LeptonFileReader<'a> {
+    /// Creates a new LeptonFileReader.
+    pub fn new(features: EnabledFeatures, thread_pool: &'a dyn LeptonThreadPool) -> Self {
         LeptonFileReader {
             state: DecoderState::FixedHeader(),
             lh: LeptonHeader::default_boxed(),
@@ -164,28 +166,34 @@ impl LeptonFileReader {
             metrics: Metrics::default(),
             total_read_size: 0,
             input_complete: false,
+            thread_pool,
         }
     }
 
-    /// Consume a buffer of data and possible write some
-    /// output if there is any available.
+    /// Processes a buffer of data of the file, which can be a slice of 0 or more characters.
+    /// If the input is complete, then input_complete should be set to true.
     ///
-    /// Returns true if we are done processing the file
-    /// and there is no more output available.
+    /// Any available output is written to the output buffer, which can be zero if the
+    /// input is not yet complete. Once the input has been marked as complete, then the
+    /// call will always return some data until the end of the file is reached, at which
+    /// it will return true.
     ///
     /// # Arguments
-    /// - `in_buffer` - the input buffer to process
-    /// - `input_complete` - true if this is the last buffer of data. Once this is set to true, the decoder
-    ///  will return an error if more data is provided.
-    /// - `output` - the output buffer to write to
-    /// - `output_max_size` - the maximum number of bytes to write to the output buffer
+    /// * `input` - The input buffer to process.
+    /// * `input_complete` - True if the input is complete and no more data will be provided.
+    /// * `writer` - The writer to write the output to.
+    /// * `output_buffer_size` - The maximum amount of output to write to the writer before returning.
+    ///
+    /// # Returns
+    ///
+    /// Returns true if the end of the file has been reached, otherwise false. If an error occurs
+    /// then an error code is returned and no further calls should be made.
     pub fn process_buffer(
         &mut self,
         in_buffer: &[u8],
         input_complete: bool,
         output: &mut impl Write,
         mut output_max_size: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
     ) -> Result<bool> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
@@ -226,8 +234,12 @@ impl LeptonFileReader {
                 }
                 DecoderState::CMP() => {
                     if let Some(v) = in_buffer.take(3, 0) {
-                        self.state =
-                            Self::process_cmp(v, &self.lh, &self.enabled_features, thread_pool)?;
+                        self.state = Self::process_cmp(
+                            v,
+                            &self.lh,
+                            &self.enabled_features,
+                            self.thread_pool,
+                        )?;
                     }
                 }
 
@@ -436,7 +448,7 @@ impl LeptonFileReader {
         v: Vec<u8>,
         lh: &LeptonHeader,
         enabled_features: &EnabledFeatures,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
     ) -> Result<DecoderState> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -538,7 +550,7 @@ impl LeptonFileReader {
         lh: &LeptonHeader,
         features: &EnabledFeatures,
         retention_bytes: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
         process: fn(
             thread_handoff: &ThreadHandoff,
             image_data: Vec<BlockBasedImage>,

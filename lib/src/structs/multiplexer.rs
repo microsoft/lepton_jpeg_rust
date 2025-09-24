@@ -129,7 +129,7 @@ impl<RESULT> ThreadResults<RESULT> {
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
     num_threads: usize,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
 where
@@ -301,7 +301,7 @@ enum State {
 impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn new<FN>(
         num_threads: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
         retention_bytes: usize,
         max_processor_threads: usize,
         processor: FN,

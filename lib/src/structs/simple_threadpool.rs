@@ -13,7 +13,7 @@
 /// No unsafe code is used.
 use std::{
     sync::{
-        LazyLock, Mutex,
+        Arc, LazyLock, Mutex,
         mpsc::{Sender, channel},
     },
     thread::{self, spawn},
@@ -26,7 +26,7 @@ use std::{
 pub trait LeptonThreadPool {
     /// Runs a closure on a thread from the thread pool. The thread
     /// thread lifetime is not specified, so it can must be static.
-    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>);
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>);
 }
 
 /// Priority levels for threads in the thread pool.
@@ -46,7 +46,7 @@ pub enum LeptonThreadPriority {
 #[derive(Default)]
 pub struct SimpleThreadPool {
     priority: LeptonThreadPriority,
-    idle_threads: LazyLock<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>>,
+    idle_threads: LazyLock<Arc<Mutex<Vec<Sender<Box<dyn FnOnce() + Send + 'static>>>>>>,
 }
 
 impl SimpleThreadPool {
@@ -54,7 +54,7 @@ impl SimpleThreadPool {
     pub const fn new(priority: LeptonThreadPriority) -> Self {
         SimpleThreadPool {
             priority,
-            idle_threads: LazyLock::new(|| Mutex::new(Vec::new())),
+            idle_threads: LazyLock::new(|| Arc::new(Mutex::new(Vec::new()))),
         }
     }
 
@@ -65,7 +65,7 @@ impl SimpleThreadPool {
     }
 
     /// Executes a closure on a thread from the thread pool. Does not block or return any result.
-    fn execute<F>(&'static self, f: F)
+    fn execute<F>(&self, f: F)
     where
         F: FnOnce() + Send + 'static,
     {
@@ -76,7 +76,7 @@ impl SimpleThreadPool {
             let (tx_schedule, rx_schedule) = channel();
 
             let priority = self.priority;
-            let idle_threads = &self.idle_threads;
+            let idle_threads = self.idle_threads.clone();
 
             spawn(move || {
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -124,7 +124,7 @@ pub static DEFAULT_THREAD_POOL: SimpleThreadPool =
     SimpleThreadPool::new(LeptonThreadPriority::Normal);
 
 impl LeptonThreadPool for SimpleThreadPool {
-    fn run(&'static self, f: Box<dyn FnOnce() + Send + 'static>) {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.execute(f);
     }
 }
