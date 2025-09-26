@@ -1026,3 +1026,42 @@ fn read_jpeg<R: BufRead + Seek>(
 
     (rinfo, jpeg_header)
 }
+
+/// reads the jpeg file from the test data and returns a closure that reads
+/// the jpeg header from it. Used for micro-benchmarking the jpeg header read performance.
+#[cfg(any(test, feature = "micro_benchmark"))]
+#[inline(never)]
+pub fn benchmark_read_jpeg() -> Box<dyn FnMut()> {
+    use crate::structs::lepton_file_reader::read_file;
+
+    let file = read_file("android", ".jpg");
+
+    Box::new(move || {
+        use std::hint::black_box;
+
+        let mut reader = std::io::Cursor::new(&file);
+        let enabled_features = EnabledFeatures::compat_lepton_vector_write();
+
+        let mut jpeg_header = JpegHeader::default();
+        let mut rinfo = ReconstructionInfo::default();
+
+        let (image_data, partitions, end_scan) = read_jpeg_file(
+            &mut reader,
+            &mut jpeg_header,
+            &mut rinfo,
+            &enabled_features,
+            |_, _| {},
+        )
+        .unwrap();
+
+        black_box((image_data, partitions, end_scan));
+    })
+}
+
+#[test]
+fn test_benchmark_read_jpeg() {
+    let mut f = benchmark_read_jpeg();
+    for _ in 0..10 {
+        f();
+    }
+}
