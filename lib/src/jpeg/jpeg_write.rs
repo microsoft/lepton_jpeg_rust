@@ -868,3 +868,56 @@ fn roundtrip_progressive_jpeg() {
 
     assert!(reconstructed == file);
 }
+
+/// reads the jpeg file from the test data, parses it and then
+/// returns a closure that writes the jpeg blocks back out.
+#[cfg(any(test, feature = "micro_benchmark"))]
+#[inline(never)]
+pub fn benchmark_write_jpeg() -> Box<dyn FnMut()> {
+    use crate::{EnabledFeatures, jpeg::jpeg_read::read_jpeg_file};
+
+    let file = crate::structs::lepton_file_reader::read_file("android", ".jpg");
+
+    let mut reader = std::io::Cursor::new(&file);
+    let enabled_features = EnabledFeatures::compat_lepton_vector_write();
+
+    let mut jpeg_header = JpegHeader::default();
+    let mut rinfo = ReconstructionInfo::default();
+
+    let (image_data, partitions, _end_scan) = read_jpeg_file(
+        &mut reader,
+        &mut jpeg_header,
+        &mut rinfo,
+        &enabled_features,
+        |_, _| {},
+    )
+    .unwrap();
+
+    Box::new(move || {
+        let mut prev_offset = 0;
+        for (offset, coding_info) in &partitions {
+            use std::hint::black_box;
+
+            let r = jpeg_write_baseline_row_range(
+                (offset - prev_offset) as usize,
+                &coding_info,
+                &image_data,
+                &jpeg_header,
+                &rinfo,
+            )
+            .unwrap();
+
+            black_box(r);
+
+            prev_offset = *offset;
+        }
+    })
+}
+
+#[test]
+fn test_benchmark_write_jpeg() {
+    let mut f = benchmark_write_jpeg();
+    for _ in 0..10 {
+        f();
+    }
+}

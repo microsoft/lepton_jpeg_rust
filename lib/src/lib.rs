@@ -51,6 +51,10 @@ pub use crate::structs::simple_threadpool::{
     DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
 };
 
+#[cfg(feature = "micro_benchmark")]
+/// Module that exposes internal functions for micro benchmarking
+pub mod micro_benchmark;
+
 /// Trait for types that can provide the current position in a stream. This
 /// is intentionally a subset of the Seek trait, as it only requires remembering
 /// the current position without allowing seeking to arbitrary positions.

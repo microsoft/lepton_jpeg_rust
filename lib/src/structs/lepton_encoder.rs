@@ -1063,3 +1063,111 @@ fn roundtrip_read_write_coefficients(
 
     hash
 }
+
+#[cfg(any(test, feature = "micro_benchmark"))]
+#[inline(never)]
+/// benchmark for the coefficient reading and writing code
+pub fn benchmark_roundtrip_coefficient() -> Box<dyn FnMut()> {
+    use crate::structs::lepton_decoder::read_coefficient_block;
+    use crate::structs::vpx_bool_reader::VPXBoolReader;
+    use std::{hint::black_box, io::Cursor};
+    use wide::i16x8;
+
+    fn make_block(i: &mut i16) -> AlignedBlock {
+        let mut arr = [0; 64];
+        for v in arr.iter_mut() {
+            *v = *i;
+            *i += 1;
+        }
+        AlignedBlock::new(arr)
+    }
+
+    let mut counter = 1;
+
+    let mut write_model = Model::default_boxed();
+    let mut read_model = Model::default_boxed();
+
+    let qt = QuantizationTables::new_from_table(&[1; 64]);
+
+    let a = make_block(&mut counter);
+    let l = make_block(&mut counter);
+    let al = make_block(&mut counter);
+
+    let edge_pixels_h = i16x8::from([4; 8]);
+    let edge_pixels_v = i16x8::from([5; 8]);
+    let dc_deq = 6 * 1; // quantization table value is
+    let num_non_zeros_7x7 = 49;
+    let horiz_pred = i32x8::from([7; 8]);
+    let vert_pred = i32x8::from([8; 8]);
+
+    let na = NeighborSummary::new(
+        edge_pixels_h,
+        edge_pixels_v,
+        dc_deq,
+        num_non_zeros_7x7,
+        horiz_pred,
+        vert_pred,
+    );
+    let nl = NeighborSummary::new(
+        edge_pixels_h,
+        edge_pixels_v,
+        dc_deq,
+        num_non_zeros_7x7,
+        horiz_pred,
+        vert_pred,
+    );
+
+    let pt = ProbabilityTables::new(true, true);
+    let here_tr = make_block(&mut counter);
+    let features = EnabledFeatures::compat_lepton_vector_read();
+
+    Box::new(move || {
+        let n = NeighborData {
+            above: &a,
+            left: &l,
+            above_left: &al,
+            neighbor_context_above: &na,
+            neighbor_context_left: &nl,
+        };
+
+        let mut buffer = Vec::with_capacity(100);
+        let mut bool_writer = VPXBoolWriter::new(&mut buffer).unwrap();
+
+        write_coefficient_block::<true, _>(
+            &pt,
+            0,
+            &n,
+            &here_tr,
+            &mut write_model,
+            &mut bool_writer,
+            &qt,
+            &features,
+        )
+        .unwrap();
+
+        bool_writer.finish().unwrap();
+
+        let mut bool_reader = VPXBoolReader::new(Cursor::new(&buffer)).unwrap();
+        let (block_tr, summary) = read_coefficient_block::<true, _>(
+            &pt,
+            0,
+            &n,
+            &mut read_model,
+            &mut bool_reader,
+            &qt,
+            &features,
+        )
+        .unwrap();
+
+        black_box(summary);
+        debug_assert_eq!(here_tr.get_block(), block_tr.get_block());
+    })
+}
+
+#[test]
+fn test_benchmark_roundtrip_coefficient() {
+    let mut f = benchmark_roundtrip_coefficient();
+    for _i in 0..100 {
+        f();
+    }
+}

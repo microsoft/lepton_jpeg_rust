@@ -20,6 +20,9 @@ default = []
 compression_stats = []
 detailed_tracing = []
 
+# used to expose internal functions for micro benchmarking
+micro_benchmark = []
+
 [dependencies]
 bytemuck = "1"
 byteorder = "1.4"

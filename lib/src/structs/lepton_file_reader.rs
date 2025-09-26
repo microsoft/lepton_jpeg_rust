@@ -709,7 +709,7 @@ fn parse_and_write_header() {
     );
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "micro_benchmark"))]
 pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     use std::io::Read;
 

@@ -7,7 +7,7 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("images")
         .join(filename.to_owned() + ext);
-    println!("reading {0}", filename.to_str().unwrap());
+    //println!("reading {0}", filename.to_str().unwrap());
     let mut f = std::fs::File::open(filename).unwrap();
 
     let mut content = Vec::new();
@@ -43,14 +43,13 @@ impl LeptonThreadPool for SingleThreadPool {
 }
 
 fn end_to_end_benches(c: &mut Criterion) {
+    let thread_pool = SingleThreadPool::new();
     let jpeg = read_file("iphone", ".jpg");
     let lep = read_file("iphone", ".lep");
 
-    let thread_pool = SingleThreadPool::new();
-
     c.bench_function("Lepton encode", |b| {
         b.iter(|| {
-            let mut output = Vec::with_capacity(lep.len());
+            let mut output = Vec::with_capacity(jpeg.len());
             lepton_jpeg::encode_lepton(
                 &mut Cursor::new(&jpeg),
                 &mut Cursor::new(&mut output),
@@ -62,7 +61,7 @@ fn end_to_end_benches(c: &mut Criterion) {
 
     c.bench_function("Lepton decode", |b| {
         b.iter(|| {
-            let mut output = Vec::with_capacity(jpeg.len());
+            let mut output = Vec::with_capacity(lep.len());
             lepton_jpeg::decode_lepton(
                 &mut Cursor::new(&lep),
                 &mut Cursor::new(&mut output),
@@ -79,4 +78,22 @@ criterion_group! {
    targets = end_to_end_benches
 }
 
-criterion_main!(group1);
+fn micro_benchmarks(c: &mut Criterion) {
+    use lepton_jpeg::micro_benchmark::{
+        benchmark_idct, benchmark_read_jpeg, benchmark_roundtrip_coefficient, benchmark_write_jpeg,
+    };
+
+    c.bench_function("jpeg read", |b| b.iter(benchmark_read_jpeg()));
+
+    c.bench_function("jpeg write", |b| b.iter(benchmark_write_jpeg()));
+
+    c.bench_function("roundtrip coefficient write", |b| {
+        b.iter(benchmark_roundtrip_coefficient())
+    });
+
+    c.bench_function("idct benchmark", |b| b.iter(benchmark_idct()));
+}
+
+criterion_group!(group2, micro_benchmarks);
+
+criterion_main!(group1, group2);
