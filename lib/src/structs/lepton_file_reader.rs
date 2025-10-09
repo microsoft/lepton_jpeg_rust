@@ -124,7 +124,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
 
     let mut block_image = Vec::new();
     for i in 0..num_components {
-        block_image.push(BlockBasedImage::merge(&mut results, i));
+        block_image.push(BlockBasedImage::merge(&mut results, i).context()?);
     }
 
     Ok((lh, block_image))
@@ -408,7 +408,7 @@ impl<'a> LeptonFileReader<'a> {
         let num_components = image_segments[0].len();
         let mut merged = Vec::new();
         for i in 0..num_components {
-            merged.push(BlockBasedImage::merge(&mut image_segments, i));
+            merged.push(BlockBasedImage::merge(&mut image_segments, i).context()?);
         }
 
         let mut header = Vec::new();
