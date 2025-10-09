@@ -271,9 +271,13 @@ impl JpegPositionState {
             if self.prev_eobrun > 0 && self.prev_eobrun < hc.max_eob_run - 1 {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
-                    format!("non optimial eobruns not supported (could have encoded up to {0} zero runs in a row, but only did {1} followed by {2}",
-                        hc.max_eob_run, self.prev_eobrun + 1,
-                        self.eobrun + 1).as_str());
+                    format!(
+                        "non optimial eobruns not supported (could have encoded up to {0} zero runs in a row, but only did {1} followed by {2}",
+                        hc.max_eob_run,
+                        self.prev_eobrun + 1,
+                        self.eobrun + 1
+                    ),
+                );
             }
         }
 

@@ -532,8 +532,7 @@ impl<'a> LeptonFileReader<'a> {
                     format!(
                         "ERROR mismatch input_len = {0}, decoded_len = {1}",
                         size, total_read_size
-                    )
-                    .as_str(),
+                    ),
                 );
             }
             Ok(())
@@ -619,7 +618,7 @@ impl<'a> LeptonFileReader<'a> {
                 } else {
                     thread_handoff.luma_y_end
                 },
-            ));
+            )?);
         }
 
         let mut metrics = Metrics::default();
