@@ -55,7 +55,11 @@ impl BlockBasedImage {
 
         let mut image = Vec::new();
         if let Err(e) = image.try_reserve_exact(image_capcity) {
-            // handle out of memory errors gracefully, otherwise the default oom handler kills the process
+            // If there is an out-of-memory, this is the most likely place to happen since this is the uncompressed
+            // coefficient buffer.
+            //
+            // Handle out of memory errors gracefully, otherwise the default oom handler kills
+            // the process.
             return err_exit_code(
                 ExitCode::OutOfMemory,
                 format!(
@@ -79,7 +83,11 @@ impl BlockBasedImage {
 
         let mut contents = Vec::new();
         if let Err(e) = contents.try_reserve_exact(total_size) {
-            // handle out of memory errors gracefully, otherwise the default oom handler kills the process
+            // If there is an out-of-memory, this is the most likely place to happen since this is the uncompressed
+            // coefficient buffer.
+            //
+            // Handle out of memory errors gracefully, otherwise the default oom handler kills
+            // the process.
             return err_exit_code(
                 ExitCode::OutOfMemory,
                 format!("failed to allocate merged block image of size {total_size} : {e}"),
