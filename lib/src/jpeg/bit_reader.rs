@@ -294,71 +294,74 @@ impl<R: BufRead> BitReader<R> {
 }
 
 #[cfg(test)]
-use std::io::Cursor;
+mod tests {
+    use super::*;
+    use std::io::Cursor;
 
-// test reading a simple bit pattern with an escaped 0xff inside it.
-#[test]
-fn read_simple() {
-    let arr = [0x12u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
+    // test reading a simple bit pattern with an escaped 0xff inside it.
+    #[test]
+    fn read_simple() {
+        let arr = [0x12u8, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
 
-    let mut b = BitReader::new(Cursor::new(&arr));
+        let mut b = BitReader::new(Cursor::new(&arr));
 
-    assert_eq!(1, b.read(4).unwrap());
-    assert_eq!((4, 0x10), b.overhang());
-    assert_eq!(0, b.stream_position());
+        assert_eq!(1, b.read(4).unwrap());
+        assert_eq!((4, 0x10), b.overhang());
+        assert_eq!(0, b.stream_position());
 
-    assert_eq!(2, b.read(4).unwrap());
-    assert_eq!((0, 0), b.overhang()); // byte is aligned should be no overhang
-    assert_eq!(1, b.stream_position());
+        assert_eq!(2, b.read(4).unwrap());
+        assert_eq!((0, 0), b.overhang()); // byte is aligned should be no overhang
+        assert_eq!(1, b.stream_position());
 
-    assert_eq!(3, b.read(4).unwrap());
-    assert_eq!(4, b.read(4).unwrap());
-    assert_eq!(4, b.read(4).unwrap());
-    assert_eq!(0x56, b.read(8).unwrap()); // 8 bits between 0x45 and 0x67
-    assert_eq!(0x78, b.read(8).unwrap());
+        assert_eq!(3, b.read(4).unwrap());
+        assert_eq!(4, b.read(4).unwrap());
+        assert_eq!(4, b.read(4).unwrap());
+        assert_eq!(0x56, b.read(8).unwrap()); // 8 bits between 0x45 and 0x67
+        assert_eq!(0x78, b.read(8).unwrap());
 
-    assert_eq!(0x9f, b.read(8).unwrap());
-    assert_eq!((4, 0xf0), b.overhang());
-    assert_eq!(5, b.stream_position()); // should be at the beginning of the escape code
+        assert_eq!(0x9f, b.read(8).unwrap());
+        assert_eq!((4, 0xf0), b.overhang());
+        assert_eq!(5, b.stream_position()); // should be at the beginning of the escape code
 
-    assert_eq!(0xfe, b.read(8).unwrap());
-    assert_eq!((4, 0xe0), b.overhang());
-    assert_eq!(7, b.stream_position()); // now we are after the escape code
+        assert_eq!(0xfe, b.read(8).unwrap());
+        assert_eq!((4, 0xe0), b.overhang());
+        assert_eq!(7, b.stream_position()); // now we are after the escape code
 
-    assert_eq!(0xe, b.read(4).unwrap());
-    assert_eq!((0, 0), b.overhang());
-    assert_eq!(8, b.stream_position()); // now we read everything and should be at the end of the stream
+        assert_eq!(0xe, b.read(4).unwrap());
+        assert_eq!((0, 0), b.overhang());
+        assert_eq!(8, b.stream_position()); // now we read everything and should be at the end of the stream
 
-    // read an empty byte passed the end of the stream.. should be zero and trigger EOF
-    assert_eq!(0, b.read(8).unwrap());
-    assert_eq!(true, b.is_eof());
-    assert_eq!(8, b.stream_position()); // still at the same position
-}
+        // read an empty byte passed the end of the stream.. should be zero and trigger EOF
+        assert_eq!(0, b.read(8).unwrap());
+        assert_eq!(true, b.is_eof());
+        assert_eq!(8, b.stream_position()); // still at the same position
+    }
 
-// what happens when a file has 0xff as the last character (assume that it is an escaped 0xff)
-#[test]
-fn read_truncate_ff() {
-    let arr = [0x12u8, 0xff];
+    // what happens when a file has 0xff as the last character (assume that it is an escaped 0xff)
+    #[test]
+    fn read_truncate_ff() {
+        let arr = [0x12u8, 0xff];
 
-    let mut b = BitReader::new(Cursor::new(&arr));
+        let mut b = BitReader::new(Cursor::new(&arr));
 
-    assert_eq!(0, b.stream_position());
+        assert_eq!(0, b.stream_position());
 
-    assert_eq!(0x1, b.read(4).unwrap());
-    assert_eq!(0, b.stream_position());
+        assert_eq!(0x1, b.read(4).unwrap());
+        assert_eq!(0, b.stream_position());
 
-    assert_eq!(0x2f, b.read(8).unwrap());
-    assert_eq!((4, 0xf0), b.overhang());
-    assert_eq!(1, b.stream_position());
+        assert_eq!(0x2f, b.read(8).unwrap());
+        assert_eq!((4, 0xf0), b.overhang());
+        assert_eq!(1, b.stream_position());
 
-    // 4 bits left, not EOF yet
-    assert_eq!(false, b.is_eof());
+        // 4 bits left, not EOF yet
+        assert_eq!(false, b.is_eof());
 
-    assert_eq!(0xf, b.read(4).unwrap());
-    assert_eq!(false, b.is_eof()); // now we are at the end really
-    assert_eq!(2, b.stream_position());
+        assert_eq!(0xf, b.read(4).unwrap());
+        assert_eq!(false, b.is_eof()); // now we are at the end really
+        assert_eq!(2, b.stream_position());
 
-    assert_eq!(0, b.read(4).unwrap());
-    assert_eq!(true, b.is_eof());
-    assert_eq!(2, b.stream_position());
+        assert_eq!(0, b.read(4).unwrap());
+        assert_eq!(true, b.is_eof());
+        assert_eq!(2, b.stream_position());
+    }
 }
