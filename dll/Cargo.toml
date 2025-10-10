@@ -6,8 +6,10 @@ authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 [dependencies]
 lepton_jpeg = { path = "../lib" }
-rstest = "0.22"
 rayon = "1"
+
+[dev-dependencies]
+rstest = "0.22"
 
 [lib]
 crate-type = ["cdylib"]
