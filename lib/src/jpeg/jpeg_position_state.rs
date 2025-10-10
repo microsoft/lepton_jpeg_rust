@@ -272,7 +272,7 @@ impl JpegPositionState {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
                     format!(
-                        "non optimial eobruns not supported (could have encoded up to {0} zero runs in a row, but only did {1} followed by {2}",
+                        "non optimal eobruns not supported (could have encoded up to {0} zero runs in a row, but only did {1} followed by {2}",
                         hc.max_eob_run,
                         self.prev_eobrun + 1,
                         self.eobrun + 1
