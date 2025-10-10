@@ -74,7 +74,7 @@ impl UtilError {
 impl From<pico_args::Error> for UtilError {
     #[track_caller]
     fn from(e: pico_args::Error) -> Self {
-        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string());
         e.add_context();
         UtilError(e)
     }
@@ -236,11 +236,9 @@ Options:
     for i in filenames.iter() {
         // no other options should be specified only the free standing filenames
         if i.to_string_lossy().starts_with("-") {
-            return Err(LeptonError::new(
-                ExitCode::SyntaxError,
-                format!("unknown option {:?}", i).as_str(),
-            )
-            .into());
+            return Err(
+                LeptonError::new(ExitCode::SyntaxError, format!("unknown option {:?}", i)).into(),
+            );
         }
     }
 
@@ -284,7 +282,7 @@ Options:
         std::io::stdin().read_to_end(&mut input_data)?;
     } else {
         let mut file_in = File::open(filenames[0].as_os_str())
-            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string().as_str()))?;
+            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string()))?;
 
         file_in.read_to_end(&mut input_data)?;
     }
@@ -534,8 +532,7 @@ fn execute_cpp_verify(
             format!(
                 "cpp verify failed with exit code {0} stderr: {1}",
                 exit_code, stderr
-            )
-            .as_str(),
+            ),
         ))?;
     }
     if output[..].len() != original_contents.len() {
@@ -545,8 +542,7 @@ fn execute_cpp_verify(
                 "cpp verify failed with different length {0} != {1}",
                 output[..].len(),
                 original_contents.len()
-            )
-            .as_str(),
+            ),
         ));
     }
     if output[..] != original_contents[..] {

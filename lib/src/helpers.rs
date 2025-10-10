@@ -18,10 +18,7 @@ pub fn catch_unwind_result<R>(
             if let Some(message) = err.downcast_ref::<&str>() {
                 Err(LeptonError::new(ExitCode::AssertionFailure, *message))
             } else if let Some(message) = err.downcast_ref::<String>() {
-                Err(LeptonError::new(
-                    ExitCode::AssertionFailure,
-                    message.as_str(),
-                ))
+                Err(LeptonError::new(ExitCode::AssertionFailure, message))
             } else {
                 Err(LeptonError::new(
                     ExitCode::AssertionFailure,

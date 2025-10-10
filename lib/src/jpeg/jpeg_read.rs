@@ -122,7 +122,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             i,
             0,
             jpeg_header.cmp_info[0].bcv,
-        ));
+        )?);
     }
 
     let start_scan_position = reader.stream_position()?;
@@ -441,8 +441,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                     format!(
                         "progressive encoding range was invalid {0} to {1}",
                         jf.cs_from, jf.cs_to
-                    )
-                    .as_str(),
+                    ),
                 );
             }
 

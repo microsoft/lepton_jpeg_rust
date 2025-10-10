@@ -104,8 +104,7 @@ pub fn encode_lepton_verify(
                 "ERROR mismatch input_len = {0}, decoded_len = {1}",
                 input_data.len(),
                 verify_buffer.len()
-            )
-            .as_str(),
+            ),
         );
     }
 

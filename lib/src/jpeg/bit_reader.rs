@@ -158,8 +158,7 @@ impl<R: BufRead> BitReader<R> {
                             format!(
                                 "invalid reset {0:x} {1:x} code found in stream",
                                 0xff, buffer[0]
-                            )
-                            .as_str(),
+                            ),
                         )
                         .into());
                     }
@@ -217,8 +216,7 @@ impl<R: BufRead> BitReader<R> {
                             format!(
                                 "inconsistent pad bits num_bits={0} pattern={1:b}",
                                 num_bits_to_read, actual
-                            )
-                            .as_str(),
+                            ),
                         );
                     }
                 }
@@ -226,7 +224,13 @@ impl<R: BufRead> BitReader<R> {
                     // if we already saw a padding, then it should match
                     let expected = u16::from(x) & all_one;
                     if actual != expected {
-                        return err_exit_code(ExitCode::InvalidPadding, format!("padding of {0} bits should be set to 1 actual={1:b} expected={2:b}", num_bits_to_read, actual, expected).as_str());
+                        return err_exit_code(
+                            ExitCode::InvalidPadding,
+                            format!(
+                                "padding of {0} bits should be set to 1 actual={1:b} expected={2:b}",
+                                num_bits_to_read, actual, expected
+                            ),
+                        );
                     }
                 }
             }
@@ -246,7 +250,7 @@ impl<R: BufRead> BitReader<R> {
         if h[0] != 0xff || h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
             return err_exit_code(
                 ExitCode::InvalidResetCode,
-                format!("invalid reset code {0:x} {1:x} found in stream", h[0], h[1]).as_str(),
+                format!("invalid reset code {0:x} {1:x} found in stream", h[0], h[1]),
             );
         }
 
