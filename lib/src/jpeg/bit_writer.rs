@@ -16,11 +16,11 @@ pub struct BitWriter {
 
 // use to write varying sized bits for coding JPEG. Escapes 0xff -> [0xff,0]
 impl BitWriter {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(data_buffer: Vec<u8>) -> Self {
         return BitWriter {
             current_bit: 64,
             fill_register: 0,
-            data_buffer: Vec::<u8>::with_capacity(capacity),
+            data_buffer,
         };
     }
 
@@ -127,13 +127,6 @@ impl BitWriter {
         mem::take(&mut self.data_buffer)
     }
 
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.data_buffer.clear();
-        self.fill_register = 0;
-        self.current_bit = 64;
-    }
-
     pub fn reset_from_overhang_byte_and_num_bits(&mut self, overhang_byte: u8, num_bits: u32) {
         self.data_buffer.clear();
 
@@ -162,7 +155,7 @@ mod tests {
     fn write_simple() {
         let arr = [0x12, 0x34, 0x45, 0x67, 0x89, 0xff, 00, 0xee];
 
-        let mut b = BitWriter::new(1024);
+        let mut b = BitWriter::new(Vec::with_capacity(1024));
 
         b.write(1, 4);
         b.write(2, 4);
@@ -185,7 +178,7 @@ mod tests {
     fn roundtrip_bits() {
         let buf;
         {
-            let mut b = BitWriter::new(1024);
+            let mut b = BitWriter::new(Vec::with_capacity(1024));
             for i in 1..2048 {
                 b.write(i, u32_bit_length(i) as u32);
             }
@@ -245,7 +238,7 @@ mod tests {
 
         let buf;
         {
-            let mut b = BitWriter::new(1024);
+            let mut b = BitWriter::new(Vec::with_capacity(1024));
             for &i in &test_data {
                 match i {
                     Action::Write(v, bits) => b.write(v as u32, bits as u32),

@@ -61,7 +61,18 @@ pub fn jpeg_write_baseline_row_range(
 ) -> Result<Vec<u8>> {
     let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
 
-    let mut huffw = BitWriter::new(encoded_length);
+    let mut data_buffer = Vec::new();
+    if let Err(e) = data_buffer.try_reserve_exact(encoded_length) {
+        return err_exit_code(
+            ExitCode::OutOfMemory,
+            format!(
+                "unable to allocate {} bytes for jpeg output buffer: {:?}",
+                encoded_length, e
+            ),
+        );
+    }
+
+    let mut huffw = BitWriter::new(data_buffer);
     huffw.reset_from_overhang_byte_and_num_bits(
         restart_info.overhang_byte,
         u32::from(restart_info.num_overhang_bits),
@@ -125,7 +136,7 @@ pub fn jpeg_write_entire_scan(
 
     let mut last_dc = [0i16; 4];
 
-    let mut huffw = BitWriter::new(128 * 1024);
+    let mut huffw = BitWriter::new(Vec::with_capacity(128 * 1024));
 
     let mut decode_index = 0;
     loop {
@@ -654,7 +665,7 @@ mod tests {
 
     /// roundtrips a block through the encoder and decoder and checks that the output matches the input
     fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
-        let mut bitwriter = BitWriter::new(1024);
+        let mut bitwriter = BitWriter::new(Vec::with_capacity(1024));
 
         // create a weird distribution to test the huffman encoding for corner cases
         let mut dcdistribution = [0; 256];
@@ -891,6 +902,8 @@ mod tests {
 
 #[cfg(any(test, feature = "micro_benchmark"))]
 pub mod benchmarks {
+    use std::mem;
+
     use super::*;
 
     use crate::{
@@ -904,7 +917,7 @@ pub mod benchmarks {
         read_file,
     };
 
-    /// tests performance of encoding a single block
+    /// Benchmarks performance of encoding a single JPEG block
     #[inline(never)]
     pub fn benchmark_write_block() -> Box<dyn FnMut()> {
         // create a weird distribution to test the huffman encoding for corner cases
@@ -920,8 +933,6 @@ pub mod benchmarks {
         }
         let actbl = generate_huff_table_from_distribution(&acdistribution);
 
-        let mut bitwriter = BitWriter::new(1024);
-
         let mut block = AlignedBlock::default();
         for i in 0..10 {
             block.get_block_mut()[i] = i as i16;
@@ -933,9 +944,15 @@ pub mod benchmarks {
             block.get_block_mut()[i] = i as i16;
         }
 
+        // we don't want to accumulate memory as we write, so reuse the same buffer
+        // and clear it after each iteration.
+        // This also avoids the cost of a malloc/free on each iteration.
+        let mut storage = Vec::with_capacity(1024);
         Box::new(move || {
+            let mut bitwriter = BitWriter::new(mem::take(&mut storage));
             encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
-            bitwriter.clear();
+            storage = bitwriter.detach_buffer();
+            storage.clear();
         })
     }
 

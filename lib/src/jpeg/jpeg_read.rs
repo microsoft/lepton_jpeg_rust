@@ -1099,7 +1099,7 @@ pub mod benchmarks {
         })
     }
 
-    /// tests performance of encoding a single block
+    /// tests performance of decoding a single block
     #[inline(never)]
     pub fn benchmark_read_block() -> Box<dyn FnMut()> {
         // create a weird distribution to test the huffman encoding for corner cases
@@ -1115,7 +1115,7 @@ pub mod benchmarks {
         }
         let actbl = generate_huff_table_from_distribution(&acdistribution);
 
-        let mut bitwriter = BitWriter::new(1024);
+        let mut bitwriter = BitWriter::new(Vec::with_capacity(1024));
 
         let mut block = AlignedBlock::default();
         for i in 0..10 {
