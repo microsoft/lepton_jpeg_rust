@@ -41,7 +41,7 @@ impl BlockBasedImage {
         let original_height = jpeg_header.cmp_info[component].bcv;
         let max_size = block_width * original_height;
 
-        let image_capcity = usize::try_from(
+        let image_capacity = usize::try_from(
             (u64::from(max_size) * u64::from(luma_y_end - luma_y_start)
                 + u64::from(jpeg_header.cmp_info[0].bcv - 1 /* round up */))
                 / u64::from(jpeg_header.cmp_info[0].bcv),
@@ -54,7 +54,7 @@ impl BlockBasedImage {
         .unwrap();
 
         let mut image = Vec::new();
-        if let Err(e) = image.try_reserve_exact(image_capcity) {
+        if let Err(e) = image.try_reserve_exact(image_capacity) {
             // If there is an out-of-memory, this is the most likely place to happen since this is the uncompressed
             // coefficient buffer.
             //
@@ -63,7 +63,7 @@ impl BlockBasedImage {
             return err_exit_code(
                 ExitCode::OutOfMemory,
                 format!(
-                    "failed to allocate block image of size {image_capcity} for component {component} with block width {block_width} and original height {original_height} (luma_y_start = {luma_y_start}, luma_y_end = {luma_y_end}) : {e}"
+                    "failed to allocate block image of size {image_capacity} for component {component} with block width {block_width} and original height {original_height} (luma_y_start = {luma_y_start}, luma_y_end = {luma_y_end}) : {e}"
                 ),
             );
         }
