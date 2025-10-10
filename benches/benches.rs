@@ -1,20 +1,7 @@
 use std::{io::Cursor, time::Duration};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use lepton_jpeg::{EnabledFeatures, LeptonThreadPool};
-
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("images")
-        .join(filename.to_owned() + ext);
-    //println!("reading {0}", filename.to_str().unwrap());
-    let mut f = std::fs::File::open(filename).unwrap();
-
-    let mut content = Vec::new();
-    std::io::Read::read_to_end(&mut f, &mut content).unwrap();
-
-    content
-}
+use lepton_jpeg::{EnabledFeatures, LeptonThreadPool, read_file};
 
 /// single thread pool that creates just one threadpool thread
 /// useful for benchmarks to measure total end-to-end runtime
