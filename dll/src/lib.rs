@@ -318,7 +318,9 @@ struct DecompressionContext<'a> {
 const MAGIC_DECOMRESSION_CONTEXT: u32 = 0xdec0de00;
 
 impl<'a> DecompressionContext<'a> {
-    unsafe fn from_pointer(ptr: *mut std::ffi::c_void) -> &'static mut Self {
+    /// casts c pointer to a reference, verifying the magic number is OK so we can catch
+    /// some common mistakes early. This is no guarantee, but helps crash early in many cases.
+    unsafe fn from_pointer(ptr: *mut std::ffi::c_void) -> &'a mut Self {
         unsafe {
             let context = ptr as *mut DecompressionContext;
             assert_eq!(
@@ -330,6 +332,7 @@ impl<'a> DecompressionContext<'a> {
         }
     }
 
+    /// allocates a new context and returns a pointer to it
     unsafe fn new(internal: LeptonFileReader<'a>) -> *mut std::ffi::c_void {
         let context = Box::new(Self {
             magic: MAGIC_DECOMRESSION_CONTEXT,
@@ -349,6 +352,8 @@ impl<'a> DecompressionContext<'a> {
             );
             // invalidate magic to catch double free
             context.magic = 0xdeaddead;
+
+            // context is freed now by going out of scope
         }
     }
 }
