@@ -57,7 +57,7 @@ impl LeptonHeader {
         if header[2] != LEPTON_VERSION {
             return err_exit_code(
                 ExitCode::VersionUnsupported,
-                format!("incompatible file with version {0}", header[3]).as_str(),
+                format!("incompatible file with version {0}", header[3]),
             );
         }
         if header[3] != LEPTON_HEADER_BASELINE_JPEG_TYPE[0]
@@ -65,7 +65,7 @@ impl LeptonHeader {
         {
             return err_exit_code(
                 ExitCode::BadLeptonFile,
-                format!("Unknown filetype in header {0}", header[4]).as_str(),
+                format!("Unknown filetype in header {0}", header[4]),
             );
         }
 
@@ -120,8 +120,7 @@ impl LeptonHeader {
                 format!(
                     "Only support images < {} megs",
                     enabled_features.max_jpeg_file_size / (1024 * 1024)
-                )
-                .as_str(),
+                ),
             );
         }
 

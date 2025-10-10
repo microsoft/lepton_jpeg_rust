@@ -305,6 +305,59 @@ pub unsafe extern "C" fn get_version(
     *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
 }
 
+// wraps unmanaged context for decompression and tries to ensure that if is valid
+// when passed in from C# or C++ code and that it is freed only once.
+//
+// Of course, there aren't any guarantees since passing raw pointers around is inherently unsafe,
+// but we do our best to catch common mistakes and point the blame in the right direction.
+struct DecompressionContext<'a> {
+    magic: u32,
+    internal: LeptonFileReader<'a>,
+}
+
+const MAGIC_DECOMRESSION_CONTEXT: u32 = 0xdec0de00;
+
+impl<'a> DecompressionContext<'a> {
+    /// casts c pointer to a reference, verifying the magic number is OK so we can catch
+    /// some common mistakes early. This is no guarantee, but helps crash early in many cases.
+    unsafe fn from_pointer(ptr: *mut std::ffi::c_void) -> &'a mut Self {
+        unsafe {
+            let context = ptr as *mut DecompressionContext;
+            assert_eq!(
+                (*context).magic,
+                MAGIC_DECOMRESSION_CONTEXT,
+                "invalid context passed in"
+            );
+            &mut *context
+        }
+    }
+
+    /// allocates a new context and returns a pointer to it
+    unsafe fn new(internal: LeptonFileReader<'a>) -> *mut std::ffi::c_void {
+        let context = Box::new(Self {
+            magic: MAGIC_DECOMRESSION_CONTEXT,
+            internal,
+        });
+
+        Box::into_raw(context) as *mut std::ffi::c_void
+    }
+
+    unsafe fn free(ptr: *mut std::ffi::c_void) {
+        unsafe {
+            let mut context = Box::from_raw(ptr as *mut DecompressionContext);
+            assert_eq!(
+                (*context).magic,
+                MAGIC_DECOMRESSION_CONTEXT,
+                "invalid context passed in"
+            );
+            // invalidate magic to catch double free
+            context.magic = 0xdeaddead;
+
+            // context is freed now by going out of scope
+        }
+    }
+}
+
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 const USE_RAYON_THREAD_POOL: u32 = 2;
 
@@ -321,24 +374,25 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         &DEFAULT_THREAD_POOL
     };
 
-    let context = Box::new(LeptonFileReader::new(enabled_features, thread_pool));
-    Box::into_raw(context) as *mut std::ffi::c_void
+    unsafe { DecompressionContext::new(LeptonFileReader::new(enabled_features, thread_pool)) }
 }
 
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
-    let context = context as *mut LeptonFileReader;
-    let context = &mut *context;
+    let context = DecompressionContext::from_pointer(context);
 
-    context.metrics().get_cpu_time_worker_time().as_millis() as u64
+    context
+        .internal
+        .metrics()
+        .get_cpu_time_worker_time()
+        .as_millis() as u64
 }
 
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(context as *mut LeptonFileReader);
-    // let Box destroy the object
+    DecompressionContext::free(context);
 }
 
 /// partially decompresses an image from a Lepton file.
@@ -359,14 +413,13 @@ pub unsafe extern "C" fn decompress_image(
     error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
-        let context = context as *mut LeptonFileReader;
-        let context = &mut *context;
+        let context = DecompressionContext::from_pointer(context);
 
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
         let mut writer = Cursor::new(output);
-        let done = context.process_buffer(
+        let done = context.internal.process_buffer(
             input,
             input_complete,
             &mut writer,
