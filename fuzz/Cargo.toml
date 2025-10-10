@@ -2,7 +2,7 @@
 name = "lepton_jpeg-fuzz"
 version = "0.0.0"
 publish = false
-edition = "2021"
+edition = "2024"
 
 [package.metadata]
 cargo-fuzz = true
@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 
 [dependencies.lepton_jpeg]
-path = ".."
+path = "../lib"
 
 # Prevent this from interfering with workspaces
 [workspace]

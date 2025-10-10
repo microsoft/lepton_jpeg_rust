@@ -1,0 +1,20 @@
+[package]
+name = "lepton_jpeg_util"
+version = "0.5.5"
+edition = "2024"
+authors = ["Kristof Roomp <kristofr@microsoft.com>"]
+rust-version = "1.85"
+
+[features]
+default = []
+
+[dependencies]
+lepton_jpeg = { path = "../lib" }
+pico-args = "0.5"
+log = "0.4"
+simple_logger ="5.0"
+
+[[bin]]
+name="lepton_jpeg_util"
+
+
