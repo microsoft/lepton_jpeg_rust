@@ -167,11 +167,12 @@ impl Default for SingleThreadPool {
             LazyCell::new(|| {
                 let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
 
-                std::thread::spawn(move || {
+                // runs a single thread in our thread pool that processes all the requests
+                DEFAULT_THREAD_POOL.run(Box::new(move || {
                     for job in rx {
                         job();
                     }
-                });
+                }));
 
                 tx
             });
