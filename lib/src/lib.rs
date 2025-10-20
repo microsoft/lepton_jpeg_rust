@@ -154,6 +154,9 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
 
 /// single thread pool that creates just one threadpool thread
 /// useful for benchmarks to measure total end-to-end runtime
+///
+/// Note that the thread is not created until the first job is run.
+/// The thread will be destroyed when this object is dropped.
 pub struct SingleThreadPool {
     sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
 }
