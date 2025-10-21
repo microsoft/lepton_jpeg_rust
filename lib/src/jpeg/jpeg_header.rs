@@ -194,7 +194,7 @@ impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(super) struct HuffCodes {
+pub(crate) struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u16; 256],
     pub c_len_plus_s: [u8; 256],
@@ -302,7 +302,7 @@ impl HuffCodes {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(super) struct HuffTree {
+pub(crate) struct HuffTree {
     pub node: [[u16; 2]; 256],
     pub peek_code: [(u8, u8); 256],
 }
@@ -1109,7 +1109,7 @@ fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
 }
 
 /// constructs a huffman table for testing purposes from a given distribution
-#[cfg(test)]
+#[cfg(any(test, feature = "micro_benchmark"))]
 pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
     use std::collections::{BinaryHeap, HashMap};
 

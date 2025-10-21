@@ -376,55 +376,58 @@ fn get_number_of_threads_for_encoding(
     return num_threads;
 }
 
-#[test]
-fn test_get_git_revision() {
-    let mut lh = LeptonHeader::default_boxed();
-    get_git_revision(&mut lh);
-
-    println!("{:x?}", lh.git_revision_prefix);
-}
-
-#[test]
-fn test_slrcity() {
-    test_file("slrcity")
-}
-
 #[cfg(test)]
-fn test_file(filename: &str) {
-    use crate::structs::lepton_file_reader::read_file;
-    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
+mod tests {
+    use super::*;
 
-    let original = read_file(filename, ".jpg");
+    use crate::{DEFAULT_THREAD_POOL, read_file};
 
-    let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
-    enabled_features.max_threads = 2;
+    #[test]
+    fn test_get_git_revision() {
+        let mut lh = LeptonHeader::default_boxed();
+        get_git_revision(&mut lh);
 
-    let mut output = Vec::new();
+        println!("{:x?}", lh.git_revision_prefix);
+    }
 
-    let _ = encode_lepton(
-        &mut Cursor::new(&original),
-        &mut Cursor::new(&mut output),
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+    #[test]
+    fn test_slrcity() {
+        test_file("slrcity")
+    }
 
-    println!(
-        "Original size: {0}, compressed size: {1}",
-        original.len(),
-        output.len()
-    );
+    fn test_file(filename: &str) {
+        let original = read_file(filename, ".jpg");
 
-    let mut recreate = Vec::new();
+        let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
+        enabled_features.max_threads = 2;
 
-    decode_lepton(
-        &mut Cursor::new(&output),
-        &mut recreate,
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+        let mut output = Vec::new();
 
-    assert_eq!(original.len(), recreate.len());
-    assert!(original == recreate);
+        let _ = encode_lepton(
+            &mut Cursor::new(&original),
+            &mut Cursor::new(&mut output),
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        println!(
+            "Original size: {0}, compressed size: {1}",
+            original.len(),
+            output.len()
+        );
+
+        let mut recreate = Vec::new();
+
+        decode_lepton(
+            &mut Cursor::new(&output),
+            &mut recreate,
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        assert_eq!(original.len(), recreate.len());
+        assert!(original == recreate);
+    }
 }

@@ -5,28 +5,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
-use std::fs::File;
-use std::io::{Cursor, Read};
-use std::path::Path;
+use std::io::Cursor;
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, encode_lepton, encode_lepton_verify,
+    read_file,
 };
 use lepton_jpeg::{ExitCode, LeptonError};
 use rstest::rstest;
-
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("images")
-        .join(filename.to_owned() + ext);
-    println!("reading {0}", filename.to_str().unwrap());
-    let mut f = File::open(filename).unwrap();
-
-    let mut content = Vec::new();
-    f.read_to_end(&mut content).unwrap();
-
-    content
-}
 
 /// verifies that the decode will accept existing Lepton files and generate
 /// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
@@ -67,7 +53,7 @@ fn verify_decode(
     )]
     file: &str,
 ) {
-    use lepton_jpeg::DEFAULT_THREAD_POOL;
+    use lepton_jpeg::{DEFAULT_THREAD_POOL, read_file};
 
     println!("decoding {0:?}", file);
 
