@@ -524,6 +524,35 @@ impl<RESULT> MultiplexReaderState<RESULT> {
     }
 }
 
+impl MultiplexReaderState<Vec<u8>> {
+    /// copies all available data to the destination buffer
+    pub fn copy_available_data(
+        &mut self,
+        destination: &mut impl Write,
+        partition_remaining: &mut Vec<usize>,
+    ) -> Result<()> {
+        // now collect all the results from all the threads
+        for (i, r) in self.receiver_channels.iter_mut().enumerate() {
+            if partition_remaining[i] == 0 {
+                continue;
+            }
+
+            for v in r.iter() {
+                match v {
+                    Ok(v) => {
+                        let to_copy = v.len().min(partition_remaining[i]);
+                        destination.write_all(&v[..to_copy])?;
+                        partition_remaining[i] -= to_copy;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 use crate::DEFAULT_THREAD_POOL;
 

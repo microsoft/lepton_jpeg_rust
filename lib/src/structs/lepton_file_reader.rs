@@ -7,6 +7,7 @@
 use std::cmp::min;
 use std::io::{BufRead, Cursor, Write};
 use std::mem;
+use std::sync::mpsc::Sender;
 
 use default_boxed::DefaultBoxed;
 #[cfg(feature = "detailed_tracing")]
@@ -572,7 +573,7 @@ impl<'a> LeptonFileReader<'a> {
             retention_bytes,
             features.max_threads as usize,
             move |thread_id, reader, result_tx| {
-                let result = Self::run_lepton_decoder_processor(
+                Self::run_lepton_decoder_processor(
                     &jpeg_header,
                     &rinfo,
                     &thread_handoff[thread_id],
@@ -581,9 +582,8 @@ impl<'a> LeptonFileReader<'a> {
                     reader,
                     &features,
                     process,
-                )?;
-                result_tx.send(Ok(result))?;
-                Ok(())
+                    result_tx,
+                )
             },
         );
 
@@ -605,7 +605,8 @@ impl<'a> LeptonFileReader<'a> {
             &JpegHeader,
             &ReconstructionInfo,
         ) -> Result<P>,
-    ) -> Result<(Metrics, P)> {
+        result_send: &Sender<Result<(Metrics, P)>>,
+    ) -> Result<()> {
         let cpu_time = CpuTimeMeasure::new();
 
         let mut image_data = Vec::new();
@@ -644,7 +645,9 @@ impl<'a> LeptonFileReader<'a> {
 
         metrics.record_cpu_worker_time(cpu_time.elapsed());
 
-        Ok((metrics, process_result))
+        result_send.send(Ok((metrics, process_result)))?;
+
+        Ok(())
     }
 }
 
