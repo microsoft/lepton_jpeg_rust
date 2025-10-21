@@ -17,7 +17,8 @@ use std::{
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReader, LeptonThreadPool,
-    SingleThreadPool, catch_unwind_result, decode_lepton, encode_lepton, get_git_version,
+    SingleThreadPool, ThreadPoolHolder, catch_unwind_result, decode_lepton, encode_lepton,
+    get_git_version,
 };
 use rstest::rstest;
 
@@ -373,10 +374,12 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         ..EnabledFeatures::compat_lepton_vector_read()
     };
 
-    let thread_pool: &'static dyn LeptonThreadPool = if features & USE_RAYON_THREAD_POOL != 0 {
-        &RAYON_THREAD_POOL
+    let thread_pool: ThreadPoolHolder = if features & USE_RAYON_THREAD_POOL != 0 {
+        ThreadPoolHolder::Dyn(&RAYON_THREAD_POOL)
+    } else if features & USE_SINGLE_THREAD_POOL != 0 {
+        ThreadPoolHolder::Owned(Box::new(SingleThreadPool::default()))
     } else {
-        &DEFAULT_THREAD_POOL
+        ThreadPoolHolder::Dyn(&DEFAULT_THREAD_POOL)
     };
 
     unsafe { DecompressionContext::new(LeptonFileReader::new(enabled_features, thread_pool)) }

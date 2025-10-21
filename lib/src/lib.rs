@@ -40,8 +40,6 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::cell::LazyCell;
-
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
 pub use lepton_error::{ExitCode, LeptonError};
@@ -51,6 +49,7 @@ pub use structs::lepton_file_writer::get_git_version;
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
     DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
+    SingleThreadPool, ThreadPoolHolder,
 };
 
 #[cfg(feature = "micro_benchmark")]
@@ -150,39 +149,4 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     }
 
     return Ok(());
-}
-
-/// single thread pool that creates just one threadpool thread
-/// useful for benchmarks to measure total end-to-end runtime
-///
-/// Note that the thread is not created until the first job is run.
-/// The thread will be destroyed when this object is dropped.
-pub struct SingleThreadPool {
-    sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
-}
-
-impl Default for SingleThreadPool {
-    fn default() -> Self {
-        let sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>> =
-            LazyCell::new(|| {
-                let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
-
-                // runs a single thread in our thread pool that processes all the requests
-                DEFAULT_THREAD_POOL.run(Box::new(move || {
-                    for job in rx {
-                        job();
-                    }
-                }));
-
-                tx
-            });
-
-        SingleThreadPool { sender }
-    }
-}
-
-impl LeptonThreadPool for SingleThreadPool {
-    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
-        self.sender.send(f).unwrap();
-    }
 }
