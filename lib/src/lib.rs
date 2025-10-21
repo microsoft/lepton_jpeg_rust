@@ -151,7 +151,6 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
 }
 
 /// reads a file from the images directory for testing or benchmarking purposes
-#[cfg(any(test, feature = "micro_benchmark"))]
 pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     use std::io::Read;
 

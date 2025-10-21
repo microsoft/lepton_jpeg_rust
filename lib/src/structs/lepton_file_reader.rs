@@ -51,7 +51,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
         let buffer = reader.fill_buf().context()?;
 
         done = decoder
-            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX)
+            .process_buffer(buffer, buffer.len() == 0, writer)
             .context()?;
 
         let amt = buffer.len();
@@ -138,7 +138,7 @@ enum DecoderState {
     ScanProgressive(MultiplexReaderState<(Metrics, Vec<BlockBasedImage>)>),
     ScanBaseline(MultiplexReaderState<(Metrics, Vec<u8>)>),
     AppendTrailer(Vec<Vec<u8>>),
-    ReturnResults(usize, Vec<Vec<u8>>),
+    ReturnResults(Vec<Vec<u8>>),
     EOI,
 }
 
@@ -194,7 +194,6 @@ impl<'a> LeptonFileReader<'a> {
         in_buffer: &[u8],
         input_complete: bool,
         output: &mut impl Write,
-        mut output_max_size: usize,
     ) -> Result<bool> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
@@ -307,26 +306,13 @@ impl<'a> LeptonFileReader<'a> {
                         }
                     }
 
-                    self.state = DecoderState::ReturnResults(0, mem::take(results));
+                    self.state = DecoderState::ReturnResults(mem::take(results));
                 }
-                DecoderState::ReturnResults(offset, leftover) => {
-                    while output_max_size > 0 {
-                        let bytes_to_write = min(output_max_size, leftover[0].len() - *offset);
-                        output.write_all(&leftover[0][*offset..*offset + bytes_to_write])?;
-                        *offset += bytes_to_write;
-                        output_max_size -= bytes_to_write;
-
-                        if *offset == leftover[0].len() {
-                            leftover.remove(0);
-                            *offset = 0;
-
-                            if leftover.len() == 0 {
-                                self.state = DecoderState::EOI;
-                                break;
-                            }
-                        }
+                DecoderState::ReturnResults(leftover) => {
+                    for l in leftover.iter() {
+                        output.write_all(l)?;
                     }
-                    break;
+                    self.state = DecoderState::EOI;
                 }
                 DecoderState::EOI => {
                     break;
