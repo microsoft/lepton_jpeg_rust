@@ -22,7 +22,7 @@ use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
-use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
+use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState, multiplex_read};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
@@ -566,7 +566,7 @@ impl<'a> LeptonFileReader<'a> {
         let jpeg_header = lh.jpeg_header.clone();
         let rinfo = lh.rinfo.clone();
 
-        let multiplex_reader_state = MultiplexReaderState::new(
+        let multiplex_reader_state = multiplex_read(
             thread_handoff.len(),
             thread_pool,
             retention_bytes,

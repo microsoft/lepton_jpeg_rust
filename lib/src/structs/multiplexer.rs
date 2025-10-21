@@ -365,84 +365,86 @@ enum State {
     Block(u8, usize),
 }
 
-impl<RESULT> MultiplexReaderState<RESULT> {
-    pub fn new<FN>(
-        num_threads: usize,
-        thread_pool: &dyn LeptonThreadPool,
-        retention_bytes: usize,
-        max_processor_threads: usize,
-        processor: FN,
-    ) -> MultiplexReaderState<RESULT>
-    where
-        FN: Fn(usize, &mut MultiplexReader, &Sender<Result<RESULT>>) -> Result<()>
-            + Send
-            + Sync
-            + 'static,
-        RESULT: Send + 'static,
-    {
-        let arc_processor = Arc::new(Box::new(processor));
+pub fn multiplex_read<FN, RESULT>(
+    num_threads: usize,
+    thread_pool: &dyn LeptonThreadPool,
+    retention_bytes: usize,
+    max_processor_threads: usize,
+    processor: FN,
+) -> MultiplexReaderState<RESULT>
+where
+    FN: Fn(usize, &mut MultiplexReader, &Sender<Result<RESULT>>) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    RESULT: Send + 'static,
+{
+    let arc_processor = Arc::new(Box::new(processor));
 
-        let mut channel_to_sender = Vec::new();
+    let mut channel_to_sender = Vec::new();
 
-        // collect the worker threads in a queue so we can spawn them
-        let mut work = VecDeque::new();
-        let mut result_receiver = Vec::new();
+    // collect the worker threads in a queue so we can spawn them
+    let mut work = VecDeque::new();
+    let mut result_receiver = Vec::new();
 
-        for thread_id in 0..num_threads {
-            let (tx, rx) = channel::<Message>();
-            channel_to_sender.push(tx);
+    for thread_id in 0..num_threads {
+        let (tx, rx) = channel::<Message>();
+        channel_to_sender.push(tx);
 
-            let cloned_processor = arc_processor.clone();
+        let cloned_processor = arc_processor.clone();
 
-            let (result_tx, result_rx) = channel::<Result<RESULT>>();
-            result_receiver.push(result_rx);
+        let (result_tx, result_rx) = channel::<Result<RESULT>>();
+        result_receiver.push(result_rx);
 
-            let f = move || {
-                // get the appropriate receiver so we can read out data from it
-                let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id,
-                    current_buffer: Cursor::new(Vec::new()),
-                    receiver: rx,
-                    end_of_file: false,
-                };
-
-                if let Err(e) = catch_unwind_result(|| cloned_processor(thread_id, &mut proc_reader, &result_tx)) {
-                    let _ = result_tx.send(Err(e));
-                }
+        let f = move || {
+            // get the appropriate receiver so we can read out data from it
+            let mut proc_reader = MultiplexReader {
+                thread_id: thread_id,
+                current_buffer: Cursor::new(Vec::new()),
+                receiver: rx,
+                end_of_file: false,
             };
 
-            work.push_back(f);
-        }
+            if let Err(e) =
+                catch_unwind_result(|| cloned_processor(thread_id, &mut proc_reader, &result_tx))
+            {
+                let _ = result_tx.send(Err(e));
+            }
+        };
 
-        let shared_queue = Arc::new(Mutex::new(work));
-
-        // spawn the worker threads to process all the items
-        // (there may be less processor threads than the number of threads in the image)
-        for _i in 0..num_threads.min(max_processor_threads) {
-            let q = shared_queue.clone();
-
-            thread_pool.run(Box::new(move || {
-                loop {
-                    // do this to make sure the lock gets
-                    let w = q.lock().unwrap().pop_front();
-
-                    if let Some(f) = w {
-                        f();
-                    } else {
-                        break;
-                    }
-                }
-            }));
-        }
-
-        MultiplexReaderState {
-            sender_channels: channel_to_sender,
-            receiver_channels: result_receiver,
-            current_state: State::StartBlock,
-            retention_bytes,
-        }
+        work.push_back(f);
     }
 
+    let shared_queue = Arc::new(Mutex::new(work));
+
+    // spawn the worker threads to process all the items
+    // (there may be less processor threads than the number of threads in the image)
+    for _i in 0..num_threads.min(max_processor_threads) {
+        let q = shared_queue.clone();
+
+        thread_pool.run(Box::new(move || {
+            loop {
+                // do this to make sure the lock gets
+                let w = q.lock().unwrap().pop_front();
+
+                if let Some(f) = w {
+                    f();
+                } else {
+                    break;
+                }
+            }
+        }));
+    }
+
+    MultiplexReaderState {
+        sender_channels: channel_to_sender,
+        receiver_channels: result_receiver,
+        current_state: State::StartBlock,
+        retention_bytes,
+    }
+}
+
+impl<RESULT> MultiplexReaderState<RESULT> {
     /// process as much incoming data as we can and send it to the appropriate thread
     pub fn process_buffer(&mut self, source: &mut PartialBuffer<'_>) -> Result<()> {
         while source.continue_processing() {
@@ -550,7 +552,7 @@ fn test_multiplex_end_to_end() {
 
     let mut extra = Vec::new();
 
-    let mut multiplex_state = MultiplexReaderState::new(
+    let mut multiplex_state = multiplex_read(
         10,
         &DEFAULT_THREAD_POOL,
         0,
@@ -578,7 +580,7 @@ fn test_multiplex_end_to_end() {
 
 #[test]
 fn test_multiplex_read_error() {
-    let mut multiplex_state = MultiplexReaderState::new(
+    let mut multiplex_state = multiplex_read(
         10,
         &DEFAULT_THREAD_POOL,
         0,
@@ -595,7 +597,7 @@ fn test_multiplex_read_error() {
 
 #[test]
 fn test_multiplex_read_panic() {
-    let mut multiplex_state = MultiplexReaderState::new(
+    let mut multiplex_state = multiplex_read(
         10,
         &DEFAULT_THREAD_POOL,
         0,
