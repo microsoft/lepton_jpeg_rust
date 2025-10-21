@@ -571,8 +571,8 @@ impl<'a> LeptonFileReader<'a> {
             thread_pool,
             retention_bytes,
             features.max_threads as usize,
-            move |thread_id, reader| -> Result<(Metrics, P)> {
-                Self::run_lepton_decoder_processor(
+            move |thread_id, reader, result_tx| {
+                let result = Self::run_lepton_decoder_processor(
                     &jpeg_header,
                     &rinfo,
                     &thread_handoff[thread_id],
@@ -581,7 +581,9 @@ impl<'a> LeptonFileReader<'a> {
                     reader,
                     &features,
                     process,
-                )
+                )?;
+                result_tx.send(Ok(result))?;
+                Ok(())
             },
         );
 
