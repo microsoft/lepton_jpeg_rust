@@ -440,9 +440,21 @@ pub unsafe extern "C" fn decompress_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lepton_jpeg::read_file;
 
     use rstest::rstest;
+
+    fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+        let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+            .join("images")
+            .join(filename.to_owned() + ext);
+        //println!("reading {0}", filename.to_str().unwrap());
+        let mut f = std::fs::File::open(filename).unwrap();
+
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut content).unwrap();
+
+        content
+    }
 
     #[test]
     fn test_copy_cstring_utf8_to_buffer() {

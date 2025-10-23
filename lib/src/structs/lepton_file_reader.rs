@@ -656,7 +656,8 @@ mod tests {
     use default_boxed::DefaultBoxed;
 
     use crate::{
-        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, read_file,
+        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton,
+        helpers::read_file,
         structs::{
             lepton_header::{FIXED_HEADER_SIZE, LeptonHeader},
             thread_handoff::ThreadHandoff,

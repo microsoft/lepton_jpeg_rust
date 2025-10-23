@@ -4,7 +4,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use lepton_jpeg::{EnabledFeatures, SingleThreadPool};
 
 fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
         .join("images")
         .join(filename.to_owned() + ext);
     //println!("reading {0}", filename.to_str().unwrap());

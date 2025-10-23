@@ -35,5 +35,10 @@ jobs:
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace
       - name: Build x86_64-pc-windows-msvc release
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
-      - name: Run tests
-        run: cargo test --locked --workspace
+      - name: Run test lib
+        run: cargo test --locked -p lepton_jpeg --lib
+      - name: Run test dll
+        run: cargo test --locked -p lepton_jpeg_dll --lib
+      - name: Run test end_to_end
+        run: cargo test --locked 
+
