@@ -61,7 +61,18 @@ pub fn jpeg_write_baseline_row_range(
 ) -> Result<Vec<u8>> {
     let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
 
-    let mut huffw = BitWriter::new(encoded_length);
+    let mut data_buffer = Vec::new();
+    if let Err(e) = data_buffer.try_reserve_exact(encoded_length) {
+        return err_exit_code(
+            ExitCode::OutOfMemory,
+            format!(
+                "unable to allocate {} bytes for jpeg output buffer: {:?}",
+                encoded_length, e
+            ),
+        );
+    }
+
+    let mut huffw = BitWriter::new(data_buffer);
     huffw.reset_from_overhang_byte_and_num_bits(
         restart_info.overhang_byte,
         u32::from(restart_info.num_overhang_bits),
@@ -125,7 +136,7 @@ pub fn jpeg_write_entire_scan(
 
     let mut last_dc = [0i16; 4];
 
-    let mut huffw = BitWriter::new(128 * 1024);
+    let mut huffw = BitWriter::new(Vec::with_capacity(128 * 1024));
 
     let mut decode_index = 0;
     loop {
@@ -352,7 +363,7 @@ fn recode_one_mcu_row(
 }
 
 #[inline(never)]
-fn encode_block_seq(
+pub(crate) fn encode_block_seq(
     huffw: &mut BitWriter,
     dctbl: &HuffCodes,
     actbl: &HuffCodes,
@@ -635,170 +646,351 @@ fn encode_eobrun_bits(s: u8, v: u16) -> u16 {
     v - (1 << s)
 }
 
-/// roundtrips a block through the encoder and decoder and checks that the output matches the input
 #[cfg(test)]
-fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+mod tests {
     use std::io::Cursor;
 
-    use super::bit_reader::BitReader;
-    use super::jpeg_header::{HuffTree, generate_huff_table_from_distribution};
-    use super::jpeg_read::decode_block_seq;
+    use super::*;
 
-    let mut bitwriter = BitWriter::new(1024);
-
-    // create a weird distribution to test the huffman encoding for corner cases
-    let mut dcdistribution = [0; 256];
-    for i in 0..256 {
-        dcdistribution[i] = 256 - i;
-    }
-    let dctbl = generate_huff_table_from_distribution(&dcdistribution);
-
-    let mut acdistribution = [0; 256];
-    for i in 0..256 {
-        acdistribution[i] = 1 + 256;
-    }
-    let actbl = generate_huff_table_from_distribution(&acdistribution);
-
-    encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
-
-    bitwriter.pad(0);
-
-    let buf = bitwriter.detach_buffer();
-    assert_eq!(buf, expected);
-
-    let mut bitreader = BitReader::new(Cursor::new(&buf));
-
-    let mut block_decoded = [0i16; 64];
-    decode_block_seq(
-        &mut bitreader,
-        &HuffTree::construct_hufftree(&dctbl, true).unwrap(),
-        &HuffTree::construct_hufftree(&actbl, true).unwrap(),
-        &mut block_decoded,
-    )
-    .unwrap();
-
-    assert_eq!(&block_decoded, block.get_block());
-}
-
-#[test]
-fn test_encode_block_seq() {
-    let mut block = AlignedBlock::default();
-    for i in 0..64 {
-        block.get_block_mut()[i] = (i as i16) - 32;
-    }
-
-    let expected = [
-        152, 252, 176, 37, 131, 44, 41, 97, 203, 18, 88, 178, 198, 150, 60, 178, 37, 147, 44, 169,
-        101, 203, 50, 89, 178, 206, 150, 126, 176, 107, 14, 177, 107, 30, 178, 107, 46, 179, 107,
-        56, 136, 17, 34, 40, 69, 128, 128, 47, 120, 250, 3, 0, 226, 48, 70, 136, 225, 31, 173, 26,
-        211, 173, 90, 215, 173, 154, 219, 173, 218, 223, 45, 9, 104, 203, 74, 90, 114, 212, 150,
-        172, 181, 165, 175, 45, 137, 108, 203, 106, 91, 114, 220, 150, 236, 183, 165, 190,
-    ];
-
-    round_trip_block(&block, &expected);
-}
-
-/// make sure we encode magnitudes correctly
-#[test]
-fn test_encode_block_magnitude() {
-    let mut block = AlignedBlock::default();
-    for i in 0..15 {
-        block.get_block_mut()[i] = (1u16 << i) as i16;
-    }
-    for i in 0..15 {
-        block.get_block_mut()[i + 20] = -((1u16 << i) as i16);
-    }
-
-    let expected = [
-        165, 1, 132, 102, 180, 75, 64, 138, 6, 248, 8, 16, 27, 208, 13, 120, 2, 122, 0, 75, 192, 4,
-        60, 0, 8, 224, 0, 109, 128, 1, 250, 1, 68, 94, 179, 203, 60, 137, 246, 247, 232, 15, 251,
-        207, 253, 119, 254, 121, 255, 0, 203, 191, 252, 59, 255, 0, 200, 223, 255, 0, 109, 127,
-        254, 0,
-    ];
-
-    round_trip_block(&block, &expected);
-}
-
-/// test encoding with gaps to test zero counting
-#[test]
-fn test_encode_block_zero_runs() {
-    let mut block = AlignedBlock::default();
-
-    for i in 0..10 {
-        block.get_block_mut()[i] = i as i16;
-    }
-    for i in 30..50 {
-        block.get_block_mut()[i] = -(i as i16);
-    }
-    for i in 50..52 {
-        block.get_block_mut()[i] = i as i16;
-    }
-
-    let expected = [
-        169, 223, 1, 128, 113, 24, 35, 68, 112, 143, 214, 141, 105, 167, 249, 12, 176, 8, 159, 34,
-        120, 137, 210, 39, 8, 155, 34, 104, 137, 146, 38, 8, 151, 34, 88, 137, 82, 37, 8, 147, 34,
-        72, 137, 18, 36, 8, 143, 34, 56, 139, 34, 44, 192, 0,
-    ];
-
-    round_trip_block(&block, &expected);
-}
-
-/// test encoding with gaps to test zero counting
-#[test]
-fn test_encode_block_long_zero_cnt() {
-    let mut block = AlignedBlock::default();
-
-    block.get_block_mut()[63] = 1;
-
-    let expected = [169, 79, 79, 79, 33];
-
-    round_trip_block(&block, &expected);
-}
-
-#[test]
-fn test_encode_block_seq_zero() {
-    let block = AlignedBlock::default();
-
-    let expected = [168, 0];
-
-    round_trip_block(&block, &expected);
-}
-
-#[cfg(test)]
-fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(
-    reader: &mut R,
-    enabled_features: &crate::EnabledFeatures,
-) -> Vec<u8> {
-    use crate::consts::*;
-    use crate::jpeg::jpeg_read::read_jpeg_file;
-
-    let mut jpeg_header = JpegHeader::default();
-    let mut rinfo = ReconstructionInfo::default();
-
-    let mut headers = Vec::new();
-
-    let (image_data, partitions, end_scan_position) = read_jpeg_file(
-        reader,
-        &mut jpeg_header,
-        &mut rinfo,
-        &enabled_features,
-        |header, raw_header| {
-            headers.push((header.clone(), raw_header.to_vec()));
+    use crate::{
+        helpers::read_file,
+        jpeg::{
+            bit_reader::BitReader,
+            bit_writer::BitWriter,
+            block_based_image::AlignedBlock,
+            jpeg_header::{HuffTree, generate_huff_table_from_distribution},
+            jpeg_read::decode_block_seq,
         },
-    )
-    .unwrap();
+    };
 
-    let mut reconstructed = Vec::new();
-    reconstructed.extend_from_slice(&SOI);
+    /// roundtrips a block through the encoder and decoder and checks that the output matches the input
+    fn round_trip_block(block: &AlignedBlock, expected: &[u8]) {
+        let mut bitwriter = BitWriter::new(Vec::with_capacity(1024));
 
-    match jpeg_header.jpeg_type {
-        JpegType::Sequential => {
-            // sequential JPEG consists of a single header + scan
-            reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
+        // create a weird distribution to test the huffman encoding for corner cases
+        let mut dcdistribution = [0; 256];
+        for i in 0..256 {
+            dcdistribution[i] = 256 - i;
+        }
+        let dctbl = generate_huff_table_from_distribution(&dcdistribution);
 
+        let mut acdistribution = [0; 256];
+        for i in 0..256 {
+            acdistribution[i] = 1 + 256;
+        }
+        let actbl = generate_huff_table_from_distribution(&acdistribution);
+
+        encode_block_seq(&mut bitwriter, &dctbl, &actbl, block);
+
+        bitwriter.pad(0);
+
+        let buf = bitwriter.detach_buffer();
+        assert_eq!(buf, expected);
+
+        let mut bitreader = BitReader::new(Cursor::new(&buf));
+
+        let mut block_decoded = [0i16; 64];
+        decode_block_seq(
+            &mut bitreader,
+            &HuffTree::construct_hufftree(&dctbl, true).unwrap(),
+            &HuffTree::construct_hufftree(&actbl, true).unwrap(),
+            &mut block_decoded,
+        )
+        .unwrap();
+
+        assert_eq!(&block_decoded, block.get_block());
+    }
+
+    #[test]
+    fn test_encode_block_seq() {
+        let mut block = AlignedBlock::default();
+        for i in 0..64 {
+            block.get_block_mut()[i] = (i as i16) - 32;
+        }
+
+        let expected = [
+            152, 252, 176, 37, 131, 44, 41, 97, 203, 18, 88, 178, 198, 150, 60, 178, 37, 147, 44,
+            169, 101, 203, 50, 89, 178, 206, 150, 126, 176, 107, 14, 177, 107, 30, 178, 107, 46,
+            179, 107, 56, 136, 17, 34, 40, 69, 128, 128, 47, 120, 250, 3, 0, 226, 48, 70, 136, 225,
+            31, 173, 26, 211, 173, 90, 215, 173, 154, 219, 173, 218, 223, 45, 9, 104, 203, 74, 90,
+            114, 212, 150, 172, 181, 165, 175, 45, 137, 108, 203, 106, 91, 114, 220, 150, 236, 183,
+            165, 190,
+        ];
+
+        round_trip_block(&block, &expected);
+    }
+
+    /// make sure we encode magnitudes correctly
+    #[test]
+    fn test_encode_block_magnitude() {
+        let mut block = AlignedBlock::default();
+        for i in 0..15 {
+            block.get_block_mut()[i] = (1u16 << i) as i16;
+        }
+        for i in 0..15 {
+            block.get_block_mut()[i + 20] = -((1u16 << i) as i16);
+        }
+
+        let expected = [
+            165, 1, 132, 102, 180, 75, 64, 138, 6, 248, 8, 16, 27, 208, 13, 120, 2, 122, 0, 75,
+            192, 4, 60, 0, 8, 224, 0, 109, 128, 1, 250, 1, 68, 94, 179, 203, 60, 137, 246, 247,
+            232, 15, 251, 207, 253, 119, 254, 121, 255, 0, 203, 191, 252, 59, 255, 0, 200, 223,
+            255, 0, 109, 127, 254, 0,
+        ];
+
+        round_trip_block(&block, &expected);
+    }
+
+    /// test encoding with gaps to test zero counting
+    #[test]
+    fn test_encode_block_zero_runs() {
+        let mut block = AlignedBlock::default();
+
+        for i in 0..10 {
+            block.get_block_mut()[i] = i as i16;
+        }
+        for i in 30..50 {
+            block.get_block_mut()[i] = -(i as i16);
+        }
+        for i in 50..52 {
+            block.get_block_mut()[i] = i as i16;
+        }
+
+        let expected = [
+            169, 223, 1, 128, 113, 24, 35, 68, 112, 143, 214, 141, 105, 167, 249, 12, 176, 8, 159,
+            34, 120, 137, 210, 39, 8, 155, 34, 104, 137, 146, 38, 8, 151, 34, 88, 137, 82, 37, 8,
+            147, 34, 72, 137, 18, 36, 8, 143, 34, 56, 139, 34, 44, 192, 0,
+        ];
+
+        round_trip_block(&block, &expected);
+    }
+
+    /// test encoding with gaps to test zero counting
+    #[test]
+    fn test_encode_block_long_zero_cnt() {
+        let mut block = AlignedBlock::default();
+
+        block.get_block_mut()[63] = 1;
+
+        let expected = [169, 79, 79, 79, 33];
+
+        round_trip_block(&block, &expected);
+    }
+
+    #[test]
+    fn test_encode_block_seq_zero() {
+        let block = AlignedBlock::default();
+
+        let expected = [168, 0];
+
+        round_trip_block(&block, &expected);
+    }
+
+    fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(
+        reader: &mut R,
+        enabled_features: &crate::EnabledFeatures,
+    ) -> Vec<u8> {
+        use crate::consts::*;
+        use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo};
+        use crate::jpeg::jpeg_read::read_jpeg_file;
+
+        let mut jpeg_header = JpegHeader::default();
+        let mut rinfo = ReconstructionInfo::default();
+
+        let mut headers = Vec::new();
+
+        let (image_data, partitions, end_scan_position) = read_jpeg_file(
+            reader,
+            &mut jpeg_header,
+            &mut rinfo,
+            &enabled_features,
+            |header, raw_header| {
+                headers.push((header.clone(), raw_header.to_vec()));
+            },
+        )
+        .unwrap();
+
+        let mut reconstructed = Vec::new();
+        reconstructed.extend_from_slice(&SOI);
+
+        match jpeg_header.jpeg_type {
+            JpegType::Sequential => {
+                // sequential JPEG consists of a single header + scan
+                reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
+
+                let mut prev_offset = 0;
+                for (offset, coding_info) in partitions {
+                    let mut r = jpeg_write_baseline_row_range(
+                        (offset - prev_offset) as usize,
+                        &coding_info,
+                        &image_data,
+                        &jpeg_header,
+                        &rinfo,
+                    )
+                    .unwrap();
+
+                    reconstructed.append(&mut r);
+
+                    prev_offset = offset;
+                }
+
+                assert_eq!(reconstructed.len(), end_scan_position as usize);
+
+                reconstructed.extend_from_slice(&EOI);
+            }
+            JpegType::Progressive => {
+                // progressive JPEG consists of header + scan, header + scan, etc
+                let mut scnc = 0;
+
+                for (jh, raw_header) in headers {
+                    // progressive JPEG consists of headers + scan
+                    reconstructed.extend_from_slice(&raw_header);
+
+                    let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
+
+                    reconstructed.extend_from_slice(&scan);
+
+                    // advance to next scan
+                    scnc += 1;
+                }
+
+                reconstructed.extend_from_slice(&EOI);
+
+                // progressive includes EOI in the scan
+                assert_eq!(reconstructed.len(), end_scan_position as usize);
+            }
+            _ => {
+                panic!("unexpected JPEG type: {:?}", jpeg_header.jpeg_type);
+            }
+        }
+
+        reconstructed
+    }
+
+    /// reads a JPEG file and writes it back out using the baseline encoder
+    /// to verify that the encoder and decoder exactly the same.
+    #[test]
+    fn roundtrip_baseline_jpeg() {
+        let file = read_file("iphone", ".jpg");
+        let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+
+        let reconstructed = roundtrip_jpeg(&mut std::io::Cursor::new(&file), &enabled_features);
+
+        assert!(reconstructed == file);
+    }
+
+    /// reads a progressive JPEG file and writes it back out using the progressive encoder
+    /// to verify that the encoder and decoder exactly the same.
+    #[test]
+    fn roundtrip_progressive_jpeg() {
+        let file = read_file("iphoneprogressive", ".jpg");
+        let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+
+        let reconstructed = roundtrip_jpeg(&mut std::io::Cursor::new(&file), &enabled_features);
+
+        assert!(reconstructed == file);
+    }
+
+    #[test]
+    fn test_benchmark_write_jpeg() {
+        let mut f = benchmarks::benchmark_write_jpeg();
+        for _ in 0..10 {
+            f();
+        }
+    }
+
+    #[test]
+    fn test_benchmark_write_block() {
+        let mut f = benchmarks::benchmark_write_block();
+        for _ in 0..10 {
+            f();
+        }
+    }
+}
+
+#[cfg(any(test, feature = "micro_benchmark"))]
+pub mod benchmarks {
+    use std::mem;
+
+    use super::*;
+
+    use crate::{
+        EnabledFeatures,
+        helpers::read_file,
+        jpeg::{
+            bit_writer::BitWriter,
+            block_based_image::AlignedBlock,
+            jpeg_header::{JpegHeader, ReconstructionInfo, generate_huff_table_from_distribution},
+            jpeg_read::read_jpeg_file,
+        },
+    };
+
+    /// Benchmarks performance of encoding a single JPEG block
+    #[inline(never)]
+    pub fn benchmark_write_block() -> Box<dyn FnMut()> {
+        // create a weird distribution to test the huffman encoding for corner cases
+        let mut dcdistribution = [0; 256];
+        for i in 0..256 {
+            dcdistribution[i] = 256 - i;
+        }
+        let dctbl = generate_huff_table_from_distribution(&dcdistribution);
+
+        let mut acdistribution = [0; 256];
+        for i in 0..256 {
+            acdistribution[i] = 1 + 256;
+        }
+        let actbl = generate_huff_table_from_distribution(&acdistribution);
+
+        let mut block = AlignedBlock::default();
+        for i in 0..10 {
+            block.get_block_mut()[i] = i as i16;
+        }
+        for i in 30..50 {
+            block.get_block_mut()[i] = -(i as i16);
+        }
+        for i in 50..52 {
+            block.get_block_mut()[i] = i as i16;
+        }
+
+        // we don't want to accumulate memory as we write, so reuse the same buffer
+        // and clear it after each iteration.
+        // This also avoids the cost of a malloc/free on each iteration.
+        let mut storage = Vec::with_capacity(1024);
+        Box::new(move || {
+            let mut bitwriter = BitWriter::new(mem::take(&mut storage));
+            encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
+            storage = bitwriter.detach_buffer();
+            storage.clear();
+        })
+    }
+
+    /// reads the jpeg file from the test data, parses it and then
+    /// returns a closure that writes the jpeg blocks back out.
+    #[inline(never)]
+    pub fn benchmark_write_jpeg() -> Box<dyn FnMut()> {
+        let file = read_file("android", ".jpg");
+
+        let mut reader = std::io::Cursor::new(&file);
+        let enabled_features = EnabledFeatures::compat_lepton_vector_write();
+
+        let mut jpeg_header = JpegHeader::default();
+        let mut rinfo = ReconstructionInfo::default();
+
+        let (image_data, partitions, _end_scan) = read_jpeg_file(
+            &mut reader,
+            &mut jpeg_header,
+            &mut rinfo,
+            &enabled_features,
+            |_, _| {},
+        )
+        .unwrap();
+
+        Box::new(move || {
             let mut prev_offset = 0;
-            for (offset, coding_info) in partitions {
-                let mut r = jpeg_write_baseline_row_range(
+            for (offset, coding_info) in &partitions {
+                use std::hint::black_box;
+
+                let r = jpeg_write_baseline_row_range(
                     (offset - prev_offset) as usize,
                     &coding_info,
                     &image_data,
@@ -807,117 +999,10 @@ fn roundtrip_jpeg<R: std::io::BufRead + std::io::Seek>(
                 )
                 .unwrap();
 
-                reconstructed.append(&mut r);
+                black_box(r);
 
-                prev_offset = offset;
+                prev_offset = *offset;
             }
-
-            assert_eq!(reconstructed.len(), end_scan_position as usize);
-
-            reconstructed.extend_from_slice(&EOI);
-        }
-        JpegType::Progressive => {
-            // progressive JPEG consists of header + scan, header + scan, etc
-            let mut scnc = 0;
-
-            for (jh, raw_header) in headers {
-                // progressive JPEG consists of headers + scan
-                reconstructed.extend_from_slice(&raw_header);
-
-                let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
-
-                reconstructed.extend_from_slice(&scan);
-
-                // advance to next scan
-                scnc += 1;
-            }
-
-            reconstructed.extend_from_slice(&EOI);
-
-            // progressive includes EOI in the scan
-            assert_eq!(reconstructed.len(), end_scan_position as usize);
-        }
-        _ => {
-            panic!("unexpected JPEG type: {:?}", jpeg_header.jpeg_type);
-        }
-    }
-
-    reconstructed
-}
-
-/// reads a JPEG file and writes it back out using the baseline encoder
-/// to verify that the encoder and decoder exactly the same.
-#[test]
-fn roundtrip_baseline_jpeg() {
-    let file = crate::structs::lepton_file_reader::read_file("iphone", ".jpg");
-    let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
-
-    let reconstructed = roundtrip_jpeg(&mut std::io::Cursor::new(&file), &enabled_features);
-
-    assert!(reconstructed == file);
-}
-
-/// reads a progressive JPEG file and writes it back out using the progressive encoder
-/// to verify that the encoder and decoder exactly the same.
-#[test]
-fn roundtrip_progressive_jpeg() {
-    let file = crate::structs::lepton_file_reader::read_file("iphoneprogressive", ".jpg");
-    let enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
-
-    let reconstructed = roundtrip_jpeg(&mut std::io::Cursor::new(&file), &enabled_features);
-
-    assert!(reconstructed == file);
-}
-
-/// reads the jpeg file from the test data, parses it and then
-/// returns a closure that writes the jpeg blocks back out.
-#[cfg(any(test, feature = "micro_benchmark"))]
-#[inline(never)]
-pub fn benchmark_write_jpeg() -> Box<dyn FnMut()> {
-    use crate::{EnabledFeatures, jpeg::jpeg_read::read_jpeg_file};
-
-    let file = crate::structs::lepton_file_reader::read_file("android", ".jpg");
-
-    let mut reader = std::io::Cursor::new(&file);
-    let enabled_features = EnabledFeatures::compat_lepton_vector_write();
-
-    let mut jpeg_header = JpegHeader::default();
-    let mut rinfo = ReconstructionInfo::default();
-
-    let (image_data, partitions, _end_scan) = read_jpeg_file(
-        &mut reader,
-        &mut jpeg_header,
-        &mut rinfo,
-        &enabled_features,
-        |_, _| {},
-    )
-    .unwrap();
-
-    Box::new(move || {
-        let mut prev_offset = 0;
-        for (offset, coding_info) in &partitions {
-            use std::hint::black_box;
-
-            let r = jpeg_write_baseline_row_range(
-                (offset - prev_offset) as usize,
-                &coding_info,
-                &image_data,
-                &jpeg_header,
-                &rinfo,
-            )
-            .unwrap();
-
-            black_box(r);
-
-            prev_offset = *offset;
-        }
-    })
-}
-
-#[test]
-fn test_benchmark_write_jpeg() {
-    let mut f = benchmark_write_jpeg();
-    for _ in 0..10 {
-        f();
+        })
     }
 }

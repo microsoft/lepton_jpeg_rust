@@ -49,6 +49,7 @@ pub use structs::lepton_file_writer::get_git_version;
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
     DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
+    SingleThreadPool, ThreadPoolHolder,
 };
 
 #[cfg(feature = "micro_benchmark")]

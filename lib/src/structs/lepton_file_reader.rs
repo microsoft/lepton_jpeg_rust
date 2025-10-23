@@ -25,6 +25,7 @@ use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::simple_threadpool::ThreadPoolHolder;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::{LeptonThreadPool, consts::*};
 
@@ -43,7 +44,8 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     enabled_features: &EnabledFeatures,
     thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    let mut decoder = LeptonFileReader::new(enabled_features.clone(), thread_pool);
+    let mut decoder =
+        LeptonFileReader::new(enabled_features.clone(), ThreadPoolHolder::Dyn(thread_pool));
 
     let mut done = false;
     while !done {
@@ -124,7 +126,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
 
     let mut block_image = Vec::new();
     for i in 0..num_components {
-        block_image.push(BlockBasedImage::merge(&mut results, i));
+        block_image.push(BlockBasedImage::merge(&mut results, i).context()?);
     }
 
     Ok((lh, block_image))
@@ -152,12 +154,12 @@ pub struct LeptonFileReader<'a> {
     metrics: Metrics,
     total_read_size: u64,
     input_complete: bool,
-    thread_pool: &'a dyn LeptonThreadPool,
+    thread_pool: ThreadPoolHolder<'a>,
 }
 
 impl<'a> LeptonFileReader<'a> {
     /// Creates a new LeptonFileReader.
-    pub fn new(features: EnabledFeatures, thread_pool: &'a dyn LeptonThreadPool) -> Self {
+    pub fn new(features: EnabledFeatures, thread_pool: ThreadPoolHolder<'a>) -> Self {
         LeptonFileReader {
             state: DecoderState::FixedHeader(),
             lh: LeptonHeader::default_boxed(),
@@ -238,7 +240,7 @@ impl<'a> LeptonFileReader<'a> {
                             v,
                             &self.lh,
                             &self.enabled_features,
-                            self.thread_pool,
+                            &self.thread_pool,
                         )?;
                     }
                 }
@@ -408,7 +410,7 @@ impl<'a> LeptonFileReader<'a> {
         let num_components = image_segments[0].len();
         let mut merged = Vec::new();
         for i in 0..num_components {
-            merged.push(BlockBasedImage::merge(&mut image_segments, i));
+            merged.push(BlockBasedImage::merge(&mut image_segments, i).context()?);
         }
 
         let mut header = Vec::new();
@@ -532,8 +534,7 @@ impl<'a> LeptonFileReader<'a> {
                     format!(
                         "ERROR mismatch input_len = {0}, decoded_len = {1}",
                         size, total_read_size
-                    )
-                    .as_str(),
+                    ),
                 );
             }
             Ok(())
@@ -619,7 +620,7 @@ impl<'a> LeptonFileReader<'a> {
                 } else {
                     thread_handoff.luma_y_end
                 },
-            ));
+            )?);
         }
 
         let mut metrics = Metrics::default();
@@ -647,144 +648,141 @@ impl<'a> LeptonFileReader<'a> {
     }
 }
 
-// test serializing and deserializing header
-#[test]
-fn parse_and_write_header() {
-    use crate::jpeg::jpeg_read::read_jpeg_file;
-    use std::io::Read;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
 
-    let min_jpeg = read_file("tiny", ".jpg");
+    use default_boxed::DefaultBoxed;
 
-    let mut lh = LeptonHeader::default_boxed();
-    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    use crate::{
+        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton,
+        helpers::read_file,
+        structs::{
+            lepton_header::{FIXED_HEADER_SIZE, LeptonHeader},
+            thread_handoff::ThreadHandoff,
+        },
+    };
 
-    lh.jpeg_file_size = min_jpeg.len() as u32;
-    lh.uncompressed_lepton_header_size = Some(752);
+    // test serializing and deserializing header
+    #[test]
+    fn parse_and_write_header() {
+        use crate::jpeg::jpeg_read::read_jpeg_file;
+        use std::io::Read;
 
-    let (_image_data, _partitions, _end_scan) = read_jpeg_file(
-        &mut Cursor::new(min_jpeg),
-        &mut lh.jpeg_header,
-        &mut lh.rinfo,
-        &enabled_features,
-        |_, _| {},
-    )
-    .unwrap();
+        let min_jpeg = read_file("tiny", ".jpg");
 
-    lh.thread_handoff.push(ThreadHandoff {
-        luma_y_start: 0,
-        luma_y_end: 1,
-        segment_offset_in_file: 0,
-        segment_size: 1000,
-        overhang_byte: 0,
-        num_overhang_bits: 1,
-        last_dc: [1, 2, 3, 4],
-    });
+        let mut lh = LeptonHeader::default_boxed();
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let mut serialized = Vec::new();
-    lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
-        .unwrap();
+        lh.jpeg_file_size = min_jpeg.len() as u32;
+        lh.uncompressed_lepton_header_size = Some(752);
 
-    let mut other = LeptonHeader::default_boxed();
-    let mut other_reader = Cursor::new(&serialized);
-
-    let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
-    other_reader.read_exact(&mut fixed_buffer).unwrap();
-
-    let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
-
-    let compressed_header_size = other
-        .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
-        .unwrap();
-    other
-        .read_compressed_lepton_header(
-            &mut other_reader,
-            &mut other_enabled_features,
-            compressed_header_size,
+        let (_image_data, _partitions, _end_scan) = read_jpeg_file(
+            &mut Cursor::new(min_jpeg),
+            &mut lh.jpeg_header,
+            &mut lh.rinfo,
+            &enabled_features,
+            |_, _| {},
         )
         .unwrap();
 
-    assert_eq!(
-        lh.uncompressed_lepton_header_size,
-        other.uncompressed_lepton_header_size
-    );
-}
+        lh.thread_handoff.push(ThreadHandoff {
+            luma_y_start: 0,
+            luma_y_end: 1,
+            segment_offset_in_file: 0,
+            segment_size: 1000,
+            overhang_byte: 0,
+            num_overhang_bits: 1,
+            last_dc: [1, 2, 3, 4],
+        });
 
-#[cfg(any(test, feature = "micro_benchmark"))]
-pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    use std::io::Read;
+        let mut serialized = Vec::new();
+        lh.write_lepton_header(&mut Cursor::new(&mut serialized), &enabled_features)
+            .unwrap();
 
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("images")
-        .join(filename.to_owned() + ext);
-    println!("reading {0}", filename.to_str().unwrap());
-    let mut f = std::fs::File::open(filename).unwrap();
+        let mut other = LeptonHeader::default_boxed();
+        let mut other_reader = Cursor::new(&serialized);
 
-    let mut content = Vec::new();
-    f.read_to_end(&mut content).unwrap();
+        let mut fixed_buffer = [0; FIXED_HEADER_SIZE];
+        other_reader.read_exact(&mut fixed_buffer).unwrap();
 
-    content
-}
+        let mut other_enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-#[test]
-fn test_simple_parse_progressive() {
-    test_file("androidprogressive")
-}
+        let compressed_header_size = other
+            .read_lepton_fixed_header(&fixed_buffer, &mut other_enabled_features)
+            .unwrap();
+        other
+            .read_compressed_lepton_header(
+                &mut other_reader,
+                &mut other_enabled_features,
+                compressed_header_size,
+            )
+            .unwrap();
 
-#[test]
-fn test_simple_parse_baseline() {
-    test_file("android")
-}
+        assert_eq!(
+            lh.uncompressed_lepton_header_size,
+            other.uncompressed_lepton_header_size
+        );
+    }
 
-#[test]
-fn test_simple_parse_trailing() {
-    test_file("androidtrail")
-}
+    #[test]
+    fn test_simple_parse_progressive() {
+        test_file("androidprogressive")
+    }
 
-#[test]
-fn test_zero_dqt() {
-    test_file("zeros_in_dqt_tables")
-}
+    #[test]
+    fn test_simple_parse_baseline() {
+        test_file("android")
+    }
 
-/// truncated progessive JPEG. We don't support creating these, but we can read them
-#[test]
-fn test_pixelated() {
-    test_file("pixelated")
-}
+    #[test]
+    fn test_simple_parse_trailing() {
+        test_file("androidtrail")
+    }
 
-/// requires that the last segment be truncated by 1 byte.
-/// This is for compatibility with the C++ version
-#[test]
-fn test_truncate4() {
-    test_file("truncate4")
-}
+    #[test]
+    fn test_zero_dqt() {
+        test_file("zeros_in_dqt_tables")
+    }
 
-#[cfg(test)]
-fn test_file(filename: &str) {
-    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
+    /// truncated progessive JPEG. We don't support creating these, but we can read them
+    #[test]
+    fn test_pixelated() {
+        test_file("pixelated")
+    }
 
-    let file = read_file(filename, ".lep");
-    let original = read_file(filename, ".jpg");
+    /// requires that the last segment be truncated by 1 byte.
+    /// This is for compatibility with the C++ version
+    #[test]
+    fn test_truncate4() {
+        test_file("truncate4")
+    }
 
-    let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+    fn test_file(filename: &str) {
+        let file = read_file(filename, ".lep");
+        let original = read_file(filename, ".jpg");
 
-    let _ = decode_lepton_file_image(
-        &mut Cursor::new(&file),
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
 
-    let mut output = Vec::new();
+        let _ = decode_lepton_file_image(
+            &mut Cursor::new(&file),
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
 
-    decode_lepton(
-        &mut Cursor::new(&file),
-        &mut output,
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+        let mut output = Vec::new();
 
-    assert_eq!(output.len(), original.len());
-    assert!(output == original);
+        decode_lepton(
+            &mut Cursor::new(&file),
+            &mut output,
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        assert_eq!(output.len(), original.len());
+        assert!(output == original);
+    }
 }

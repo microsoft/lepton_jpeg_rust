@@ -5,9 +5,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
-use std::fs::File;
-use std::io::{Cursor, Read};
-use std::path::Path;
+use std::io::Cursor;
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, encode_lepton, encode_lepton_verify,
@@ -15,12 +13,14 @@ use lepton_jpeg::{
 use lepton_jpeg::{ExitCode, LeptonError};
 use rstest::rstest;
 
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = Path::new(env!("CARGO_MANIFEST_DIR"))
+/// reads a file from the images directory for testing or benchmarking purposes
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+    use std::io::Read;
+
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
         .join("images")
         .join(filename.to_owned() + ext);
-    println!("reading {0}", filename.to_str().unwrap());
-    let mut f = File::open(filename).unwrap();
+    let mut f = std::fs::File::open(filename).unwrap();
 
     let mut content = Vec::new();
     f.read_to_end(&mut content).unwrap();

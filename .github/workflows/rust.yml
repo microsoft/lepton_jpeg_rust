@@ -2,6 +2,8 @@ name: Rust
 
 permissions:
   contents: read
+  checks: write
+  pull-requests: write 
 
 on:
   push:
@@ -23,6 +25,11 @@ jobs:
           targets: wasm32-wasip1,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
           components: rustfmt,clippy
 
+      # Install nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Check formatting
         run: cargo fmt --check --all
       - name: Build default target
@@ -35,5 +42,14 @@ jobs:
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace
       - name: Build x86_64-pc-windows-msvc release
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
+      # Run tests with nextest and output JUnit results
       - name: Run tests
-        run: cargo test --locked --workspace
+        run: |
+          cargo nextest run --workspace --profile ci
+
+      # Upload test results so GitHub shows pass/fail per test
+      - name: Upload test results
+        uses: EnricoMi/publish-unit-test-result-action/windows@v2
+        if: always() # Upload even if tests fail
+        with:
+          files: target/nextest/ci/junit.xml

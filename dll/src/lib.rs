@@ -17,9 +17,9 @@ use std::{
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReader, LeptonThreadPool,
-    catch_unwind_result, decode_lepton, encode_lepton, get_git_version,
+    SingleThreadPool, ThreadPoolHolder, catch_unwind_result, decode_lepton, encode_lepton,
+    get_git_version,
 };
-use rstest::rstest;
 
 /// copies a string into a limited length zero terminated utf8 buffer
 fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
@@ -60,22 +60,6 @@ static RAYON_THREAD_POOL: RayonThreadPool = RayonThreadPool {
             .unwrap()
     }),
 };
-
-#[test]
-fn test_copy_cstring_utf8_to_buffer() {
-    // test utf8
-    let mut buffer = [0u8; 10];
-    copy_cstring_utf8_to_buffer("h\u{00E1}llo", &mut buffer);
-    assert_eq!(buffer, [b'h', 0xc3, 0xa1, b'l', b'l', b'o', 0, 0, 0, 0]);
-
-    // test null termination
-    let mut buffer = [0u8; 10];
-    copy_cstring_utf8_to_buffer("helloeveryone", &mut buffer);
-    assert_eq!(
-        buffer,
-        [b'h', b'e', b'l', b'l', b'o', b'e', b'v', b'e', b'r', 0]
-    );
-}
 
 /// C ABI interface for setting the number of threads to use for compression and decompression
 /// This can only be called before any compression or decompression is done, as we cannot
@@ -134,8 +118,10 @@ pub unsafe extern "C" fn WrapperCompressImage2(
             features.max_threads = number_of_threads;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+        let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
             &RAYON_THREAD_POOL
+        } else if flags & USE_SINGLE_THREAD_POOL != 0 {
+            &SingleThreadPool::default()
         } else {
             &DEFAULT_THREAD_POOL
         };
@@ -244,8 +230,10 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
             enabled_features.max_threads = number_of_threads;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+        let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
             &RAYON_THREAD_POOL
+        } else if flags & USE_SINGLE_THREAD_POOL != 0 {
+            &SingleThreadPool::default()
         } else {
             &DEFAULT_THREAD_POOL
         };
@@ -305,8 +293,62 @@ pub unsafe extern "C" fn get_version(
     *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
 }
 
+// wraps unmanaged context for decompression and tries to ensure that if is valid
+// when passed in from C# or C++ code and that it is freed only once.
+//
+// Of course, there aren't any guarantees since passing raw pointers around is inherently unsafe,
+// but we do our best to catch common mistakes and point the blame in the right direction.
+struct DecompressionContext<'a> {
+    magic: u32,
+    internal: LeptonFileReader<'a>,
+}
+
+const MAGIC_DECOMRESSION_CONTEXT: u32 = 0xdec0de00;
+
+impl<'a> DecompressionContext<'a> {
+    /// casts c pointer to a reference, verifying the magic number is OK so we can catch
+    /// some common mistakes early. This is no guarantee, but helps crash early in many cases.
+    unsafe fn from_pointer(ptr: *mut std::ffi::c_void) -> &'a mut Self {
+        unsafe {
+            let context = ptr as *mut DecompressionContext;
+            assert_eq!(
+                (*context).magic,
+                MAGIC_DECOMRESSION_CONTEXT,
+                "invalid context passed in"
+            );
+            &mut *context
+        }
+    }
+
+    /// allocates a new context and returns a pointer to it
+    unsafe fn new(internal: LeptonFileReader<'a>) -> *mut std::ffi::c_void {
+        let context = Box::new(Self {
+            magic: MAGIC_DECOMRESSION_CONTEXT,
+            internal,
+        });
+
+        Box::into_raw(context) as *mut std::ffi::c_void
+    }
+
+    unsafe fn free(ptr: *mut std::ffi::c_void) {
+        unsafe {
+            let mut context = Box::from_raw(ptr as *mut DecompressionContext);
+            assert_eq!(
+                (*context).magic,
+                MAGIC_DECOMRESSION_CONTEXT,
+                "invalid context passed in"
+            );
+            // invalidate magic to catch double free
+            context.magic = 0xdeaddead;
+
+            // context is freed now by going out of scope
+        }
+    }
+}
+
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 const USE_RAYON_THREAD_POOL: u32 = 2;
+const USE_SINGLE_THREAD_POOL: u32 = 4;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
@@ -315,30 +357,33 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         ..EnabledFeatures::compat_lepton_vector_read()
     };
 
-    let thread_pool: &'static dyn LeptonThreadPool = if features & USE_RAYON_THREAD_POOL != 0 {
-        &RAYON_THREAD_POOL
+    let thread_pool: ThreadPoolHolder = if features & USE_RAYON_THREAD_POOL != 0 {
+        ThreadPoolHolder::Dyn(&RAYON_THREAD_POOL)
+    } else if features & USE_SINGLE_THREAD_POOL != 0 {
+        ThreadPoolHolder::Owned(Box::new(SingleThreadPool::default()))
     } else {
-        &DEFAULT_THREAD_POOL
+        ThreadPoolHolder::Dyn(&DEFAULT_THREAD_POOL)
     };
 
-    let context = Box::new(LeptonFileReader::new(enabled_features, thread_pool));
-    Box::into_raw(context) as *mut std::ffi::c_void
+    unsafe { DecompressionContext::new(LeptonFileReader::new(enabled_features, thread_pool)) }
 }
 
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
-    let context = context as *mut LeptonFileReader;
-    let context = &mut *context;
+    let context = DecompressionContext::from_pointer(context);
 
-    context.metrics().get_cpu_time_worker_time().as_millis() as u64
+    context
+        .internal
+        .metrics()
+        .get_cpu_time_worker_time()
+        .as_millis() as u64
 }
 
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(context as *mut LeptonFileReader);
-    // let Box destroy the object
+    DecompressionContext::free(context);
 }
 
 /// partially decompresses an image from a Lepton file.
@@ -359,14 +404,13 @@ pub unsafe extern "C" fn decompress_image(
     error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
-        let context = context as *mut LeptonFileReader;
-        let context = &mut *context;
+        let context = DecompressionContext::from_pointer(context);
 
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
         let mut writer = Cursor::new(output);
-        let done = context.process_buffer(
+        let done = context.internal.process_buffer(
             input,
             input_complete,
             &mut writer,
@@ -394,244 +438,313 @@ pub unsafe extern "C" fn decompress_image(
 }
 
 #[cfg(test)]
-fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("images")
-        .join(filename.to_owned() + ext);
-    println!("reading {0}", filename.to_str().unwrap());
-    let mut f = std::fs::File::open(filename).unwrap();
+mod tests {
+    use super::*;
 
-    let mut content = Vec::new();
-    std::io::Read::read_to_end(&mut f, &mut content).unwrap();
+    use rstest::rstest;
 
-    content
-}
+    fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+        let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+            .join("images")
+            .join(filename.to_owned() + ext);
+        //println!("reading {0}", filename.to_str().unwrap());
+        let mut f = std::fs::File::open(filename).unwrap();
 
-/// test original version of external interface that just delegates to the new one
-#[test]
-fn extern_interface() {
-    let input = read_file("slrcity", ".jpg");
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut content).unwrap();
 
-    let mut compressed = Vec::new();
-
-    compressed.resize(input.len() + 10000, 0);
-
-    let mut result_size: u64 = 0;
-
-    unsafe {
-        let retval = WrapperCompressImage(
-            input[..].as_ptr(),
-            input.len() as u64,
-            compressed[..].as_mut_ptr(),
-            compressed.len() as u64,
-            8,
-            (&mut result_size) as *mut u64,
-        );
-
-        assert_eq!(retval, 0);
+        content
     }
 
-    let mut original = Vec::new();
-    original.resize(input.len() + 10000, 0);
+    #[test]
+    fn test_copy_cstring_utf8_to_buffer() {
+        // test utf8
+        let mut buffer = [0u8; 10];
+        copy_cstring_utf8_to_buffer("h\u{00E1}llo", &mut buffer);
+        assert_eq!(buffer, [b'h', 0xc3, 0xa1, b'l', b'l', b'o', 0, 0, 0, 0]);
 
-    let mut original_size: u64 = 0;
-    unsafe {
-        let retval = WrapperDecompressImageEx(
-            compressed[..].as_ptr(),
-            result_size,
-            original[..].as_mut_ptr(),
-            original.len() as u64,
-            8,
-            (&mut original_size) as *mut u64,
-            false,
+        // test null termination
+        let mut buffer = [0u8; 10];
+        copy_cstring_utf8_to_buffer("helloeveryone", &mut buffer);
+        assert_eq!(
+            buffer,
+            [b'h', b'e', b'l', b'l', b'o', b'e', b'v', b'e', b'r', 0]
         );
-
-        assert_eq!(retval, 0);
-    }
-    assert_eq!(input.len() as u64, original_size);
-    assert_eq!(input[..], original[..(original_size as usize)]);
-}
-
-/// test version 2 of external interface
-#[test]
-fn extern_interface_2() {
-    let input = read_file("slrcity", ".jpg");
-
-    let mut compressed = Vec::new();
-
-    compressed.resize(input.len() + 10000, 0);
-
-    let mut result_size: u64 = 0;
-    let mut cpu_usage: u64 = 0;
-
-    unsafe {
-        let retval = WrapperCompressImage2(
-            input[..].as_ptr(),
-            input.len() as u64,
-            compressed[..].as_mut_ptr(),
-            compressed.len() as u64,
-            8,
-            (&mut result_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            0,
-        );
-
-        assert_eq!(retval, 0);
     }
 
-    let mut original = Vec::new();
-    original.resize(input.len() + 10000, 0);
+    /// test original version of external interface that just delegates to the new one
+    #[test]
+    fn extern_interface() {
+        let input = read_file("slrcity", ".jpg");
 
-    let mut original_size: u64 = 0;
-    unsafe {
-        let retval = WrapperDecompressImage3(
-            compressed[..].as_ptr(),
-            result_size,
-            original[..].as_mut_ptr(),
-            original.len() as u64,
-            8,
-            (&mut original_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            0,
-        );
+        let mut compressed = Vec::new();
 
-        assert_eq!(retval, 0);
-    }
-    assert_eq!(input.len() as u64, original_size);
-    assert_eq!(input[..], original[..(original_size as usize)]);
-}
+        compressed.resize(input.len() + 10000, 0);
 
-/// tests the chunked decompression interface
-#[rstest]
-fn extern_interface_decompress_chunked(
-    #[values(DECOMPRESS_USE_16BIT_DC_ESTIMATE,DECOMPRESS_USE_16BIT_DC_ESTIMATE|USE_RAYON_THREAD_POOL)]
-    flags: u32,
-) {
-    use std::io::Read;
+        let mut result_size: u64 = 0;
 
-    let input = read_file("slrcity", ".lep");
-
-    let mut output = Vec::new();
-
-    unsafe {
-        let context = create_decompression_context(flags);
-
-        let mut file_read = Cursor::new(input);
-        let mut input_buffer = [0u8; 7];
-        let mut output_buffer = [0u8; 13];
-
-        let mut error_string = [0u8; 1024];
-
-        loop {
-            let amount_read = file_read.read(&mut input_buffer).unwrap();
-
-            let mut result_size = 0;
-            let result = decompress_image(
-                context,
-                input_buffer.as_ptr(),
-                amount_read as u64,
-                amount_read == 0,
-                output_buffer.as_mut_ptr(),
-                output_buffer.len() as u64,
-                &mut result_size,
-                error_string.as_mut_ptr(),
-                error_string.len() as u64,
+        unsafe {
+            let retval = WrapperCompressImage(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
             );
 
-            output.extend_from_slice(&output_buffer[..result_size as usize]);
+            assert_eq!(retval, 0);
+        }
 
-            match result {
-                -1 => {
-                    // need more data
-                }
-                0 => {
-                    break;
-                }
-                _ => {
-                    panic!("unexpected error {0}", result);
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
+
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImageEx(
+                compressed[..].as_ptr(),
+                result_size,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                false,
+            );
+
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
+    }
+
+    /// test version 2 of external interface
+    #[test]
+    fn extern_interface_2() {
+        let input = read_file("slrcity", ".jpg");
+
+        let mut compressed = Vec::new();
+
+        compressed.resize(input.len() + 10000, 0);
+
+        let mut result_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
+
+        unsafe {
+            let retval = WrapperCompressImage2(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                0,
+            );
+
+            assert_eq!(retval, 0);
+        }
+
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
+
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                result_size,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                0,
+            );
+
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
+    }
+
+    /// test version 2 of external interface with single thread
+    #[test]
+    fn extern_interface_2_single_thread() {
+        let input = read_file("slrcity", ".jpg");
+
+        let mut compressed = Vec::new();
+
+        compressed.resize(input.len() + 10000, 0);
+
+        let mut result_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
+
+        unsafe {
+            let retval = WrapperCompressImage2(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+            );
+
+            assert_eq!(retval, 0);
+        }
+
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
+
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                result_size,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+            );
+
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
+    }
+
+    /// tests the chunked decompression interface
+    #[rstest]
+    fn extern_interface_decompress_chunked(
+        #[values(DECOMPRESS_USE_16BIT_DC_ESTIMATE,DECOMPRESS_USE_16BIT_DC_ESTIMATE|USE_RAYON_THREAD_POOL)]
+        flags: u32,
+    ) {
+        use std::io::Read;
+
+        let input = read_file("slrcity", ".lep");
+
+        let mut output = Vec::new();
+
+        unsafe {
+            let context = create_decompression_context(flags);
+
+            let mut file_read = Cursor::new(input);
+            let mut input_buffer = [0u8; 7];
+            let mut output_buffer = [0u8; 13];
+
+            let mut error_string = [0u8; 1024];
+
+            loop {
+                let amount_read = file_read.read(&mut input_buffer).unwrap();
+
+                let mut result_size = 0;
+                let result = decompress_image(
+                    context,
+                    input_buffer.as_ptr(),
+                    amount_read as u64,
+                    amount_read == 0,
+                    output_buffer.as_mut_ptr(),
+                    output_buffer.len() as u64,
+                    &mut result_size,
+                    error_string.as_mut_ptr(),
+                    error_string.len() as u64,
+                );
+
+                output.extend_from_slice(&output_buffer[..result_size as usize]);
+
+                match result {
+                    -1 => {
+                        // need more data
+                    }
+                    0 => {
+                        break;
+                    }
+                    _ => {
+                        panic!("unexpected error {0}", result);
+                    }
                 }
             }
+            free_decompression_context(context);
         }
-        free_decompression_context(context);
+
+        let test_result = read_file("slrcity", ".jpg");
+        assert_eq!(test_result.len(), output.len());
+        assert!(test_result[..] == output[..]);
     }
 
-    let test_result = read_file("slrcity", ".jpg");
-    assert_eq!(test_result.len(), output.len());
-    assert!(test_result[..] == output[..]);
-}
-
-#[rstest]
-fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
-    #[values(
+    #[rstest]
+    fn verify_extern_interface_rejects_compression_of_unsupported_jpegs(
+        #[values(
         ("zeros_in_dqt_tables", ExitCode::UnsupportedJpegWithZeroIdct0), 
         ("nonoptimalprogressive", ExitCode::UnsupportedJpeg))]
-    file: (&str, ExitCode),
-) {
-    let input = read_file(file.0, ".jpg");
+        file: (&str, ExitCode),
+    ) {
+        let input = read_file(file.0, ".jpg");
 
-    let mut compressed = Vec::new();
-    compressed.resize(input.len() + 10000, 0);
-    let mut result_size: u64 = 0;
-    let mut cpu_usage: u64 = 0;
+        let mut compressed = Vec::new();
+        compressed.resize(input.len() + 10000, 0);
+        let mut result_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
 
-    unsafe {
-        let retval = WrapperCompressImage2(
-            input[..].as_ptr(),
-            input.len() as u64,
-            compressed[..].as_mut_ptr(),
-            compressed.len() as u64,
-            8,
-            (&mut result_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            0,
-        );
+        unsafe {
+            let retval = WrapperCompressImage2(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                0,
+            );
 
-        assert_eq!(retval, file.1.as_integer_error_code());
-    }
-}
-
-/// While we prevent compression of images with zeros in DQT tables, since it may lead to divide-by-zero, we support decompression of
-/// previously compressed images with this characteristics for back-compat.
-#[rstest]
-fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
-    #[values("zeros_in_dqt_tables")] file: &str,
-) {
-    let compressed = read_file(file, ".lep");
-    let original = read_file(file, ".jpg");
-
-    let mut decompressed = Vec::new();
-    decompressed.resize(original.len() + 10000, 0);
-
-    let mut decompressed_size: u64 = 0;
-    let mut cpu_usage: u64 = 0;
-
-    unsafe {
-        let retval = WrapperDecompressImage3(
-            compressed[..].as_ptr(),
-            compressed.len() as u64,
-            decompressed[..].as_mut_ptr(),
-            decompressed.len() as u64,
-            8,
-            (&mut decompressed_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            0,
-        );
-
-        assert_eq!(retval, 0);
+            assert_eq!(retval, file.1.as_integer_error_code());
+        }
     }
 
-    assert_eq!(original.len() as u64, decompressed_size);
-    assert_eq!(original[..], decompressed[..(decompressed_size as usize)]);
-}
+    /// While we prevent compression of images with zeros in DQT tables, since it may lead to divide-by-zero, we support decompression of
+    /// previously compressed images with this characteristics for back-compat.
+    #[rstest]
+    fn verify_extern_interface_supports_decompression_with_zeros_in_dqt_tables(
+        #[values("zeros_in_dqt_tables")] file: &str,
+    ) {
+        let compressed = read_file(file, ".lep");
+        let original = read_file(file, ".jpg");
 
-/// Verifies that the decode will accept existing Lepton files and generate
-/// exactly the same jpeg from them when called by an external interface
-/// with use_16bit_dc_estimate=true for C++ backward compatibility.
-/// Used to detect unexpected divergences in coding format.
-#[rstest]
-fn verify_decode_external_interface_with_use_16bit_dc_estimate(
-    #[values(
+        let mut decompressed = Vec::new();
+        decompressed.resize(original.len() + 10000, 0);
+
+        let mut decompressed_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
+
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                compressed.len() as u64,
+                decompressed[..].as_mut_ptr(),
+                decompressed.len() as u64,
+                8,
+                (&mut decompressed_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                0,
+            );
+
+            assert_eq!(retval, 0);
+        }
+
+        assert_eq!(original.len() as u64, decompressed_size);
+        assert_eq!(original[..], decompressed[..(decompressed_size as usize)]);
+    }
+
+    /// Verifies that the decode will accept existing Lepton files and generate
+    /// exactly the same jpeg from them when called by an external interface
+    /// with use_16bit_dc_estimate=true for C++ backward compatibility.
+    /// Used to detect unexpected divergences in coding format.
+    #[rstest]
+    fn verify_decode_external_interface_with_use_16bit_dc_estimate(
+        #[values(
         "mathoverflow_16",
         "android",
         "androidcrop",
@@ -665,68 +778,69 @@ fn verify_decode_external_interface_with_use_16bit_dc_estimate(
         "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
         "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
     )]
-    file: &str,
-) {
-    println!("decoding {0:?}", file);
+        file: &str,
+    ) {
+        println!("decoding {0:?}", file);
 
-    let compressed = read_file(file, ".lep");
-    let jpg_file_name = match file {
-        "mathoverflow_16" => "mathoverflow",
-        _ => file,
-    };
-    let input = read_file(jpg_file_name, ".jpg");
+        let compressed = read_file(file, ".lep");
+        let jpg_file_name = match file {
+            "mathoverflow_16" => "mathoverflow",
+            _ => file,
+        };
+        let input = read_file(jpg_file_name, ".jpg");
 
-    let mut original = Vec::new();
-    original.resize(input.len() + 10000, 0);
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
 
-    let mut original_size: u64 = 0;
-    let mut cpu_usage: u64 = 0;
+        let mut original_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
 
-    unsafe {
-        let retval = WrapperDecompressImage3(
-            compressed[..].as_ptr(),
-            compressed.len() as u64,
-            original[..].as_mut_ptr(),
-            original.len() as u64,
-            8,
-            (&mut original_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            DECOMPRESS_USE_16BIT_DC_ESTIMATE,
-        );
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                compressed.len() as u64,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                DECOMPRESS_USE_16BIT_DC_ESTIMATE,
+            );
 
-        assert_eq!(retval, 0);
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
     }
-    assert_eq!(input.len() as u64, original_size);
-    assert_eq!(input[..], original[..(original_size as usize)]);
-}
 
-#[test]
-fn verify_extern_16bit_math_retry() {
-    // verify retry logic for 16 bit math encoded image
-    let compressed = read_file("mathoverflow_16", ".lep");
+    #[test]
+    fn verify_extern_16bit_math_retry() {
+        // verify retry logic for 16 bit math encoded image
+        let compressed = read_file("mathoverflow_16", ".lep");
 
-    let input = read_file("mathoverflow", ".jpg");
+        let input = read_file("mathoverflow", ".jpg");
 
-    let mut original = Vec::new();
-    original.resize(input.len() + 10000, 0);
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
 
-    let mut original_size: u64 = 0;
-    let mut cpu_usage: u64 = 0;
+        let mut original_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
 
-    unsafe {
-        let retval = WrapperDecompressImage3(
-            compressed[..].as_ptr(),
-            compressed.len() as u64,
-            original[..].as_mut_ptr(),
-            original.len() as u64,
-            8,
-            (&mut original_size) as *mut u64,
-            (&mut cpu_usage) as *mut u64,
-            0,
-        );
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                compressed.len() as u64,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                0,
+            );
 
-        assert_eq!(retval, 0);
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
     }
-    assert_eq!(input.len() as u64, original_size);
-    assert_eq!(input[..], original[..(original_size as usize)]);
 }

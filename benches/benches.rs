@@ -1,10 +1,10 @@
 use std::{io::Cursor, time::Duration};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use lepton_jpeg::{EnabledFeatures, LeptonThreadPool};
+use lepton_jpeg::{EnabledFeatures, SingleThreadPool};
 
 fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
         .join("images")
         .join(filename.to_owned() + ext);
     //println!("reading {0}", filename.to_str().unwrap());
@@ -16,38 +16,17 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
     content
 }
 
-/// single thread pool that creates just one threadpool thread
-/// useful for benchmarks to measure total end-to-end runtime
-struct SingleThreadPool {
-    sender: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>,
-}
-
-impl SingleThreadPool {
-    pub fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
-
-        std::thread::spawn(move || {
-            while let Ok(f) = rx.recv() {
-                f();
-            }
-        });
-
-        SingleThreadPool { sender: tx }
-    }
-}
-
-impl LeptonThreadPool for SingleThreadPool {
-    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
-        self.sender.send(f).unwrap();
-    }
-}
-
 fn end_to_end_benches(c: &mut Criterion) {
-    let thread_pool = SingleThreadPool::new();
+    let thread_pool = SingleThreadPool::default();
+    let mut g = c.benchmark_group("end_to_end");
+    g.sampling_mode(criterion::SamplingMode::Flat);
+    g.warm_up_time(Duration::from_secs(1));
+    g.measurement_time(Duration::from_secs(10));
+
     let jpeg = read_file("iphone", ".jpg");
     let lep = read_file("iphone", ".lep");
 
-    c.bench_function("Lepton encode", |b| {
+    g.bench_function("Lepton encode", |b| {
         b.iter(|| {
             let mut output = Vec::with_capacity(jpeg.len());
             lepton_jpeg::encode_lepton(
@@ -59,7 +38,7 @@ fn end_to_end_benches(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("Lepton decode", |b| {
+    g.bench_function("Lepton decode", |b| {
         b.iter(|| {
             let mut output = Vec::with_capacity(lep.len());
             lepton_jpeg::decode_lepton(
@@ -70,17 +49,16 @@ fn end_to_end_benches(c: &mut Criterion) {
             )
         })
     });
+
+    g.finish();
 }
 
-criterion_group! {
-   name = group1;
-   config = Criterion::default().warm_up_time(Duration::from_secs(5));
-   targets = end_to_end_benches
-}
+criterion_group!(group1, end_to_end_benches);
 
 fn micro_benchmarks(c: &mut Criterion) {
     use lepton_jpeg::micro_benchmark::{
-        benchmark_idct, benchmark_read_jpeg, benchmark_roundtrip_coefficient, benchmark_write_jpeg,
+        benchmark_idct, benchmark_read_block, benchmark_read_jpeg, benchmark_roundtrip_coefficient,
+        benchmark_write_block, benchmark_write_jpeg,
     };
 
     c.bench_function("jpeg read", |b| b.iter(benchmark_read_jpeg()));
@@ -92,6 +70,10 @@ fn micro_benchmarks(c: &mut Criterion) {
     });
 
     c.bench_function("idct benchmark", |b| b.iter(benchmark_idct()));
+
+    c.bench_function("jpeg read block", |b| b.iter(benchmark_read_block()));
+
+    c.bench_function("jpeg write block", |b| b.iter(benchmark_write_block()));
 }
 
 criterion_group!(group2, micro_benchmarks);

@@ -381,7 +381,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         if usize::from(thread_id) >= self.sender_channels.len() {
                             return err_exit_code(
                                 ExitCode::BadLeptonFile,
-                                format!("invalid thread_id {0}", thread_id).as_str(),
+                                format!("invalid thread_id {0}", thread_id),
                             );
                         }
 
