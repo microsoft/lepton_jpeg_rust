@@ -18,10 +18,15 @@ fn read_file(filename: &str, ext: &str) -> Vec<u8> {
 
 fn end_to_end_benches(c: &mut Criterion) {
     let thread_pool = SingleThreadPool::default();
+    let mut g = c.benchmark_group("end_to_end");
+    g.sampling_mode(criterion::SamplingMode::Flat);
+    g.warm_up_time(Duration::from_secs(1));
+    g.measurement_time(Duration::from_secs(10));
+
     let jpeg = read_file("iphone", ".jpg");
     let lep = read_file("iphone", ".lep");
 
-    c.bench_function("Lepton encode", |b| {
+    g.bench_function("Lepton encode", |b| {
         b.iter(|| {
             let mut output = Vec::with_capacity(jpeg.len());
             lepton_jpeg::encode_lepton(
@@ -33,7 +38,7 @@ fn end_to_end_benches(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("Lepton decode", |b| {
+    g.bench_function("Lepton decode", |b| {
         b.iter(|| {
             let mut output = Vec::with_capacity(lep.len());
             lepton_jpeg::decode_lepton(
@@ -44,17 +49,16 @@ fn end_to_end_benches(c: &mut Criterion) {
             )
         })
     });
+
+    g.finish();
 }
 
-criterion_group! {
-   name = group1;
-   config = Criterion::default().warm_up_time(Duration::from_secs(5));
-   targets = end_to_end_benches
-}
+criterion_group!(group1, end_to_end_benches);
 
 fn micro_benchmarks(c: &mut Criterion) {
     use lepton_jpeg::micro_benchmark::{
-        benchmark_idct, benchmark_read_jpeg, benchmark_roundtrip_coefficient, benchmark_write_jpeg,
+        benchmark_idct, benchmark_read_block, benchmark_read_jpeg, benchmark_roundtrip_coefficient,
+        benchmark_write_block, benchmark_write_jpeg,
     };
 
     c.bench_function("jpeg read", |b| b.iter(benchmark_read_jpeg()));
@@ -66,6 +70,10 @@ fn micro_benchmarks(c: &mut Criterion) {
     });
 
     c.bench_function("idct benchmark", |b| b.iter(benchmark_idct()));
+
+    c.bench_function("jpeg read block", |b| b.iter(benchmark_read_block()));
+
+    c.bench_function("jpeg write block", |b| b.iter(benchmark_write_block()));
 }
 
 criterion_group!(group2, micro_benchmarks);
