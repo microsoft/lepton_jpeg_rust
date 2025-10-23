@@ -82,8 +82,16 @@ pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
     ];
 
     // transpose and now do vertical
-    let [mut yv0, mut yv1, mut yv2, mut yv3, mut yv4, mut yv5, mut yv6, mut yv7] =
-        i32x8::transpose(row);
+    let [
+        mut yv0,
+        mut yv1,
+        mut yv2,
+        mut yv3,
+        mut yv4,
+        mut yv5,
+        mut yv6,
+        mut yv7,
+    ] = i32x8::transpose(row);
 
     yv0 = (yv0 << 8) + 8192;
     yv4 = yv4 << 8;
@@ -343,5 +351,30 @@ pub fn test_idct_with_random_blocks() {
         }
 
         test_idct(&test_data, &test_q);
+    }
+}
+
+#[cfg(any(test, feature = "micro_benchmark"))]
+#[inline(never)]
+/// benchmark for the coefficient writing code
+pub fn benchmark_idct() -> Box<dyn FnMut()> {
+    // make some non-trivial data
+    let mut block = [i32x8::ZERO; 8];
+    for i in 0..8 {
+        block[i] = i32x8::from([1, 2, 3, 4, 5, 6, 7, 8]) * (i as i32 + 1);
+    }
+
+    Box::new(move || {
+        use std::hint::black_box;
+
+        black_box(run_idct(&block));
+    })
+}
+
+#[test]
+fn test_benchmark_idct() {
+    let mut f = benchmark_idct();
+    for _i in 0..100 {
+        f();
     }
 }

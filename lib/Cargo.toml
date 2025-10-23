@@ -1,11 +1,11 @@
 [package]
 name = "lepton_jpeg"
-version = "0.5.4"
-edition = "2021"
+version = "0.5.5"
+edition = "2024"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
-# requires scoped threads and IsTerminal
-rust-version = "1.85"
+# requires scoped threads, IsTerminal, let chains
+rust-version = "1.88"
 description = "Rust port of the Lepton JPEG compression library"
 readme = "../README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
@@ -19,6 +19,9 @@ categories = ["multimedia::images", "multimedia::encoding"]
 default = []
 compression_stats = []
 detailed_tracing = []
+
+# used to expose internal functions for micro benchmarking
+micro_benchmark = []
 
 [dependencies]
 bytemuck = "1"

@@ -6,16 +6,16 @@
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::fs::{remove_file, File, OpenOptions};
-use std::io::{stdin, stdout, Cursor, IsTerminal, Read, Seek, Write};
+use std::fs::{File, OpenOptions, remove_file};
+use std::io::{Cursor, IsTerminal, Read, Seek, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
-    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify, CpuTimeMeasure, EnabledFeatures,
-    ExitCode, LeptonError, LeptonThreadPool, LeptonThreadPriority, Metrics, SimpleThreadPool,
-    DEFAULT_THREAD_POOL,
+    CpuTimeMeasure, DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonThreadPool,
+    LeptonThreadPriority, Metrics, SimpleThreadPool, decode_lepton, dump_jpeg, encode_lepton,
+    encode_lepton_verify,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -74,7 +74,7 @@ impl UtilError {
 impl From<pico_args::Error> for UtilError {
     #[track_caller]
     fn from(e: pico_args::Error) -> Self {
-        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::SyntaxError, e.to_string());
         e.add_context();
         UtilError(e)
     }
@@ -236,11 +236,9 @@ Options:
     for i in filenames.iter() {
         // no other options should be specified only the free standing filenames
         if i.to_string_lossy().starts_with("-") {
-            return Err(LeptonError::new(
-                ExitCode::SyntaxError,
-                format!("unknown option {:?}", i).as_str(),
-            )
-            .into());
+            return Err(
+                LeptonError::new(ExitCode::SyntaxError, format!("unknown option {:?}", i)).into(),
+            );
         }
     }
 
@@ -284,7 +282,7 @@ Options:
         std::io::stdin().read_to_end(&mut input_data)?;
     } else {
         let mut file_in = File::open(filenames[0].as_os_str())
-            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string().as_str()))?;
+            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string()))?;
 
         file_in.read_to_end(&mut input_data)?;
     }
@@ -430,7 +428,7 @@ fn execute_verify_dir(
     enabled_features: &EnabledFeatures,
     verify: bool,
     corrupt_data_seed: &mut Option<u64>,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(), LeptonError> {
     let entries;
     match std::fs::read_dir(dir) {
@@ -534,8 +532,7 @@ fn execute_cpp_verify(
             format!(
                 "cpp verify failed with exit code {0} stderr: {1}",
                 exit_code, stderr
-            )
-            .as_str(),
+            ),
         ))?;
     }
     if output[..].len() != original_contents.len() {
@@ -545,8 +542,7 @@ fn execute_cpp_verify(
                 "cpp verify failed with different length {0} != {1}",
                 output[..].len(),
                 original_contents.len()
-            )
-            .as_str(),
+            ),
         ));
     }
     if output[..] != original_contents[..] {
@@ -566,7 +562,7 @@ fn do_work(
     verify: bool,
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics), LeptonError> {
     let metrics;
     let mut output;

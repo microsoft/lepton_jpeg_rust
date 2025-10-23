@@ -36,11 +36,11 @@ use std::fmt::Debug;
 use std::io::{Cursor, Read, Write};
 use std::num::NonZeroU32;
 
+use crate::LeptonError;
 use crate::consts::JpegType;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::LeptonError;
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 
 use super::component_info::ComponentInfo;
 use super::jpeg_code;
@@ -194,7 +194,7 @@ impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(super) struct HuffCodes {
+pub(crate) struct HuffCodes {
     pub c_val: [u16; 256],
     pub c_len: [u16; 256],
     pub c_len_plus_s: [u8; 256],
@@ -302,7 +302,7 @@ impl HuffCodes {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(super) struct HuffTree {
+pub(crate) struct HuffTree {
     pub node: [[u16; 2]; 256],
     pub peek_code: [(u8, u8); 256],
 }
@@ -672,12 +672,12 @@ impl JpegHeader {
             if dc_present && self.ht_set[0][self.cmp_info[icmp].huff_dc as usize] == 0 {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
-                    format!("DC huffman table missing for component {0}", icmp).as_str(),
+                    format!("DC huffman table missing for component {0}", icmp),
                 );
             } else if ac_present && self.ht_set[1][self.cmp_info[icmp].huff_ac as usize] == 0 {
                 return err_exit_code(
                     ExitCode::UnsupportedJpeg,
-                    format!("AC huffman table missing for component {0}", icmp).as_str(),
+                    format!("AC huffman table missing for component {0}", icmp),
                 );
             }
         }
@@ -855,7 +855,7 @@ impl JpegHeader {
 
                 if self.cs_cmpc > self.cmpc
                 {
-                    return err_exit_code( ExitCode::UnsupportedJpeg, format!("{0} components in scan, only {1} are allowed", self.cs_cmpc, self.cmpc).as_str());
+                    return err_exit_code( ExitCode::UnsupportedJpeg, format!("{0} components in scan, only {1} are allowed", self.cs_cmpc, self.cmpc));
                 }
 
                 hpos+=1;
@@ -933,7 +933,7 @@ impl JpegHeader {
                 let lval = segment[hpos];
                 if lval != 8
                 {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("{0} bit data precision is not supported", lval).as_str());
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("{0} bit data precision is not supported", lval));
                 }
 
                 // image size, height & component count
@@ -947,14 +947,14 @@ impl JpegHeader {
 
                 if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
                 {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image dimensions larger than {0}x{1}", enabled_features.max_jpeg_width, enabled_features.max_jpeg_height).as_str());
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image dimensions larger than {0}x{1}", enabled_features.max_jpeg_width, enabled_features.max_jpeg_height));
                 }
 
                 self.cmpc = usize::from(segment[hpos + 5]);
 
                 if self.cmpc > 4
                 {
-                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image has {0} components, max 4 are supported", self.cmpc).as_str());
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image has {0} components, max 4 are supported", self.cmpc));
                 }
 
                 hpos += 6;
@@ -1093,7 +1093,7 @@ impl JpegHeader {
             _ => // unknown marker segment
                 {
                     // return errormessage - unknown marker
-                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("unknown marker found: FF {0:X}", btype).as_str());
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("unknown marker found: FF {0:X}", btype));
                 }
         }
         return Ok(ParseSegmentResult::Continue);
@@ -1109,7 +1109,7 @@ fn ensure_space(segment: &[u8], hpos: usize, amount: usize) -> Result<()> {
 }
 
 /// constructs a huffman table for testing purposes from a given distribution
-#[cfg(test)]
+#[cfg(any(test, feature = "micro_benchmark"))]
 pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> HuffCodes {
     use std::collections::{BinaryHeap, HashMap};
 

@@ -40,8 +40,6 @@ mod structs;
 mod enabled_features;
 mod lepton_error;
 
-use std::io::Write;
-
 pub use enabled_features::EnabledFeatures;
 pub use helpers::catch_unwind_result;
 pub use lepton_error::{ExitCode, LeptonError};
@@ -50,8 +48,13 @@ pub use structs::lepton_file_writer::get_git_version;
 
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
-    LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool, DEFAULT_THREAD_POOL,
+    DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
+    SingleThreadPool, ThreadPoolHolder,
 };
+
+#[cfg(feature = "micro_benchmark")]
+/// Module that exposes internal functions for micro benchmarking
+pub mod micro_benchmark;
 
 /// Trait for types that can provide the current position in a stream. This
 /// is intentionally a subset of the Seek trait, as it only requires remembering
@@ -78,71 +81,12 @@ pub use structs::lepton_file_writer::{encode_lepton, encode_lepton_verify};
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use structs::lepton_file_reader::LeptonFileReader;
+
 /// Returns the version string of the library, which includes the package version and the git version.
 /// This is useful for debugging and logging purposes to know the exact version of the library is being used
 pub fn get_version_string() -> String {
     format!("{}-{}", PACKAGE_VERSION, get_git_version())
-}
-
-/// Holds context and buffers while decompressing a Lepton encoded file.
-///
-/// Dropping the object will abort any threads or decoding in progress.
-pub struct LeptonFileReaderContext {
-    reader: structs::lepton_file_reader::LeptonFileReader,
-    thread_pool: &'static dyn LeptonThreadPool,
-}
-
-impl LeptonFileReaderContext {
-    /// Creates a new context for decompressing Lepton encoded files,
-    /// features parameter can be used to enable or disable certain behaviors.
-    pub fn new(
-        features: EnabledFeatures,
-        thread_pool: &'static dyn LeptonThreadPool,
-    ) -> LeptonFileReaderContext {
-        LeptonFileReaderContext {
-            reader: structs::lepton_file_reader::LeptonFileReader::new(features),
-            thread_pool,
-        }
-    }
-
-    /// Processes a buffer of data of the file, which can be a slice of 0 or more characters.
-    /// If the input is complete, then input_complete should be set to true.
-    ///
-    /// Any available output is written to the output buffer, which can be zero if the
-    /// input is not yet complete. Once the input has been marked as complete, then the
-    /// call will always return some data until the end of the file is reached, at which
-    /// it will return true.
-    ///
-    /// # Arguments
-    /// * `input` - The input buffer to process.
-    /// * `input_complete` - True if the input is complete and no more data will be provided.
-    /// * `writer` - The writer to write the output to.
-    /// * `output_buffer_size` - The maximum amount of output to write to the writer before returning.
-    ///
-    /// # Returns
-    ///
-    /// Returns true if the end of the file has been reached, otherwise false. If an error occurs
-    /// then an error code is returned and no further calls should be made.
-    pub fn process_buffer(
-        &mut self,
-        input: &[u8],
-        input_complete: bool,
-        writer: &mut impl Write,
-        output_buffer_size: usize,
-    ) -> Result<bool> {
-        self.reader.process_buffer(
-            input,
-            input_complete,
-            writer,
-            output_buffer_size,
-            self.thread_pool,
-        )
-    }
-
-    /// Returns the metrics collected during the decompression process.
-    pub fn metrics(&self) -> &Metrics {
-        self.reader.metrics()
-    }
 }
 
 /// used by utility to dump out the contents of a jpeg file or lepton file for debugging purposes

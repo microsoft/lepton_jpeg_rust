@@ -36,14 +36,14 @@ use std::cmp::{self, max};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 
 use crate::helpers::*;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
-use crate::{consts::*, EnabledFeatures};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::{EnabledFeatures, consts::*};
 
 use super::bit_reader::BitReader;
 use super::block_based_image::{AlignedBlock, BlockBasedImage};
 use super::jpeg_code;
 use super::jpeg_header::{
-    parse_jpeg_header, HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo,
+    HuffTree, JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo, parse_jpeg_header,
 };
 use super::jpeg_position_state::JpegPositionState;
 
@@ -122,7 +122,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             i,
             0,
             jpeg_header.cmp_info[0].bcv,
-        ));
+        )?);
     }
 
     let start_scan_position = reader.stream_position()?;
@@ -441,8 +441,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                     format!(
                         "progressive encoding range was invalid {0} to {1}",
                         jf.cs_from, jf.cs_to
-                    )
-                    .as_str(),
+                    ),
                 );
             }
 
@@ -659,7 +658,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
 /// sequential block decoding routine
 /// </summary>
 #[inline(never)]
-pub(super) fn decode_block_seq<R: BufRead>(
+pub(crate) fn decode_block_seq<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     dctree: &HuffTree,
     actree: &HuffTree,
@@ -951,78 +950,204 @@ fn decode_eobrun_bits(s: u8, n: u16) -> u16 {
     n + (1 << s)
 }
 
-#[test]
-fn read_garbage_behavior_progressive() {
-    read_garbage_behavior("iphoneprogressive");
-}
-
-#[test]
-fn read_garbage_behavior_baseline() {
-    read_garbage_behavior("iphone");
-}
-
-/// reads a JPEG file and verifies that the garbage data is handled correctly.
 #[cfg(test)]
-fn read_garbage_behavior(filename: &str) {
-    let mut file = crate::structs::lepton_file_reader::read_file(filename, ".jpg");
-    let mut enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
+mod tests {
+    use super::*;
 
-    let mut cursor = std::io::Cursor::new(&file);
-    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+    use crate::{
+        EnabledFeatures,
+        jpeg::jpeg_header::{JpegHeader, ReconstructionInfo},
+    };
+    use std::io::{BufRead, Seek};
 
-    assert_eq!(
-        &rinfo.garbage_data[..],
-        [0xff, 0xd9],
-        "Expected garbage data to match what was written"
-    );
+    #[test]
+    fn read_garbage_behavior_progressive() {
+        read_garbage_behavior("iphoneprogressive");
+    }
 
-    // now add some garbage data to the end of the file
-    file.extend_from_slice(b"hi"); // EOI + some garbage
+    #[test]
+    fn read_garbage_behavior_baseline() {
+        read_garbage_behavior("iphone");
+    }
 
-    let mut cursor = std::io::Cursor::new(&file);
-    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+    /// reads a JPEG file and verifies that the garbage data is handled correctly.
+    fn read_garbage_behavior(filename: &str) {
+        let mut file = read_file(filename, ".jpg");
+        let mut enabled_features = crate::EnabledFeatures::compat_lepton_scalar_read();
 
-    assert_eq!(
-        &rinfo.garbage_data[..],
-        [0xff, 0xd9, b'h', b'i'],
-        "Expected garbage data to match what was written"
-    );
+        let mut cursor = std::io::Cursor::new(&file);
+        let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
 
-    enabled_features.stop_reading_at_eoi = true;
-    let mut cursor = std::io::Cursor::new(&file);
-    let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+        assert_eq!(
+            &rinfo.garbage_data[..],
+            [0xff, 0xd9],
+            "Expected garbage data to match what was written"
+        );
 
-    assert_eq!(cursor.position(), file.len() as u64 - 2);
+        // now add some garbage data to the end of the file
+        file.extend_from_slice(b"hi"); // EOI + some garbage
 
-    assert_eq!(
-        &rinfo.garbage_data[..],
-        [0xff, 0xd9],
-        "Expected garbage data to match what was written when stop_reading_at_eoi is true"
-    );
+        let mut cursor = std::io::Cursor::new(&file);
+        let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+
+        assert_eq!(
+            &rinfo.garbage_data[..],
+            [0xff, 0xd9, b'h', b'i'],
+            "Expected garbage data to match what was written"
+        );
+
+        enabled_features.stop_reading_at_eoi = true;
+        let mut cursor = std::io::Cursor::new(&file);
+        let (rinfo, _jh) = read_jpeg(&mut cursor, &enabled_features);
+
+        assert_eq!(cursor.position(), file.len() as u64 - 2);
+
+        assert_eq!(
+            &rinfo.garbage_data[..],
+            [0xff, 0xd9],
+            "Expected garbage data to match what was written when stop_reading_at_eoi is true"
+        );
+    }
+
+    /// test function to read a JPEG file and returns the reconstruction info and JPEG header
+    fn read_jpeg<R: BufRead + Seek>(
+        reader: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> (ReconstructionInfo, JpegHeader) {
+        let mut jpeg_header = JpegHeader::default();
+        let mut rinfo = ReconstructionInfo::default();
+
+        let mut headers = Vec::new();
+
+        let (_image_data, _partitions, _end_scan_position) = read_jpeg_file(
+            reader,
+            &mut jpeg_header,
+            &mut rinfo,
+            &enabled_features,
+            |header, raw_header| {
+                headers.push((header.clone(), raw_header.to_vec()));
+            },
+        )
+        .unwrap();
+
+        (rinfo, jpeg_header)
+    }
+
+    #[test]
+    fn test_benchmark_read_block() {
+        let mut f = benchmarks::benchmark_read_block();
+        for _ in 0..10 {
+            f();
+        }
+    }
+
+    #[test]
+    fn test_benchmark_read_jpeg() {
+        let mut f = benchmarks::benchmark_read_jpeg();
+        for _ in 0..10 {
+            f();
+        }
+    }
 }
 
-#[cfg(test)]
-fn read_jpeg<R: BufRead + Seek>(
-    reader: &mut R,
-    enabled_features: &EnabledFeatures,
-) -> (ReconstructionInfo, JpegHeader) {
-    use crate::jpeg::jpeg_read::read_jpeg_file;
+#[cfg(any(test, feature = "micro_benchmark"))]
+pub mod benchmarks {
+    use std::io::Cursor;
 
-    let mut jpeg_header = JpegHeader::default();
-    let mut rinfo = ReconstructionInfo::default();
-
-    let mut headers = Vec::new();
-
-    let (_image_data, _partitions, _end_scan_position) = read_jpeg_file(
-        reader,
-        &mut jpeg_header,
-        &mut rinfo,
-        &enabled_features,
-        |header, raw_header| {
-            headers.push((header.clone(), raw_header.to_vec()));
+    use crate::{
+        EnabledFeatures,
+        helpers::read_file,
+        jpeg::{
+            bit_reader::BitReader,
+            bit_writer::BitWriter,
+            block_based_image::AlignedBlock,
+            jpeg_header::{
+                HuffTree, JpegHeader, ReconstructionInfo, generate_huff_table_from_distribution,
+            },
+            jpeg_read::{decode_block_seq, read_jpeg_file},
+            jpeg_write::encode_block_seq,
         },
-    )
-    .unwrap();
+    };
 
-    (rinfo, jpeg_header)
+    /// reads the jpeg file from the test data and returns a closure that reads
+    /// the jpeg header from it. Used for micro-benchmarking the jpeg header read performance.
+    #[inline(never)]
+    pub fn benchmark_read_jpeg() -> Box<dyn FnMut()> {
+        let file = read_file("android", ".jpg");
+
+        Box::new(move || {
+            use std::hint::black_box;
+
+            let mut reader = std::io::Cursor::new(&file);
+            let enabled_features = EnabledFeatures::compat_lepton_vector_write();
+
+            let mut jpeg_header = JpegHeader::default();
+            let mut rinfo = ReconstructionInfo::default();
+
+            let (image_data, partitions, end_scan) = read_jpeg_file(
+                &mut reader,
+                &mut jpeg_header,
+                &mut rinfo,
+                &enabled_features,
+                |_, _| {},
+            )
+            .unwrap();
+
+            black_box((image_data, partitions, end_scan));
+        })
+    }
+
+    /// tests performance of decoding a single block
+    #[inline(never)]
+    pub fn benchmark_read_block() -> Box<dyn FnMut()> {
+        // create a weird distribution to test the huffman encoding for corner cases
+        let mut dcdistribution = [0; 256];
+        for i in 0..256 {
+            dcdistribution[i] = 256 - i;
+        }
+        let dctbl = generate_huff_table_from_distribution(&dcdistribution);
+
+        let mut acdistribution = [0; 256];
+        for i in 0..256 {
+            acdistribution[i] = 1 + 256;
+        }
+        let actbl = generate_huff_table_from_distribution(&acdistribution);
+
+        let mut bitwriter = BitWriter::new(Vec::with_capacity(1024));
+
+        let mut block = AlignedBlock::default();
+        for i in 0..10 {
+            block.get_block_mut()[i] = i as i16 * 13;
+        }
+        for i in 30..50 {
+            block.get_block_mut()[i] = -(i as i16) * 7;
+        }
+        for i in 50..52 {
+            block.get_block_mut()[i] = i as i16 * 3;
+        }
+
+        encode_block_seq(&mut bitwriter, &dctbl, &actbl, &block);
+
+        let buffer = bitwriter.detach_buffer();
+
+        let dctree = HuffTree::construct_hufftree(&dctbl, true).unwrap();
+        let actree = HuffTree::construct_hufftree(&actbl, false).unwrap();
+
+        Box::new(move || {
+            use std::hint::black_box;
+
+            let mut bitreader = BitReader::new(Cursor::new(&buffer));
+
+            let mut outblock = AlignedBlock::default();
+            decode_block_seq(
+                &mut bitreader,
+                &dctree,
+                &actree,
+                &mut outblock.get_block_mut(),
+            )
+            .unwrap();
+
+            black_box(outblock);
+        })
+    }
 }

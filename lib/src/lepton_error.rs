@@ -82,6 +82,9 @@ pub enum ExitCode {
     /// An external verification failed (only used by utility exe when verifying
     /// against C++ Lepton implementation)
     ExternalVerificationFailed = 1008,
+
+    /// ran out of memory trying to allocate a buffer
+    OutOfMemory = 2000,
 }
 
 impl Display for ExitCode {
@@ -121,11 +124,11 @@ impl Display for LeptonError {
 
 impl LeptonError {
     /// Creates a new LeptonError with the specified exit code and message.
-    pub fn new(exit_code: ExitCode, message: &str) -> LeptonError {
+    pub fn new(exit_code: ExitCode, message: impl AsRef<str>) -> LeptonError {
         LeptonError {
             i: Box::new(LeptonErrorInternal {
                 exit_code,
-                message: message.to_owned(),
+                message: message.as_ref().to_owned(),
             }),
         }
     }
@@ -154,8 +157,8 @@ impl LeptonError {
 
 #[cold]
 #[track_caller]
-pub fn err_exit_code<T>(error_code: ExitCode, message: &str) -> Result<T> {
-    let mut e = LeptonError::new(error_code, message);
+pub fn err_exit_code<T>(error_code: ExitCode, message: impl AsRef<str>) -> Result<T> {
+    let mut e = LeptonError::new(error_code, message.as_ref());
     e.add_context();
     return Err(e);
 }
@@ -192,7 +195,7 @@ fn get_io_error_exit_code(e: &std::io::Error) -> ExitCode {
 impl From<TryFromIntError> for LeptonError {
     #[track_caller]
     fn from(e: TryFromIntError) -> Self {
-        let mut e = LeptonError::new(ExitCode::IntegerCastOverflow, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::IntegerCastOverflow, e.to_string());
         e.add_context();
         e
     }
@@ -201,7 +204,7 @@ impl From<TryFromIntError> for LeptonError {
 impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
     #[track_caller]
     fn from(e: std::sync::mpsc::SendError<T>) -> Self {
-        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string());
         e.add_context();
         e
     }
@@ -209,7 +212,7 @@ impl<T> From<std::sync::mpsc::SendError<T>> for LeptonError {
 impl From<std::sync::mpsc::RecvError> for LeptonError {
     #[track_caller]
     fn from(e: std::sync::mpsc::RecvError) -> Self {
-        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string().as_str());
+        let mut e = LeptonError::new(ExitCode::ChannelFailure, e.to_string());
         e.add_context();
         e
     }
@@ -224,7 +227,7 @@ impl From<std::io::Error> for LeptonError {
                 return le;
             }
             Err(e) => {
-                let mut e = LeptonError::new(get_io_error_exit_code(&e), e.to_string().as_str());
+                let mut e = LeptonError::new(get_io_error_exit_code(&e), e.to_string());
                 e.add_context();
                 e
             }
