@@ -49,6 +49,7 @@ pub use structs::lepton_file_writer::get_git_version;
 use crate::lepton_error::{AddContext, Result};
 pub use crate::structs::simple_threadpool::{
     DEFAULT_THREAD_POOL, LeptonThreadPool, LeptonThreadPriority, SimpleThreadPool,
+    SingleThreadPool, ThreadPoolHolder,
 };
 
 #[cfg(feature = "micro_benchmark")]
@@ -148,21 +149,4 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     }
 
     return Ok(());
-}
-
-/// reads a file from the images directory for testing or benchmarking purposes
-#[cfg(any(test, feature = "micro_benchmark"))]
-pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
-    use std::io::Read;
-
-    let filename = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("images")
-        .join(filename.to_owned() + ext);
-    let mut f = std::fs::File::open(filename).unwrap();
-
-    let mut content = Vec::new();
-    f.read_to_end(&mut content).unwrap();
-
-    content
 }

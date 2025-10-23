@@ -653,6 +653,7 @@ mod tests {
     use super::*;
 
     use crate::{
+        helpers::read_file,
         jpeg::{
             bit_reader::BitReader,
             bit_writer::BitWriter,
@@ -660,7 +661,6 @@ mod tests {
             jpeg_header::{HuffTree, generate_huff_table_from_distribution},
             jpeg_read::decode_block_seq,
         },
-        read_file,
     };
 
     /// roundtrips a block through the encoder and decoder and checks that the output matches the input
@@ -893,7 +893,15 @@ mod tests {
 
     #[test]
     fn test_benchmark_write_jpeg() {
-        let mut f = super::benchmarks::benchmark_write_jpeg();
+        let mut f = benchmarks::benchmark_write_jpeg();
+        for _ in 0..10 {
+            f();
+        }
+    }
+
+    #[test]
+    fn test_benchmark_write_block() {
+        let mut f = benchmarks::benchmark_write_block();
         for _ in 0..10 {
             f();
         }
@@ -908,13 +916,13 @@ pub mod benchmarks {
 
     use crate::{
         EnabledFeatures,
+        helpers::read_file,
         jpeg::{
             bit_writer::BitWriter,
             block_based_image::AlignedBlock,
             jpeg_header::{JpegHeader, ReconstructionInfo, generate_huff_table_from_distribution},
             jpeg_read::read_jpeg_file,
         },
-        read_file,
     };
 
     /// Benchmarks performance of encoding a single JPEG block

@@ -25,6 +25,7 @@ use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
 use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
+use crate::structs::simple_threadpool::ThreadPoolHolder;
 use crate::structs::thread_handoff::ThreadHandoff;
 use crate::{LeptonThreadPool, consts::*};
 
@@ -43,7 +44,8 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     enabled_features: &EnabledFeatures,
     thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
-    let mut decoder = LeptonFileReader::new(enabled_features.clone(), thread_pool);
+    let mut decoder =
+        LeptonFileReader::new(enabled_features.clone(), ThreadPoolHolder::Dyn(thread_pool));
 
     let mut done = false;
     while !done {
@@ -152,12 +154,12 @@ pub struct LeptonFileReader<'a> {
     metrics: Metrics,
     total_read_size: u64,
     input_complete: bool,
-    thread_pool: &'a dyn LeptonThreadPool,
+    thread_pool: ThreadPoolHolder<'a>,
 }
 
 impl<'a> LeptonFileReader<'a> {
     /// Creates a new LeptonFileReader.
-    pub fn new(features: EnabledFeatures, thread_pool: &'a dyn LeptonThreadPool) -> Self {
+    pub fn new(features: EnabledFeatures, thread_pool: ThreadPoolHolder<'a>) -> Self {
         LeptonFileReader {
             state: DecoderState::FixedHeader(),
             lh: LeptonHeader::default_boxed(),
@@ -238,7 +240,7 @@ impl<'a> LeptonFileReader<'a> {
                             v,
                             &self.lh,
                             &self.enabled_features,
-                            self.thread_pool,
+                            &self.thread_pool,
                         )?;
                     }
                 }
@@ -654,7 +656,8 @@ mod tests {
     use default_boxed::DefaultBoxed;
 
     use crate::{
-        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, read_file,
+        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton,
+        helpers::read_file,
         structs::{
             lepton_header::{FIXED_HEADER_SIZE, LeptonHeader},
             thread_handoff::ThreadHandoff,

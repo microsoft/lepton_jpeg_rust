@@ -957,8 +957,6 @@ mod tests {
     use crate::{
         EnabledFeatures,
         jpeg::jpeg_header::{JpegHeader, ReconstructionInfo},
-        micro_benchmark::{benchmark_read_block, benchmark_read_jpeg},
-        read_file,
     };
     use std::io::{BufRead, Seek};
 
@@ -1037,7 +1035,7 @@ mod tests {
 
     #[test]
     fn test_benchmark_read_block() {
-        let mut f = benchmark_read_block();
+        let mut f = benchmarks::benchmark_read_block();
         for _ in 0..10 {
             f();
         }
@@ -1045,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_benchmark_read_jpeg() {
-        let mut f = benchmark_read_jpeg();
+        let mut f = benchmarks::benchmark_read_jpeg();
         for _ in 0..10 {
             f();
         }
@@ -1058,6 +1056,7 @@ pub mod benchmarks {
 
     use crate::{
         EnabledFeatures,
+        helpers::read_file,
         jpeg::{
             bit_reader::BitReader,
             bit_writer::BitWriter,
@@ -1068,7 +1067,6 @@ pub mod benchmarks {
             jpeg_read::{decode_block_seq, read_jpeg_file},
             jpeg_write::encode_block_seq,
         },
-        read_file,
     };
 
     /// reads the jpeg file from the test data and returns a closure that reads

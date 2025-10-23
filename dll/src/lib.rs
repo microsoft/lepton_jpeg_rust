@@ -17,7 +17,8 @@ use std::{
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReader, LeptonThreadPool,
-    catch_unwind_result, decode_lepton, encode_lepton, get_git_version,
+    SingleThreadPool, ThreadPoolHolder, catch_unwind_result, decode_lepton, encode_lepton,
+    get_git_version,
 };
 
 /// copies a string into a limited length zero terminated utf8 buffer
@@ -117,8 +118,10 @@ pub unsafe extern "C" fn WrapperCompressImage2(
             features.max_threads = number_of_threads;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+        let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
             &RAYON_THREAD_POOL
+        } else if flags & USE_SINGLE_THREAD_POOL != 0 {
+            &SingleThreadPool::default()
         } else {
             &DEFAULT_THREAD_POOL
         };
@@ -227,8 +230,10 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
             enabled_features.max_threads = number_of_threads;
         }
 
-        let thread_pool: &'static dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
+        let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
             &RAYON_THREAD_POOL
+        } else if flags & USE_SINGLE_THREAD_POOL != 0 {
+            &SingleThreadPool::default()
         } else {
             &DEFAULT_THREAD_POOL
         };
@@ -343,6 +348,7 @@ impl<'a> DecompressionContext<'a> {
 
 const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 const USE_RAYON_THREAD_POOL: u32 = 2;
+const USE_SINGLE_THREAD_POOL: u32 = 4;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
@@ -351,10 +357,12 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         ..EnabledFeatures::compat_lepton_vector_read()
     };
 
-    let thread_pool: &'static dyn LeptonThreadPool = if features & USE_RAYON_THREAD_POOL != 0 {
-        &RAYON_THREAD_POOL
+    let thread_pool: ThreadPoolHolder = if features & USE_RAYON_THREAD_POOL != 0 {
+        ThreadPoolHolder::Dyn(&RAYON_THREAD_POOL)
+    } else if features & USE_SINGLE_THREAD_POOL != 0 {
+        ThreadPoolHolder::Owned(Box::new(SingleThreadPool::default()))
     } else {
-        &DEFAULT_THREAD_POOL
+        ThreadPoolHolder::Dyn(&DEFAULT_THREAD_POOL)
     };
 
     unsafe { DecompressionContext::new(LeptonFileReader::new(enabled_features, thread_pool)) }
@@ -432,9 +440,21 @@ pub unsafe extern "C" fn decompress_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lepton_jpeg::read_file;
 
     use rstest::rstest;
+
+    fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+        let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+            .join("images")
+            .join(filename.to_owned() + ext);
+        //println!("reading {0}", filename.to_str().unwrap());
+        let mut f = std::fs::File::open(filename).unwrap();
+
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut content).unwrap();
+
+        content
+    }
 
     #[test]
     fn test_copy_cstring_utf8_to_buffer() {
@@ -538,6 +558,55 @@ mod tests {
                 (&mut original_size) as *mut u64,
                 (&mut cpu_usage) as *mut u64,
                 0,
+            );
+
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
+    }
+
+    /// test version 2 of external interface with single thread
+    #[test]
+    fn extern_interface_2_single_thread() {
+        let input = read_file("slrcity", ".jpg");
+
+        let mut compressed = Vec::new();
+
+        compressed.resize(input.len() + 10000, 0);
+
+        let mut result_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
+
+        unsafe {
+            let retval = WrapperCompressImage2(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+            );
+
+            assert_eq!(retval, 0);
+        }
+
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
+
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImage3(
+                compressed[..].as_ptr(),
+                result_size,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
             );
 
             assert_eq!(retval, 0);

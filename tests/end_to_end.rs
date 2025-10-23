@@ -9,10 +9,24 @@ use std::io::Cursor;
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, encode_lepton, encode_lepton_verify,
-    read_file,
 };
 use lepton_jpeg::{ExitCode, LeptonError};
 use rstest::rstest;
+
+/// reads a file from the images directory for testing or benchmarking purposes
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+    use std::io::Read;
+
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+        .join("images")
+        .join(filename.to_owned() + ext);
+    let mut f = std::fs::File::open(filename).unwrap();
+
+    let mut content = Vec::new();
+    f.read_to_end(&mut content).unwrap();
+
+    content
+}
 
 /// verifies that the decode will accept existing Lepton files and generate
 /// exactly the same jpeg from them. Used to detect unexpected divergences in coding format.
@@ -53,7 +67,7 @@ fn verify_decode(
     )]
     file: &str,
 ) {
-    use lepton_jpeg::{DEFAULT_THREAD_POOL, read_file};
+    use lepton_jpeg::DEFAULT_THREAD_POOL;
 
     println!("decoding {0:?}", file);
 

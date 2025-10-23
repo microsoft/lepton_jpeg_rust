@@ -1,41 +1,28 @@
 use std::{io::Cursor, time::Duration};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use lepton_jpeg::{EnabledFeatures, LeptonThreadPool, read_file};
+use lepton_jpeg::{EnabledFeatures, SingleThreadPool};
 
-/// single thread pool that creates just one threadpool thread
-/// useful for benchmarks to measure total end-to-end runtime
-struct SingleThreadPool {
-    sender: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>,
-}
+fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+        .join("images")
+        .join(filename.to_owned() + ext);
+    //println!("reading {0}", filename.to_str().unwrap());
+    let mut f = std::fs::File::open(filename).unwrap();
 
-impl SingleThreadPool {
-    pub fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
+    let mut content = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut content).unwrap();
 
-        std::thread::spawn(move || {
-            while let Ok(f) = rx.recv() {
-                f();
-            }
-        });
-
-        SingleThreadPool { sender: tx }
-    }
-}
-
-impl LeptonThreadPool for SingleThreadPool {
-    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
-        self.sender.send(f).unwrap();
-    }
+    content
 }
 
 fn end_to_end_benches(c: &mut Criterion) {
+    let thread_pool = SingleThreadPool::default();
     let mut g = c.benchmark_group("end_to_end");
     g.sampling_mode(criterion::SamplingMode::Flat);
     g.warm_up_time(Duration::from_secs(1));
     g.measurement_time(Duration::from_secs(10));
 
-    let thread_pool = SingleThreadPool::new();
     let jpeg = read_file("iphone", ".jpg");
     let lep = read_file("iphone", ".lep");
 
