@@ -2,7 +2,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
@@ -79,10 +79,10 @@ impl<RESULT> ThreadResults<RESULT> {
     }
     /// creates a closure that wraps the passed in closure, catches any panics,
     /// collects the return result and send it to the receiver to collect.
-    fn send_results(
+    fn send_results<T: FnOnce() -> Result<RESULT> + Send + 'static>(
         &mut self,
-        f: impl FnOnce() -> Result<RESULT> + Send + 'static,
-    ) -> impl FnOnce() {
+        f: T,
+    ) -> impl FnOnce() + use<RESULT, T> {
         let (tx, rx) = channel();
 
         self.results.push(rx);
@@ -129,7 +129,7 @@ impl<RESULT> ThreadResults<RESULT> {
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
     num_threads: usize,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
 where
@@ -301,7 +301,7 @@ enum State {
 impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn new<FN>(
         num_threads: usize,
-        thread_pool: &'static dyn LeptonThreadPool,
+        thread_pool: &dyn LeptonThreadPool,
         retention_bytes: usize,
         max_processor_threads: usize,
         processor: FN,
@@ -381,7 +381,7 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         if usize::from(thread_id) >= self.sender_channels.len() {
                             return err_exit_code(
                                 ExitCode::BadLeptonFile,
-                                format!("invalid thread_id {0}", thread_id).as_str(),
+                                format!("invalid thread_id {0}", thread_id),
                             );
                         }
 

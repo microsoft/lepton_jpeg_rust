@@ -76,9 +76,9 @@ impl QuantizationTables {
             for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 24, 32, 40, 48, 56] {
                 if qtables.get_quantization_table()[i] == 0 {
                     return err_exit_code(
-                    ExitCode::UnsupportedJpegWithZeroIdct0,
-                    "Quantization table contains zero for edge which would cause a divide by zero",
-                );
+                        ExitCode::UnsupportedJpegWithZeroIdct0,
+                        "Quantization table contains zero for edge which would cause a divide by zero",
+                    );
                 }
             }
             quantization_tables.push(qtables);

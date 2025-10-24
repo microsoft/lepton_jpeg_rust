@@ -12,7 +12,7 @@ use deranged::RangedUsize;
 
 use crate::consts::*;
 use crate::helpers::{calc_sign_index, u16_bit_length, u32_bit_length};
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{ModelComponent, ModelSubComponent};
 use crate::structs::branch::Branch;
 use crate::structs::quantization_tables::QuantizationTables;

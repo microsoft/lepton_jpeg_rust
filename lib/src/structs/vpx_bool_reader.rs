@@ -25,7 +25,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” 
 use std::io::{Read, Result};
 
 use crate::lepton_error;
-use crate::lepton_error::{err_exit_code, ExitCode};
+use crate::lepton_error::{ExitCode, err_exit_code};
 use crate::metrics::{Metrics, ModelComponent};
 use crate::structs::branch::Branch;
 use crate::structs::simple_hash::SimpleHash;

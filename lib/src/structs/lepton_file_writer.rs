@@ -17,7 +17,7 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JpegHeader;
 use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
-use crate::lepton_error::{err_exit_code, AddContext, ExitCode, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::lepton_file_reader::decode_lepton;
@@ -25,7 +25,7 @@ use crate::structs::lepton_header::LeptonHeader;
 use crate::structs::multiplexer::multiplex_write;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::thread_handoff::ThreadHandoff;
-use crate::{consts::*, LeptonThreadPool, StreamPosition};
+use crate::{LeptonThreadPool, StreamPosition, consts::*};
 
 /// Reads a jpeg and writes it out as a lepton file
 ///
@@ -39,7 +39,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let (lp, image_data) = read_jpeg(reader, enabled_features, |_jh, _ri| {})?;
 
@@ -72,7 +72,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
 pub fn encode_lepton_verify(
     input_data: &[u8],
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Vec<u8>, Metrics)> {
     let mut output_data = Vec::with_capacity(input_data.len());
 
@@ -104,8 +104,7 @@ pub fn encode_lepton_verify(
                 "ERROR mismatch input_len = {0}, decoded_len = {1}",
                 input_data.len(),
                 verify_buffer.len()
-            )
-            .as_str(),
+            ),
         );
     }
 
@@ -239,7 +238,7 @@ fn run_lepton_encoder_threads<W: Write>(
     thread_handoffs: &[ThreadHandoff],
     image_data: Vec<BlockBasedImage>,
     features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<Metrics> {
     let wall_time = Instant::now();
 
@@ -377,55 +376,58 @@ fn get_number_of_threads_for_encoding(
     return num_threads;
 }
 
-#[test]
-fn test_get_git_revision() {
-    let mut lh = LeptonHeader::default_boxed();
-    get_git_revision(&mut lh);
-
-    println!("{:x?}", lh.git_revision_prefix);
-}
-
-#[test]
-fn test_slrcity() {
-    test_file("slrcity")
-}
-
 #[cfg(test)]
-fn test_file(filename: &str) {
-    use crate::structs::lepton_file_reader::read_file;
-    use crate::structs::simple_threadpool::DEFAULT_THREAD_POOL;
+mod tests {
+    use super::*;
 
-    let original = read_file(filename, ".jpg");
+    use crate::{DEFAULT_THREAD_POOL, helpers::read_file};
 
-    let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
-    enabled_features.max_threads = 2;
+    #[test]
+    fn test_get_git_revision() {
+        let mut lh = LeptonHeader::default_boxed();
+        get_git_revision(&mut lh);
 
-    let mut output = Vec::new();
+        println!("{:x?}", lh.git_revision_prefix);
+    }
 
-    let _ = encode_lepton(
-        &mut Cursor::new(&original),
-        &mut Cursor::new(&mut output),
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+    #[test]
+    fn test_slrcity() {
+        test_file("slrcity")
+    }
 
-    println!(
-        "Original size: {0}, compressed size: {1}",
-        original.len(),
-        output.len()
-    );
+    fn test_file(filename: &str) {
+        let original = read_file(filename, ".jpg");
 
-    let mut recreate = Vec::new();
+        let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
+        enabled_features.max_threads = 2;
 
-    decode_lepton(
-        &mut Cursor::new(&output),
-        &mut recreate,
-        &enabled_features,
-        &DEFAULT_THREAD_POOL,
-    )
-    .unwrap();
+        let mut output = Vec::new();
 
-    assert_eq!(original.len(), recreate.len());
-    assert!(original == recreate);
+        let _ = encode_lepton(
+            &mut Cursor::new(&original),
+            &mut Cursor::new(&mut output),
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        println!(
+            "Original size: {0}, compressed size: {1}",
+            original.len(),
+            output.len()
+        );
+
+        let mut recreate = Vec::new();
+
+        decode_lepton(
+            &mut Cursor::new(&output),
+            &mut recreate,
+            &enabled_features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        assert_eq!(original.len(), recreate.len());
+        assert!(original == recreate);
+    }
 }

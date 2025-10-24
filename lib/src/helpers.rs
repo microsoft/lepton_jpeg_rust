@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::lepton_error::{ExitCode, LeptonError};
 
@@ -18,10 +18,7 @@ pub fn catch_unwind_result<R>(
             if let Some(message) = err.downcast_ref::<&str>() {
                 Err(LeptonError::new(ExitCode::AssertionFailure, *message))
             } else if let Some(message) = err.downcast_ref::<String>() {
-                Err(LeptonError::new(
-                    ExitCode::AssertionFailure,
-                    message.as_str(),
-                ))
+                Err(LeptonError::new(ExitCode::AssertionFailure, message))
             } else {
                 Err(LeptonError::new(
                     ExitCode::AssertionFailure,
@@ -118,11 +115,7 @@ pub fn calc_sign_index(val: i16) -> usize {
     if val == 0 {
         0
     } else {
-        if val > 0 {
-            1
-        } else {
-            2
-        }
+        if val > 0 { 1 } else { 2 }
     }
 }
 
@@ -136,10 +129,26 @@ pub fn needs_to_grow<T>(v: &Vec<T>, additional: usize) -> bool {
 
 #[cfg(test)]
 pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
-    use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha12Rng;
+    use rand_chacha::rand_core::SeedableRng;
 
     ChaCha12Rng::from_seed(seed)
+}
+
+/// reads a file from the images directory for testing or benchmarking purposes
+#[cfg(any(test, feature = "micro_benchmark"))]
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+    use std::io::Read;
+
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+        .join("images")
+        .join(filename.to_owned() + ext);
+    let mut f = std::fs::File::open(filename).unwrap();
+
+    let mut content = Vec::new();
+    f.read_to_end(&mut content).unwrap();
+
+    content
 }
 
 /*

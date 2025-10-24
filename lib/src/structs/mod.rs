@@ -25,3 +25,8 @@ pub mod simple_threadpool;
 mod thread_handoff;
 mod vpx_bool_reader;
 mod vpx_bool_writer;
+
+#[cfg(feature = "micro_benchmark")]
+pub use idct::benchmark_idct;
+#[cfg(feature = "micro_benchmark")]
+pub use lepton_encoder::benchmark_roundtrip_coefficient;

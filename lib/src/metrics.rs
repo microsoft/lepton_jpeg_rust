@@ -111,9 +111,10 @@ impl Metrics {
                 x.1.total_bits,
                 x.1.total_compressed,
                 x.1.total_compressed * 100 / x.1.total_bits,
-                (x.1.total_bits - x.1.total_compressed)/(8*1024),
+                (x.1.total_bits - x.1.total_compressed) / (8 * 1024),
                 (x.1.total_compressed as f64) * 100f64 / (total_compressed as f64),
-                ((x.1.total_bits - x.1.total_compressed) as f64)/(total_compressed as f64)*100f64
+                ((x.1.total_bits - x.1.total_compressed) as f64) / (total_compressed as f64)
+                    * 100f64
             );
         }
 
