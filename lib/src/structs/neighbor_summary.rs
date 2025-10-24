@@ -16,7 +16,7 @@ pub struct NeighborSummary {
     edge_coefs_h: i32x8,
     edge_coefs_v: i32x8,
 
-    num_non_zeros: u8,
+    num_non_zeros: usize,
 }
 
 pub static NEIGHBOR_DATA_EMPTY: NeighborSummary = NeighborSummary {
@@ -39,7 +39,7 @@ impl NeighborSummary {
         edge_pixels_h: i16x8,
         edge_pixels_v: i16x8,
         dc_deq: i32,
-        num_non_zeros_7x7: u8,
+        num_non_zeros_7x7: usize,
         horiz_pred: i32x8,
         vert_pred: i32x8,
     ) -> Self {
@@ -52,7 +52,7 @@ impl NeighborSummary {
         }
     }
 
-    pub fn get_num_non_zeros(&self) -> u8 {
+    pub fn get_num_non_zeros(&self) -> usize {
         self.num_non_zeros
     }
 

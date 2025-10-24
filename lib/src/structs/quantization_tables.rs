@@ -38,7 +38,7 @@ impl QuantizationTables {
             for pixel_column in 0..8 {
                 let coord = (pixel_row * 8) + pixel_column;
                 let coord_tr = (pixel_column * 8) + pixel_row;
-                let q = quantization_table[RASTER_TO_ZIGZAG[coord] as usize];
+                let q = quantization_table[RASTER_TO_ZIGZAG[coord].get() as usize];
 
                 retval.quantization_table[coord] = q;
                 retval.quantization_table_transposed[coord_tr] = q;
