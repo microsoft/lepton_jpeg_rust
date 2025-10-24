@@ -44,7 +44,8 @@ jobs:
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
       - name: Test python interface build
         run: | 
-          cargo build --locked --manifest-path python/Cargo.toml
+          cd python
+          cargo build --locked
           python -m venv .env
           .env\Scripts\activate
           pip install maturin pytest
