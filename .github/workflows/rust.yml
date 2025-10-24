@@ -48,7 +48,7 @@ jobs:
           python -m venv .env
           .env\Scripts\activate
           pip install maturin pytest
-          maturin develop --cargo-extra-args="--locked"
+          maturin develop --locked
           pytest --junitxml=results.xml
 
       # Run tests with nextest and output JUnit results
