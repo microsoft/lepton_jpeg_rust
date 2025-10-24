@@ -467,11 +467,7 @@ fn encode_edge<W: Write, const ALL_PRESENT: bool>(
 }
 
 fn count_non_zero(v: i16) -> usize {
-    if v == 0 {
-        0
-    } else {
-        1
-    }
+    if v == 0 { 0 } else { 1 }
 }
 
 fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
