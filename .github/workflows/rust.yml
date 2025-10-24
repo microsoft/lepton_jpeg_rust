@@ -42,6 +42,16 @@ jobs:
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace
       - name: Build x86_64-pc-windows-msvc release
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
+      - name: Test python interface build
+        run: | 
+          cd python
+          cargo build --locked
+          python -m venv .env
+          .env\Scripts\activate
+          pip install maturin pytest
+          maturin develop --locked
+          pytest --junitxml=results.xml
+
       # Run tests with nextest and output JUnit results
       - name: Run tests
         run: |
@@ -52,4 +62,7 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action/windows@v2
         if: always() # Upload even if tests fail
         with:
-          files: target/nextest/ci/junit.xml
+          files: |
+             target/nextest/ci/junit.xml
+             python/results.xml
+        
