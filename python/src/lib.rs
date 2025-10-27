@@ -4,7 +4,11 @@ use std::io::Cursor;
 
 #[pyfunction]
 #[pyo3(signature = (data, config=None))]
-pub fn compress_bytes(py: Python, data: &[u8], config: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+pub fn compress_bytes(
+    py: Python,
+    data: &[u8],
+    config: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Py<PyAny>> {
     let mut compressed = Vec::new();
 
     let mut features = lepton_jpeg::EnabledFeatures::compat_lepton_vector_write();

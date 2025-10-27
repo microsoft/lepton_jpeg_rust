@@ -60,6 +60,6 @@ jobs:
           fi
 
           cd python
-          #maturin upload --repository testpypi --skip-existing ${{ github.workspace }}/target/wheels/*
+          maturin upload --skip-existing ${{ github.workspace }}/target/wheels/*
         env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}  
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}  
