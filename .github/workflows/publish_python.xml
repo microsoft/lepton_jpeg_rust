@@ -1,0 +1,34 @@
+name: Publish Wheels
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build and upload wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable    
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build wheels
+        run: maturin build --release
+      - name: Upload to PyPI
+        run: maturin upload --repository testpypi --skip-existing target/wheels/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
