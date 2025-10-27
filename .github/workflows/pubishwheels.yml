@@ -37,11 +37,13 @@ jobs:
       - name: Build wheel
         run: |
           source .venv/bin/activate
+          cd python
           maturin build --release
 
       - name: Upload to TestPyPI
         run: |
           source .venv/bin/activate
+          cd python
           maturin upload --repository testpypi --skip-existing target/wheels/*
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}  
