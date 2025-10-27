@@ -4,10 +4,9 @@ permissions:
   contents: read
   
 on:
-  pull_request:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"  # Triggers only for version tag pushes
 
 jobs:
   build:
