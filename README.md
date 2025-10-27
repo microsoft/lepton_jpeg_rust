@@ -5,13 +5,35 @@ This is a port of the C++ Lepton JPEG compression tool that was released by Drop
 
 With precise bit-by-bit recovery of the original JPEG, the Lepton compression library is designed for lossless compression of baseline and progressive JPEGs up to 22%. JPEG storage in a cloud storage system is the main application case. Even metadata headers and invalid content are kept in good condition.
 
-
 ## How to Use This Library
-Some operations of this library are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
 
-#### Building From Source
+### Rust
 
-- [Rust 1.65 or Above](https://www.rust-lang.org/tools/install)
+The libary is published on crates.io as [lepton_jpeg](https://crates.io/crates/lepton_jpeg). 
+
+### Python 
+
+The library is published on PyPI as *lepton_jpeg_python*.
+
+```
+pip install lepton_jpeg_python
+```
+
+``` Python
+import lepton_jpeg_python
+
+with open("../images/slrcity.jpg", "rb") as f:
+    jpg_data = f.read()
+
+compressed = lepton_jpeg_python.compress_bytes(jpg_data, config)
+decompressed = lepton_jpeg_python.decompress_bytes(compressed, config)
+
+assert jpg_data == decompressed
+```
+
+### Building From Source
+
+- [Rust 1.88 or Above](https://www.rust-lang.org/tools/install)
 
 ``` bash
 git clone https://github.com/microsoft/lepton_jpeg_rust
@@ -21,9 +43,11 @@ cargo test
 cargo build --release
 ```
 
-#### Running
+Some operations of this library are vectorized such as the IDCT using the [Wide](https://crates.io/crates/wide) crate, so you can get a significant boost if you enable +AVX2.
 
-There is an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress/decompress and also to verify the test end-to-end on a given JPEG. If the input file has a `.jpg` extension, it will encode. If the input file has a `.lep` extension, it will decode back to the original`.jpg`.
+### Executable
+
+Building the Rust project generates an `lepton_jpeg_util.exe` wrapper that is built as part of the project. It can be used to compress/decompress and also to verify the test end-to-end on a given JPEG. If the input file has a `.jpg` extension, it will encode. If the input file has a `.lep` extension, it will decode back to the original`.jpg`.
 
 It supports the following options:
 
