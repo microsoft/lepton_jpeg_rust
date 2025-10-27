@@ -173,7 +173,7 @@ impl<W: Write> VPXBoolWriter<W> {
     #[inline(always)]
     pub fn put_grid<const A: usize>(
         &mut self,
-        v: u8,
+        v: usize,
         branches: &mut [Branch; A],
         cmp: ModelComponent,
     ) -> Result<()> {
@@ -429,7 +429,7 @@ fn test_roundtrip_vpxboolwriter_grid() {
 
     for i in 0..1024 {
         writer
-            .put_grid(i as u8 % 8, &mut branches.branches, ModelComponent::Dummy)
+            .put_grid(i % 8, &mut branches.branches, ModelComponent::Dummy)
             .unwrap();
     }
 
