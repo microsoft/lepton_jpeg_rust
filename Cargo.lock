@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_dll"
-version = "0.5.5"
+version = "0.5.6"
 dependencies = [
  "lepton_jpeg",
  "rayon",
@@ -504,6 +504,7 @@ version = "0.5.5"
 dependencies = [
  "lepton_jpeg",
  "pyo3",
+ "rayon",
 ]
 
 [[package]]

@@ -1,17 +1,35 @@
+use lepton_jpeg::{LeptonThreadPool, SingleThreadPool};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use std::io::Cursor;
+use std::sync::LazyLock;
 
-#[pyfunction]
-#[pyo3(signature = (data, config=None))]
-pub fn compress_bytes(
-    py: Python,
-    data: &[u8],
+enum ThreadOptions {
+    SingleThread,
+    PerCpu,
+    NoLimit,
+}
+
+struct RayonThreadPool {
+    pool: LazyLock<rayon::ThreadPool>,
+}
+
+impl LeptonThreadPool for RayonThreadPool {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
+        self.pool.spawn(f);
+    }
+}
+
+static RAYON_THREAD_POOL: RayonThreadPool = RayonThreadPool {
+    pool: LazyLock::new(|| rayon::ThreadPoolBuilder::new().build().unwrap()),
+};
+
+fn parse_config(
     config: Option<&Bound<'_, PyDict>>,
-) -> PyResult<Py<PyAny>> {
-    let mut compressed = Vec::new();
-
+) -> PyResult<(lepton_jpeg::EnabledFeatures, ThreadOptions)> {
     let mut features = lepton_jpeg::EnabledFeatures::compat_lepton_vector_write();
+
+    let mut threads = ThreadOptions::PerCpu;
 
     if let Some(cfg) = config {
         for (key, value) in cfg.iter() {
@@ -41,6 +59,17 @@ pub fn compress_bytes(
                     let val: u32 = value.extract()?;
                     features.max_jpeg_file_size = val;
                 }
+                "threads" => match value.extract::<&str>()? {
+                    "single" => threads = ThreadOptions::SingleThread,
+                    "per_cpu" => threads = ThreadOptions::PerCpu,
+                    "no_limit" => threads = ThreadOptions::NoLimit,
+                    _ => {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Invalid threads option: {}",
+                            value.extract::<&str>()?
+                        )));
+                    }
+                },
                 _ => {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Unknown configuration key: {}",
@@ -50,12 +79,30 @@ pub fn compress_bytes(
             }
         }
     }
+    Ok((features, threads))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data, config=None))]
+pub fn compress_bytes(
+    py: Python,
+    data: &[u8],
+    config: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Py<PyAny>> {
+    let mut compressed = Vec::new();
+
+    let (features, threads) = parse_config(config)?;
+    let single = SingleThreadPool::default();
 
     lepton_jpeg::encode_lepton(
         &mut Cursor::new(data),
         &mut Cursor::new(&mut compressed),
         &features,
-        &lepton_jpeg::DEFAULT_THREAD_POOL,
+        match threads {
+            ThreadOptions::SingleThread => &single,
+            ThreadOptions::PerCpu => &RAYON_THREAD_POOL,
+            ThreadOptions::NoLimit => &lepton_jpeg::DEFAULT_THREAD_POOL,
+        },
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Compression failed: {}", e)))?;
 
@@ -63,14 +110,26 @@ pub fn compress_bytes(
 }
 
 #[pyfunction]
-pub fn decompress_bytes(py: Python, data: &[u8]) -> PyResult<Py<PyAny>> {
+#[pyo3(signature = (data, config=None))]
+pub fn decompress_bytes(
+    py: Python,
+    data: &[u8],
+    config: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Py<PyAny>> {
     let mut decompressed = Vec::new();
+
+    let (features, threads) = parse_config(config)?;
+    let single = SingleThreadPool::default();
 
     lepton_jpeg::decode_lepton(
         &mut Cursor::new(data),
         &mut Cursor::new(&mut decompressed),
-        &lepton_jpeg::EnabledFeatures::compat_lepton_vector_write(),
-        &lepton_jpeg::DEFAULT_THREAD_POOL,
+        &features,
+        match threads {
+            ThreadOptions::SingleThread => &single,
+            ThreadOptions::PerCpu => &RAYON_THREAD_POOL,
+            ThreadOptions::NoLimit => &lepton_jpeg::DEFAULT_THREAD_POOL,
+        },
     )
     .map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("Decompression failed: {}", e))

@@ -14,7 +14,7 @@ def test_compress_decompress():
         "max_jpeg_file_size": 128 * 1024 * 1024 }
 
     compressed = lepton_jpeg_python.compress_bytes(jpg_data, config)
-    decompressed = lepton_jpeg_python.decompress_bytes(compressed)
+    decompressed = lepton_jpeg_python.decompress_bytes(compressed, config)
 
     assert jpg_data == decompressed
     print("Compression and decompression successful!")
