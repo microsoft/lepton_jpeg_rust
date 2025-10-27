@@ -37,7 +37,7 @@ jobs:
           else
               source .venv/Scripts/activate
           fi          
-          pip install --upgrade pip maturin
+          python -m pip install --upgrade pip maturin
 
       - name: Build wheel
         shell: bash
