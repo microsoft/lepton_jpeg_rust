@@ -29,18 +29,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Create virtual environment
+        shell: bash
         run: |
           python -m venv .venv
           source .venv/bin/activate
           pip install --upgrade pip maturin
 
       - name: Build wheel
+        shell: bash
         run: |
           source .venv/bin/activate
           cd python
           maturin build --release
 
       - name: Upload to TestPyPI
+        shell: bash
         run: |
           source .venv/bin/activate
           cd python
