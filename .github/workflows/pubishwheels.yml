@@ -32,20 +32,34 @@ jobs:
         shell: bash
         run: |
           python -m venv .venv
-          source .venv/bin/activate
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi          
           pip install --upgrade pip maturin
 
       - name: Build wheel
         shell: bash
         run: |
-          source .venv/bin/activate
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi
+
           cd python
           maturin build --release
 
       - name: Upload to TestPyPI
         shell: bash
         run: |
-          source .venv/bin/activate
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi
+
           cd python
           maturin upload --repository testpypi --skip-existing ${{ github.workspace }}/target/wheels/*
         env:
