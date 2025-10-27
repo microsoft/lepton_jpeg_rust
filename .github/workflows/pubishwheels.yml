@@ -27,11 +27,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install maturin
-        run: pip install maturin
-      - name: Build wheels
-        run: maturin build --release
-      - name: Upload to PyPI
-        run: maturin upload --repository testpypi --skip-existing target/wheels/*
+
+      - name: Create virtual environment
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip maturin
+
+      - name: Build wheel
+        run: |
+          source .venv/bin/activate
+          maturin build --release
+
+      - name: Upload to TestPyPI
+        run: |
+          source .venv/bin/activate
+          maturin upload --repository testpypi --skip-existing target/wheels/*
         env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}  
