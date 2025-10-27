@@ -6,8 +6,8 @@ def test_compress_decompress():
         jpg_data = f.read()
 
     config = {
-        "max_jpeg_width": 4096,
-        "max_jpeg_height": 4096,
+        "max_jpeg_width": 8196,
+        "max_jpeg_height": 8196,
         "progressive": False,
         "reject_dqts_with_zeros": True,
         "max_partitions": 8,
