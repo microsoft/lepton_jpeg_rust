@@ -9,7 +9,7 @@ use byteorder::WriteBytesExt;
 
 use super::simple_threadpool::LeptonThreadPool;
 
-use crate::lepton_error::{AddContext, ExitCode, LeptonError, Result};
+use crate::lepton_error::{AddContext, ExitCode, Result};
 /// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
 ///
 /// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
@@ -277,73 +277,6 @@ impl MultiplexReader {
     }
 }
 
-struct IncrementalRead {
-    current_block: VecDeque<u8>,
-    partitions: Vec<Partitions>,
-}
-
-impl Default for IncrementalRead {
-    fn default() -> Self {
-        IncrementalRead {
-            current_block: VecDeque::new(),
-            partitions: Vec::new(),
-        }
-    }
-}
-
-struct Partitions {
-    amount_left: usize,
-    receiver: Receiver<Vec<u8>>,
-}
-
-impl IncrementalRead {
-    pub fn append_content(&mut self, data: &[u8]) {
-        self.current_block.extend(data);
-    }
-
-    pub fn add_partition(&mut self, amount: usize) -> Sender<Vec<u8>> {
-        let (sender, receiver) = channel();
-
-        self.partitions.push(Partitions {
-            amount_left: amount,
-            receiver,
-        });
-
-        sender
-    }
-}
-
-impl Read for IncrementalRead {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        while self.current_block.is_empty() && !self.partitions.is_empty() {
-            let partition = &mut self.partitions[0];
-            if partition.amount_left == 0 {
-                self.partitions.remove(0);
-                continue;
-            }
-
-            match partition.receiver.recv() {
-                Ok(mut block) => {
-                    if partition.amount_left < block.len() {
-                        // shorten block if too much data was sent
-                        log::warn!("Received more data than expected from worker, truncating");
-                        block.truncate(partition.amount_left);
-                    }
-
-                    partition.amount_left -= block.len();
-
-                    self.current_block = VecDeque::from(block);
-                    break;
-                }
-                Err(e) => {
-                    return Err(LeptonError::from(e).into());
-                }
-            }
-        }
-        return self.current_block.read(buf);
-    }
-}
-
 /// Reads data in multiplexed format and sends it to the appropriate processor, each
 /// running on its own thread. The processor function is called with the thread_id and
 /// a blocking reader that it can use to read its own data.
@@ -500,189 +433,190 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         Ok(())
     }
 
-    /// Called once all the incoming buffers are passed to process buffers,
-    /// waits for all the threads to finish processing and returns the results.
-    pub fn complete(&mut self) -> Result<Vec<RESULT>> {
-        for thread_id in 0..self.sender_channels.len() {
-            // send eof to all threads (ignore results since they might be dead already)
-            let _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
-        }
-
-        let mut results = Vec::new();
-
-        // now collect all the results from all the threads
-        for r in self.receiver_channels.iter_mut() {
-            for v in r.iter() {
-                match v {
-                    Ok(v) => results.push(v),
-                    Err(e) => return Err(e),
-                }
+    /// retrieves the next available result from the threads. If complete is true, this function
+    /// will block until all threads are complete and return the first result or error it finds.
+    /// If complete is false, this function will return immediately if no results are available.
+    pub fn retrieve_result(&mut self, complete: bool) -> Result<Option<RESULT>> {
+        if complete {
+            // if we are complete, send eof to all threads
+            for thread_id in 0..self.sender_channels.len() {
+                // send eof to all threads (ignore results since they might be dead already)
+                let _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
             }
-        }
+            self.sender_channels.clear();
 
-        Ok(results)
-    }
-}
-
-impl MultiplexReaderState<Vec<u8>> {
-    /// copies all available data to the destination buffer
-    pub fn copy_available_data(
-        &mut self,
-        destination: &mut impl Write,
-        partition_remaining: &mut Vec<usize>,
-    ) -> Result<()> {
-        // now collect all the results from all the threads
-        for (i, r) in self.receiver_channels.iter_mut().enumerate() {
-            if partition_remaining[i] == 0 {
-                continue;
-            }
-
-            for v in r.iter() {
-                match v {
-                    Ok(v) => {
-                        let to_copy = v.len().min(partition_remaining[i]);
-                        destination.write_all(&v[..to_copy])?;
-                        partition_remaining[i] -= to_copy;
+            // if we are complete, then walk through all the channels to get the first result
+            while let Some(r) = self.receiver_channels.get_mut(0) {
+                match r.recv() {
+                    Ok(v) => match v {
+                        Ok(v) => return Ok(Some(v)),
+                        Err(e) => return Err(e),
+                    },
+                    Err(_) => {
+                        // channel is closed, remove it
+                        self.receiver_channels.remove(0);
                     }
-                    Err(e) => return Err(e),
+                }
+            }
+        } else {
+            // if we aren't complete, use non-blocking to try to get some results
+            // from the first thread
+            if let Some(r) = self.receiver_channels.get_mut(0) {
+                if let Ok(v) = r.try_recv() {
+                    match v {
+                        Ok(v) => return Ok(Some(v)),
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }
-
-        Ok(())
+        // nothing left to read
+        Ok(None)
     }
 }
 
 #[cfg(test)]
-use crate::DEFAULT_THREAD_POOL;
+mod tests {
+    use super::*;
+    use crate::DEFAULT_THREAD_POOL;
+    use crate::lepton_error::{ExitCode, LeptonError};
 
-/// simple end to end test that write the thread id and reads it back
-#[test]
-fn test_multiplex_end_to_end() {
-    use byteorder::ReadBytesExt;
+    /// simple end to end test that write the thread id and reads it back
+    #[test]
+    fn test_multiplex_end_to_end() {
+        use byteorder::ReadBytesExt;
 
-    let mut output = Vec::new();
+        let mut output = Vec::new();
 
-    let w = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |writer, thread_id| -> Result<usize> {
-            for i in thread_id as u32..10000 {
-                writer.write_u32::<byteorder::LittleEndian>(i)?;
+        let w = multiplex_write(
+            &mut output,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |writer, thread_id| -> Result<usize> {
+                for i in thread_id as u32..10000 {
+                    writer.write_u32::<byteorder::LittleEndian>(i)?;
+                }
+
+                Ok(thread_id)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let mut extra = Vec::new();
+
+        let mut multiplex_state = multiplex_read(
+            10,
+            &DEFAULT_THREAD_POOL,
+            0,
+            8,
+            |thread_id, reader, result_tx: &Sender<Result<usize>>| {
+                for i in thread_id as u32..10000 {
+                    let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
+                    assert_eq!(read_thread_id, i);
+                }
+                result_tx.send(Ok(thread_id))?;
+                Ok(())
+            },
+        );
+
+        // do worst case, we are just given byte at a time
+        let mut r = Vec::new();
+
+        for i in 0..output.len() {
+            let mut i = PartialBuffer::new(&output[i..=i], &mut extra);
+            multiplex_state.process_buffer(&mut i).unwrap();
+
+            if let Some(res) = multiplex_state.retrieve_result(false).unwrap() {
+                r.push(res);
             }
+        }
 
-            Ok(thread_id)
-        },
-    )
-    .unwrap();
+        while let Some(res) = multiplex_state.retrieve_result(true).unwrap() {
+            r.push(res);
+        }
 
-    assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-
-    let mut extra = Vec::new();
-
-    let mut multiplex_state = multiplex_read(
-        10,
-        &DEFAULT_THREAD_POOL,
-        0,
-        8,
-        |thread_id, reader, result_tx: &Sender<Result<usize>>| {
-            for i in thread_id as u32..10000 {
-                let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
-                assert_eq!(read_thread_id, i);
-            }
-            result_tx.send(Ok(thread_id))?;
-            Ok(())
-        },
-    );
-
-    // do worst case, we are just given byte at a time
-    for i in 0..output.len() {
-        let mut i = PartialBuffer::new(&output[i..=i], &mut extra);
-        multiplex_state.process_buffer(&mut i).unwrap();
+        assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
-    let r = multiplex_state.complete().unwrap();
-
-    assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-}
-
-#[test]
-fn test_multiplex_read_error() {
-    let mut multiplex_state = multiplex_read(
-        10,
-        &DEFAULT_THREAD_POOL,
-        0,
-        8,
-        |_, _, _: &Sender<Result<()>>| -> Result<()> {
-            Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
-        },
-    );
-
-    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
-    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert!(e.message().starts_with("test error"));
-}
-
-#[test]
-fn test_multiplex_read_panic() {
-    let mut multiplex_state = multiplex_read(
-        10,
-        &DEFAULT_THREAD_POOL,
-        0,
-        8,
-        |_, _, _: &Sender<Result<()>>| -> Result<()> {
-            panic!();
-        },
-    );
-
-    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
-    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
-}
-
-// test catching errors in the multiplex_write function
-#[test]
-fn test_multiplex_write_error() {
-    let mut output = Vec::new();
-
-    let e: LeptonError = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |_, thread_id| -> Result<usize> {
-            if thread_id == 3 {
-                // have one thread fail
+    #[test]
+    fn test_multiplex_read_error() {
+        let mut multiplex_state = multiplex_read(
+            10,
+            &DEFAULT_THREAD_POOL,
+            0,
+            8,
+            |_, _, _: &Sender<Result<()>>| -> Result<()> {
                 Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
-            } else {
-                Ok(0)
-            }
-        },
-    )
-    .unwrap_err()
-    .into();
+            },
+        );
 
-    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert!(e.message().starts_with("test error"));
-}
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+        assert!(e.message().starts_with("test error"));
+    }
 
-// test catching errors in the multiplex_write function
-#[test]
-fn test_multiplex_write_panic() {
-    let mut output = Vec::new();
-
-    let e: LeptonError = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |_, thread_id| -> Result<usize> {
-            if thread_id == 5 {
+    #[test]
+    fn test_multiplex_read_panic() {
+        let mut multiplex_state = multiplex_read(
+            10,
+            &DEFAULT_THREAD_POOL,
+            0,
+            8,
+            |_, _, _: &Sender<Result<()>>| -> Result<()> {
                 panic!();
-            }
-            Ok(0)
-        },
-    )
-    .unwrap_err()
-    .into();
+            },
+        );
 
-    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+    }
+
+    // test catching errors in the multiplex_write function
+    #[test]
+    fn test_multiplex_write_error() {
+        let mut output = Vec::new();
+
+        let e: LeptonError = multiplex_write(
+            &mut output,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |_, thread_id| -> Result<usize> {
+                if thread_id == 3 {
+                    // have one thread fail
+                    Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+                } else {
+                    Ok(0)
+                }
+            },
+        )
+        .unwrap_err()
+        .into();
+
+        assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+        assert!(e.message().starts_with("test error"));
+    }
+
+    // test catching errors in the multiplex_write function
+    #[test]
+    fn test_multiplex_write_panic() {
+        let mut output = Vec::new();
+
+        let e: LeptonError = multiplex_write(
+            &mut output,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |_, thread_id| -> Result<usize> {
+                if thread_id == 5 {
+                    panic!();
+                }
+                Ok(0)
+            },
+        )
+        .unwrap_err()
+        .into();
+
+        assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+    }
 }
