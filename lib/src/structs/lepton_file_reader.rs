@@ -99,27 +99,7 @@ pub fn decode_lepton_file_image<R: BufRead>(
         &enabled_features,
         4,
         thread_pool,
-        |reader, features, qt, thread_handoff, jpeg_header, rinfo, is_last_thread, sender| {
-            let cpu_time = CpuTimeMeasure::new();
-
-            let (mut metrics, image_data) = lepton_decode_row_range(
-                qt,
-                jpeg_header,
-                &rinfo.truncate_components,
-                reader,
-                thread_handoff.luma_y_start,
-                thread_handoff.luma_y_end,
-                is_last_thread,
-                true,
-                features,
-            )?;
-
-            metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-            sender.send(Ok((metrics, image_data)))?;
-
-            Ok(())
-        },
+        progressive_decoding_thread,
     )
     .context()?;
 
@@ -521,35 +501,7 @@ impl<'a> LeptonFileReader<'a> {
                 enabled_features,
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
                 thread_pool,
-                |reader,
-                    features,
-                    qt,
-                    thread_handoff,
-                    jpeg_header,
-                    rinfo,
-                    is_last_thread,
-                    sender| {
-
-                    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
-
-                    let (mut metrics, image_data) = lepton_decode_row_range(
-                        qt,
-                        jpeg_header,
-                        &rinfo.truncate_components,
-                        reader,
-                        thread_handoff.luma_y_start,
-                        thread_handoff.luma_y_end,
-                        is_last_thread,
-                        true,
-                        features,
-                    )?;
-
-                    metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-                    sender.send(Ok((metrics, image_data)))?;
-
-                    Ok(())
-                },
+                progressive_decoding_thread,
             )
             .context()?;
 
@@ -565,67 +517,7 @@ impl<'a> LeptonFileReader<'a> {
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
-                |reader,
-                 features,
-                 qt,
-                 thread_handoff,
-                 jpeg_header,
-                 rinfo,
-                 is_last_thread,
-                 sender| {
-                    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
-
-                    let (mut metrics, image_data) = lepton_decode_row_range(
-                        qt,
-                        jpeg_header,
-                        &rinfo.truncate_components,
-                        reader,
-                        thread_handoff.luma_y_start,
-                        thread_handoff.luma_y_end,
-                        is_last_thread,
-                        true,
-                        features,
-                    )?;
-
-                    let restart_info = RestartSegmentCodingInfo {
-                        overhang_byte: thread_handoff.overhang_byte,
-                        num_overhang_bits: thread_handoff.num_overhang_bits,
-                        luma_y_start: thread_handoff.luma_y_start,
-                        luma_y_end: thread_handoff.luma_y_end,
-                        last_dc: thread_handoff.last_dc,
-                    };
-
-                    let mut result_buffer = jpeg_write_baseline_row_range(
-                        thread_handoff.segment_size as usize,
-                        &restart_info,
-                        &image_data,
-                        &jpeg_header,
-                        &rinfo,
-                    )
-                    .context()?;
-
-                    #[cfg(feature = "detailed_tracing")]
-                    info!(
-                        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
-                        thread_handoff.luma_y_start,
-                        thread_handoff.segment_size,
-                        result_buffer.len(),
-                        thread_handoff.segment_offset_in_file,
-                        thread_handoff.overhang_byte,
-                        thread_handoff.num_overhang_bits
-                    );
-
-                    if result_buffer.len() > thread_handoff.segment_size as usize {
-                        warn!("warning: truncating segment");
-                        result_buffer.resize(thread_handoff.segment_size as usize, 0);
-                    }
-
-                    metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-                    sender.send(Ok((metrics, result_buffer)))?;
-
-                    Ok(())
-                },
+                baseline_decoding_thread,
             )?;
             DecoderState::ScanBaseline(mux)
         })
@@ -706,6 +598,111 @@ fn write_tail(lh: &mut LeptonHeader, output: &mut impl Write) -> Result<()> {
         .write_all(&lh.rinfo.raw_jpeg_header[lh.raw_jpeg_header_read_index..])
         .context()?;
     output.write_all(&mut lh.rinfo.garbage_data).context()?;
+    Ok(())
+}
+
+/// The thread function for progressive decoding.
+///
+/// Progressive encoding runs multiple passes on the same image data,
+/// so we can only calculate the set of images in parallel, and then
+/// merge them together into a single image that the progressive JPEG
+/// writer can use to write out the full progressive scan data.
+fn progressive_decoding_thread(
+    reader: &mut MultiplexReader,
+    features: &EnabledFeatures,
+    qt: &[QuantizationTables],
+    thread_handoff: &ThreadHandoff,
+    jpeg_header: &JpegHeader,
+    rinfo: &ReconstructionInfo,
+    is_last_thread: bool,
+    sender: &Sender<Result<(Metrics, Vec<BlockBasedImage>)>>,
+) -> Result<()> {
+    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+
+    let (mut metrics, image_data) = lepton_decode_row_range(
+        qt,
+        jpeg_header,
+        &rinfo.truncate_components,
+        reader,
+        thread_handoff.luma_y_start,
+        thread_handoff.luma_y_end,
+        is_last_thread,
+        true,
+        features,
+    )?;
+
+    metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+    sender.send(Ok((metrics, image_data)))?;
+
+    Ok(())
+}
+
+/// The thread function for baseline decoding.
+///
+/// Baseline encoding can do both the image decoding and JPEG writing in parallel.
+/// Each thread decodes its own segment and writes out the JPEG data bytes for that segment.
+fn baseline_decoding_thread(
+    reader: &mut MultiplexReader,
+    features: &EnabledFeatures,
+    qt: &[QuantizationTables],
+    thread_handoff: &ThreadHandoff,
+    jpeg_header: &JpegHeader,
+    rinfo: &ReconstructionInfo,
+    is_last_thread: bool,
+    sender: &Sender<Result<(Metrics, Vec<u8>)>>,
+) -> Result<()> {
+    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+
+    let (mut metrics, image_data) = lepton_decode_row_range(
+        qt,
+        jpeg_header,
+        &rinfo.truncate_components,
+        reader,
+        thread_handoff.luma_y_start,
+        thread_handoff.luma_y_end,
+        is_last_thread,
+        true,
+        features,
+    )?;
+
+    let restart_info = RestartSegmentCodingInfo {
+        overhang_byte: thread_handoff.overhang_byte,
+        num_overhang_bits: thread_handoff.num_overhang_bits,
+        luma_y_start: thread_handoff.luma_y_start,
+        luma_y_end: thread_handoff.luma_y_end,
+        last_dc: thread_handoff.last_dc,
+    };
+
+    let mut result_buffer = jpeg_write_baseline_row_range(
+        thread_handoff.segment_size as usize,
+        &restart_info,
+        &image_data,
+        &jpeg_header,
+        &rinfo,
+    )
+    .context()?;
+
+    #[cfg(feature = "detailed_tracing")]
+    info!(
+        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
+        thread_handoff.luma_y_start,
+        thread_handoff.segment_size,
+        result_buffer.len(),
+        thread_handoff.segment_offset_in_file,
+        thread_handoff.overhang_byte,
+        thread_handoff.num_overhang_bits
+    );
+
+    if result_buffer.len() > thread_handoff.segment_size as usize {
+        warn!("warning: truncating segment");
+        result_buffer.resize(thread_handoff.segment_size as usize, 0);
+    }
+
+    metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+    sender.send(Ok((metrics, result_buffer)))?;
+
     Ok(())
 }
 
