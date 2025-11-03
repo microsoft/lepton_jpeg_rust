@@ -99,9 +99,26 @@ pub fn decode_lepton_file_image<R: BufRead>(
         &enabled_features,
         4,
         thread_pool,
-        |_thread_handoff, image_data, _, _| {
-            // just return the image data directly to be merged together
-            return Ok(image_data);
+        |reader, features, qt, thread_handoff, jpeg_header, rinfo, is_last_thread, sender| {
+            let cpu_time = CpuTimeMeasure::new();
+
+            let (mut metrics, image_data) = lepton_decode_row_range(
+                qt,
+                jpeg_header,
+                &rinfo.truncate_components,
+                reader,
+                thread_handoff.luma_y_start,
+                thread_handoff.luma_y_end,
+                is_last_thread,
+                true,
+                features,
+            )?;
+
+            metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+            sender.send(Ok((metrics, image_data)))?;
+
+            Ok(())
         },
     )
     .context()?;
@@ -504,9 +521,34 @@ impl<'a> LeptonFileReader<'a> {
                 enabled_features,
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
                 thread_pool,
-                |_thread_handoff, image_data, _, _| {
-                    // just return the image data directly to be merged together
-                    return Ok(image_data);
+                |reader,
+            features,
+            qt,
+            thread_handoff,
+            jpeg_header,
+            rinfo,
+            is_last_thread,
+            sender| {
+
+                let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+
+            let (mut metrics, image_data) = lepton_decode_row_range(
+                qt,
+                jpeg_header,
+                &rinfo.truncate_components,
+                reader,
+                thread_handoff.luma_y_start,
+                thread_handoff.luma_y_end,
+                is_last_thread,
+                true,
+                features,
+            )?;
+
+            metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+            sender.send(Ok((metrics, image_data)))?;
+
+            Ok(())
                 },
             )
             .context()?;
@@ -523,7 +565,28 @@ impl<'a> LeptonFileReader<'a> {
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
-                |thread_handoff, image_data, jpeg_header, rinfo| {
+                |reader,
+                 features,
+                 qt,
+                 thread_handoff,
+                 jpeg_header,
+                 rinfo,
+                 is_last_thread,
+                 sender| {
+                    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+
+                    let (mut metrics, image_data) = lepton_decode_row_range(
+                        qt,
+                        jpeg_header,
+                        &rinfo.truncate_components,
+                        reader,
+                        thread_handoff.luma_y_start,
+                        thread_handoff.luma_y_end,
+                        is_last_thread,
+                        true,
+                        features,
+                    )?;
+
                     let restart_info = RestartSegmentCodingInfo {
                         overhang_byte: thread_handoff.overhang_byte,
                         num_overhang_bits: thread_handoff.num_overhang_bits,
@@ -557,7 +620,11 @@ impl<'a> LeptonFileReader<'a> {
                         result_buffer.resize(thread_handoff.segment_size as usize, 0);
                     }
 
-                    return Ok(result_buffer);
+                    metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+                    sender.send(Ok((metrics, result_buffer)))?;
+
+                    Ok(())
                 },
             )?;
             DecoderState::ScanBaseline(mux)
@@ -592,11 +659,15 @@ impl<'a> LeptonFileReader<'a> {
         retention_bytes: usize,
         thread_pool: &dyn LeptonThreadPool,
         process: fn(
+            reader: &mut MultiplexReader,
+            features: &EnabledFeatures,
+            qt: &[QuantizationTables],
             thread_handoff: &ThreadHandoff,
-            image_data: Vec<BlockBasedImage>,
             jpeg_header: &JpegHeader,
             rinfo: &ReconstructionInfo,
-        ) -> Result<P>,
+            is_last_thread: bool,
+            sender: &Sender<Result<(Metrics, P)>>,
+        ) -> Result<()>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
         let qt = QuantizationTables::construct_quantization_tables(&lh.jpeg_header)?;
 
@@ -613,81 +684,20 @@ impl<'a> LeptonFileReader<'a> {
             retention_bytes,
             features.max_threads as usize,
             move |thread_id, reader, result_tx| {
-                Self::run_lepton_decoder_processor(
-                    &jpeg_header,
-                    &rinfo,
-                    &thread_handoff[thread_id],
-                    thread_id == thread_handoff.len() - 1,
-                    &qt,
+                process(
                     reader,
                     &features,
-                    process,
+                    &qt,
+                    &thread_handoff[thread_id],
+                    &jpeg_header,
+                    &rinfo,
+                    thread_id == thread_handoff.len() - 1,
                     result_tx,
                 )
             },
         );
 
         Ok(multiplex_reader_state)
-    }
-
-    /// the logic of a decoder thread. Takes a range of rows
-    fn run_lepton_decoder_processor<P>(
-        jpeg_header: &JpegHeader,
-        rinfo: &ReconstructionInfo,
-        thread_handoff: &ThreadHandoff,
-        is_last_thread: bool,
-        qt: &[QuantizationTables],
-        reader: &mut MultiplexReader,
-        features: &EnabledFeatures,
-        process: fn(
-            &ThreadHandoff,
-            Vec<BlockBasedImage>,
-            &JpegHeader,
-            &ReconstructionInfo,
-        ) -> Result<P>,
-        result_send: &Sender<Result<(Metrics, P)>>,
-    ) -> Result<()> {
-        let cpu_time = CpuTimeMeasure::new();
-
-        let mut image_data = Vec::new();
-        for i in 0..jpeg_header.cmpc {
-            image_data.push(BlockBasedImage::new(
-                &jpeg_header,
-                i,
-                thread_handoff.luma_y_start,
-                if is_last_thread {
-                    // if this is the last thread, then the image should extend all the way to the bottom
-                    jpeg_header.cmp_info[0].bcv
-                } else {
-                    thread_handoff.luma_y_end
-                },
-            )?);
-        }
-
-        let mut metrics = Metrics::default();
-
-        metrics.merge_from(
-            lepton_decode_row_range(
-                &qt,
-                &rinfo.truncate_components,
-                &mut image_data,
-                reader,
-                thread_handoff.luma_y_start,
-                thread_handoff.luma_y_end,
-                is_last_thread,
-                true,
-                &features,
-            )
-            .context()?,
-        );
-
-        let process_result = process(thread_handoff, image_data, jpeg_header, rinfo)?;
-
-        metrics.record_cpu_worker_time(cpu_time.elapsed());
-
-        result_send.send(Ok((metrics, process_result)))?;
-
-        Ok(())
     }
 }
 

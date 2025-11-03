@@ -16,6 +16,7 @@ use crate::consts::UNZIGZAG_49_TR;
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::u16_bit_length;
 use crate::jpeg::block_based_image::{AlignedBlock, BlockBasedImage};
+use crate::jpeg::jpeg_header::JpegHeader;
 use crate::jpeg::row_spec::RowSpec;
 use crate::jpeg::truncate_components::*;
 use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
@@ -32,17 +33,22 @@ use crate::structs::vpx_bool_reader::VPXBoolReader;
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_decode_row_range<R: Read>(
     qt: &[QuantizationTables],
+    jpeg_header: &JpegHeader,
     trunc: &TruncateComponents,
-    image_data: &mut [BlockBasedImage],
     reader: &mut R,
     min_y: u32,
     max_y: u32,
     is_last_thread: bool,
     full_file_compression: bool,
     features: &EnabledFeatures,
-) -> Result<Metrics> {
+) -> Result<(Metrics, Vec<BlockBasedImage>)> {
     let component_size_in_blocks = trunc.get_component_sizes_in_blocks();
     let max_coded_heights = trunc.get_max_coded_heights();
+
+    let mut image_data = Vec::new();
+    for i in 0..jpeg_header.cmpc {
+        image_data.push(BlockBasedImage::new(&jpeg_header, i, min_y, max_y)?);
+    }
 
     let mut is_top_row = Vec::new();
     let mut neighbor_summary_cache = Vec::new();
@@ -118,7 +124,7 @@ pub fn lepton_decode_row_range<R: Read>(
         )
         .context()?;
     }
-    Ok(bool_reader.drain_stats())
+    Ok((bool_reader.drain_stats(), image_data))
 }
 
 #[inline(never)] // don't inline so that the profiler can get proper data
