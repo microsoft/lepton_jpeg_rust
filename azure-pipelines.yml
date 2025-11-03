@@ -69,13 +69,13 @@ extends:
                     mergeTestResults: true
 
                 - script: |
-                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE/CETCOMPAT
+                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE -Clink-args=/CETCOMPAT
                     cargo build --workspace --locked --release 2>&1
                     copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
                     copy target\release\lepton_jpeg.pdb target\release\lepton_jpeg_avx2.pdb
                     copy target\release\lepton_jpeg_util.exe target\release\lepton_jpeg_util_avx2.exe
                     copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
-                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE/CETCOMPAT
+                    set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE -Clink-args=/CETCOMPAT
                     cargo build --workspace --locked --release 2>&1
 
                   displayName: 'Build Release'

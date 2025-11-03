@@ -12,6 +12,7 @@
 ///
 /// No unsafe code is used.
 use std::{
+    cell::LazyCell,
     sync::{
         Arc, LazyLock, Mutex,
         mpsc::{Sender, channel},
@@ -27,6 +28,26 @@ pub trait LeptonThreadPool {
     /// Runs a closure on a thread from the thread pool. The thread
     /// thread lifetime is not specified, so it can must be static.
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>);
+}
+
+/// Holds either a reference to a LeptonThreadPool or an owned Box<dyn LeptonThreadPool>.
+///
+/// This is useful for APIs that want to accept either a reference to a static or global thread pool
+/// or an owned thread pool.
+pub enum ThreadPoolHolder<'a> {
+    /// Reference to a LeptonThreadPool
+    Dyn(&'a dyn LeptonThreadPool),
+    /// Owned Box<dyn LeptonThreadPool>
+    Owned(Box<dyn LeptonThreadPool>),
+}
+
+impl LeptonThreadPool for ThreadPoolHolder<'_> {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
+        match self {
+            ThreadPoolHolder::Dyn(p) => p.run(f),
+            ThreadPoolHolder::Owned(p) => p.run(f),
+        }
+    }
 }
 
 /// Priority levels for threads in the thread pool.
@@ -150,4 +171,39 @@ fn test_threadpool() {
     }
 
     println!("Idle threads: {}", DEFAULT_THREAD_POOL.get_idle_threads());
+}
+
+/// single thread pool that creates just one threadpool thread
+/// useful for benchmarks to measure total end-to-end runtime
+///
+/// Note that the thread is not created until the first job is run.
+/// The thread will be destroyed when this object is dropped.
+pub struct SingleThreadPool {
+    sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
+}
+
+impl Default for SingleThreadPool {
+    fn default() -> Self {
+        let sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>> =
+            LazyCell::new(|| {
+                let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
+
+                // runs a single thread in our thread pool that processes all the requests
+                DEFAULT_THREAD_POOL.run(Box::new(move || {
+                    for job in rx {
+                        job();
+                    }
+                }));
+
+                tx
+            });
+
+        SingleThreadPool { sender }
+    }
+}
+
+impl LeptonThreadPool for SingleThreadPool {
+    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
+        self.sender.send(f).unwrap();
+    }
 }

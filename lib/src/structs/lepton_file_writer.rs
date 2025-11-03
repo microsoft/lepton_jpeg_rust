@@ -380,7 +380,7 @@ fn get_number_of_threads_for_encoding(
 mod tests {
     use super::*;
 
-    use crate::{DEFAULT_THREAD_POOL, read_file};
+    use crate::{DEFAULT_THREAD_POOL, helpers::read_file};
 
     #[test]
     fn test_get_git_revision() {

@@ -135,6 +135,22 @@ pub fn get_rand_from_seed(seed: [u8; 32]) -> rand_chacha::ChaCha12Rng {
     ChaCha12Rng::from_seed(seed)
 }
 
+/// reads a file from the images directory for testing or benchmarking purposes
+#[cfg(any(test, feature = "micro_benchmark"))]
+pub fn read_file(filename: &str, ext: &str) -> Vec<u8> {
+    use std::io::Read;
+
+    let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
+        .join("images")
+        .join(filename.to_owned() + ext);
+    let mut f = std::fs::File::open(filename).unwrap();
+
+    let mut content = Vec::new();
+    f.read_to_end(&mut content).unwrap();
+
+    content
+}
+
 /*
 better way to update aritmetic encoding without using special division
 

@@ -1,0 +1,65 @@
+name: Publish Wheels
+
+permissions:
+  contents: read
+  
+on:
+  push:
+    tags:
+      - "v*.*.*"  # Triggers only for version tag pushes
+
+jobs:
+  build:
+    name: Build and upload wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable    
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create virtual environment
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi          
+          python -m pip install --upgrade pip maturin
+
+      - name: Build wheel
+        shell: bash
+        run: |
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi
+
+          cd python
+          maturin build --release
+
+      - name: Upload to TestPyPI
+        shell: bash
+        run: |
+          if [ -f ".venv/bin/activate" ]; then
+              source .venv/bin/activate
+          else
+              source .venv/Scripts/activate
+          fi
+
+          cd python
+          maturin upload --skip-existing $GITHUB_WORKSPACE/target/wheels/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}  
