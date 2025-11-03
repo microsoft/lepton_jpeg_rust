@@ -4,7 +4,8 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::io::{BufRead, Cursor, Write};
+use std::collections::VecDeque;
+use std::io::{BufRead, Cursor, Read, Write};
 use std::mem;
 use std::sync::mpsc::Sender;
 
@@ -47,13 +48,16 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     let mut decoder =
         LeptonFileReader::new(enabled_features.clone(), ThreadPoolHolder::Dyn(thread_pool));
 
-    let mut done = false;
-    while !done {
+    loop {
         let buffer = reader.fill_buf().context()?;
 
-        done = decoder
+        decoder
             .process_buffer(buffer, buffer.len() == 0, writer)
             .context()?;
+
+        if buffer.len() == 0 {
+            break;
+        }
 
         let amt = buffer.len();
         reader.consume(amt);
@@ -167,6 +171,36 @@ impl<W: Write> Write for LimitedOutputWriter<'_, W> {
     }
 }
 
+/// Writes to a fixed size output buffer and queues up any extra data
+/// that doesn't fit and writes it out first on the next call.
+struct FixedBufferOuputWriter<'a> {
+    amount_written: usize,
+    output_buffer: &'a mut [u8],
+    extra_queue: &'a mut VecDeque<u8>,
+}
+
+impl Write for FixedBufferOuputWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let amount_for_output = buf
+            .len()
+            .min(self.output_buffer.len() - self.amount_written);
+
+        self.output_buffer[self.amount_written..self.amount_written + amount_for_output]
+            .copy_from_slice(&buf[..amount_for_output]);
+        self.amount_written += amount_for_output;
+
+        if amount_for_output < buf.len() {
+            self.extra_queue.extend(&buf[amount_for_output..]);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // nothing to do since we don't buffer anything
+        Ok(())
+    }
+}
+
 /// This is the state machine for the decoder for reading lepton files. The
 /// data is pushed into the state machine and processed in chuncks. Once
 /// the calculations are done the data is retrieved from the output buffers.
@@ -202,26 +236,19 @@ impl<'a> LeptonFileReader<'a> {
     /// If the input is complete, then input_complete should be set to true.
     ///
     /// Any available output is written to the output buffer, which can be zero if the
-    /// input is not yet complete. Once the input has been marked as complete, then the
-    /// call will always return some data until the end of the file is reached, at which
-    /// it will return true.
+    /// input is not yet complete. Once the input has been marked as complete, the
+    /// call will return all remaining output.
     ///
     /// # Arguments
     /// * `input` - The input buffer to process.
     /// * `input_complete` - True if the input is complete and no more data will be provided.
     /// * `writer` - The writer to write the output to.
-    /// * `output_buffer_size` - The maximum amount of output to write to the writer before returning.
-    ///
-    /// # Returns
-    ///
-    /// Returns true if the end of the file has been reached, otherwise false. If an error occurs
-    /// then an error code is returned and no further calls should be made.
     pub fn process_buffer(
         &mut self,
         in_buffer: &[u8],
         input_complete: bool,
         output: &mut impl Write,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
                 ExitCode::SyntaxError,
@@ -365,10 +392,43 @@ impl<'a> LeptonFileReader<'a> {
             }
         }
 
-        Ok(match self.state {
-            DecoderState::EOI => true,
-            _ => false,
-        })
+        Ok(())
+    }
+
+    /// Processes input data, writing output to the output buffer and any extra to the output_extra queue.
+    ///
+    /// This is necessary because in the unmanaged wrapper we cannot expand the buffer that was given to us,
+    /// so we have to write as much as we can to the output buffer and then queue up any extra data for next time.
+    ///
+    /// This avoids adding complexity to the main processing loop for dealing with the case where the output
+    /// buffer is too small.
+    ///
+    /// Returns a tuple (complete, amount_written) where complete is true if all output was written.
+    pub fn process_limited_buffer(
+        &mut self,
+        input: &[u8],
+        input_complete: bool,
+        output_buffer: &mut [u8],
+        output_extra: &mut VecDeque<u8>,
+    ) -> std::io::Result<(bool, usize)> {
+        // first write any extra data we have pending from last time
+        let mut amount_written = 0;
+        while amount_written < output_buffer.len() && output_extra.len() > 0 {
+            amount_written += output_extra
+                .read(&mut output_buffer[amount_written..])
+                .unwrap();
+        }
+
+        // now call process buffer with the remaining space
+        let mut w = FixedBufferOuputWriter {
+            amount_written,
+            output_buffer,
+            extra_queue: output_extra,
+        };
+
+        self.process_buffer(input, input_complete, &mut w)?;
+
+        Ok((input_complete && w.extra_queue.len() == 0, w.amount_written))
     }
 
     /// destructively reads the metrics

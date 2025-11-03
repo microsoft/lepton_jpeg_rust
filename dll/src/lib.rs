@@ -9,7 +9,7 @@
 
 use std::{
     collections::VecDeque,
-    io::{Cursor, Read, Write},
+    io::Cursor,
     sync::{
         LazyLock,
         atomic::{AtomicU32, Ordering},
@@ -389,72 +389,6 @@ pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_vo
     DecompressionContext::free(context);
 }
 
-struct LimitedOutputWriter<'a> {
-    amount_written: usize,
-    output_buffer: &'a mut [u8],
-    extra_queue: &'a mut VecDeque<u8>,
-}
-
-impl Write for LimitedOutputWriter<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let amount_for_output = buf
-            .len()
-            .min(self.output_buffer.len() - self.amount_written);
-
-        self.output_buffer[self.amount_written..self.amount_written + amount_for_output]
-            .copy_from_slice(&buf[..amount_for_output]);
-        self.amount_written += amount_for_output;
-
-        if amount_for_output < buf.len() {
-            self.extra_queue.extend(&buf[amount_for_output..]);
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        // nothing to do since we don't buffer anything
-        Ok(())
-    }
-}
-
-/// Processes input data, writing output to the output buffer and any extra to the output_extra queue.
-///
-/// This is necessary because in the unmanaged wrapper we cannot expand the buffer that was given to us,
-/// so we have to write as much as we can to the output buffer and then queue up any extra data for next time.
-///
-/// This avoids adding complexity to every ProcessBuffer implementation to handle the case where there is too
-/// much output to fit in the output buffer.
-///
-/// Returns a tuple (complete, amount_written) where complete is true if all output was written.
-pub fn process_limited_buffer(
-    process: &mut LeptonFileReader<'_>,
-    input: &[u8],
-    input_complete: bool,
-    output_buffer: &mut [u8],
-    output_extra: &mut VecDeque<u8>,
-) -> std::io::Result<(bool, usize)> {
-    // first write any extra data we have pending from last time
-    let mut amount_written = 0;
-    while amount_written < output_buffer.len() && output_extra.len() > 0 {
-        amount_written += output_extra
-            .read(&mut output_buffer[amount_written..])
-            .unwrap();
-    }
-
-    // now call process buffer with the remaining space
-    let mut w = LimitedOutputWriter {
-        amount_written,
-        output_buffer,
-        extra_queue: output_extra,
-    };
-    let done = process.process_buffer(input, input_complete, &mut w)?;
-
-    Ok((
-        input_complete && done && w.extra_queue.len() == 0,
-        w.amount_written,
-    ))
-}
-
 /// partially decompresses an image from a Lepton file.
 ///
 /// Returns -1 if more data is needed or if there is more data available, or 0 if done successfully.
@@ -478,8 +412,7 @@ pub unsafe extern "C" fn decompress_image(
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
-        let (done, size) = process_limited_buffer(
-            &mut context.internal,
+        let (done, size) = context.internal.process_limited_buffer(
             input,
             input_complete,
             output,
