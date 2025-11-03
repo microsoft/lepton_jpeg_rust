@@ -522,33 +522,33 @@ impl<'a> LeptonFileReader<'a> {
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
                 thread_pool,
                 |reader,
-            features,
-            qt,
-            thread_handoff,
-            jpeg_header,
-            rinfo,
-            is_last_thread,
-            sender| {
+                    features,
+                    qt,
+                    thread_handoff,
+                    jpeg_header,
+                    rinfo,
+                    is_last_thread,
+                    sender| {
 
-                let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+                    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
 
-            let (mut metrics, image_data) = lepton_decode_row_range(
-                qt,
-                jpeg_header,
-                &rinfo.truncate_components,
-                reader,
-                thread_handoff.luma_y_start,
-                thread_handoff.luma_y_end,
-                is_last_thread,
-                true,
-                features,
-            )?;
+                    let (mut metrics, image_data) = lepton_decode_row_range(
+                        qt,
+                        jpeg_header,
+                        &rinfo.truncate_components,
+                        reader,
+                        thread_handoff.luma_y_start,
+                        thread_handoff.luma_y_end,
+                        is_last_thread,
+                        true,
+                        features,
+                    )?;
 
-            metrics.record_cpu_worker_time(cpu_time.elapsed());
+                    metrics.record_cpu_worker_time(cpu_time.elapsed());
 
-            sender.send(Ok((metrics, image_data)))?;
+                    sender.send(Ok((metrics, image_data)))?;
 
-            Ok(())
+                    Ok(())
                 },
             )
             .context()?;
