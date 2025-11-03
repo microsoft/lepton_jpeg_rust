@@ -298,6 +298,15 @@ enum State {
     Block(u8, usize),
 }
 
+/// Given a number of threads, this function will create a multiplexed reader state that
+/// can be used to process incoming multiplexed data. The processor function is called
+/// on each thread with the thread_id and a blocking reader that it can use to read its own data.
+///
+/// Each processor is also given a sender channel that it can use to send back results or errors.
+/// Partial results can be sent back by sending multiple results before the end of file is reached.
+///
+/// The state object returned can be used to process incoming data and retrieve results/errors
+/// from the threads.
 pub fn multiplex_read<FN, RESULT>(
     num_threads: usize,
     thread_pool: &dyn LeptonThreadPool,
