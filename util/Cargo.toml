@@ -3,7 +3,7 @@ name = "lepton_jpeg_util"
 version = "0.5.5"
 edition = "2024"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
-rust-version = "1.85"
+rust-version = "1.89"
 
 [features]
 default = []
