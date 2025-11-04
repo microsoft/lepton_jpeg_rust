@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 # requires scoped threads, IsTerminal, let chains
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Rust port of the Lepton lossless JPEG compression library"
 readme = "../README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
@@ -28,7 +28,7 @@ bytemuck = "1"
 byteorder = "1.4"
 flate2 = "1.0"
 default-boxed = "0.2"
-wide = "0.7"
+wide = "0.8"
 log = "0.4"
 git-version = "0.3"
 
