@@ -46,6 +46,9 @@ struct RayonThreadPool {
 }
 
 impl LeptonThreadPool for RayonThreadPool {
+    fn max_parallelism(&self) -> usize {
+        NUM_THREADS.load(Ordering::SeqCst) as usize
+    }
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.pool.spawn(f);
     }
@@ -116,7 +119,7 @@ pub unsafe extern "C" fn WrapperCompressImage2(
 
         let mut features = EnabledFeatures::compat_lepton_vector_write();
         if number_of_threads > 0 {
-            features.max_threads = number_of_threads;
+            features.max_partitions = number_of_threads;
         }
 
         let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
@@ -228,7 +231,7 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
         };
 
         if number_of_threads > 0 {
-            enabled_features.max_threads = number_of_threads;
+            enabled_features.max_partitions = number_of_threads;
         }
 
         let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {

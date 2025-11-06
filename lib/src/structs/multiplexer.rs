@@ -128,7 +128,8 @@ impl<RESULT> ThreadResults<RESULT> {
 /// This output stream can be processed by multiple_read to get the data back, using the same number of threads.
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
-    num_threads: usize,
+    num_partitions: usize,
+    max_processor_threads: usize,
     thread_pool: &dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
@@ -144,7 +145,9 @@ where
 
     let arc_processor = Arc::new(Box::new(processor));
 
-    for thread_id in 0..num_threads {
+    let mut work: VecDeque<Box<dyn FnOnce() + Send>> = VecDeque::new();
+
+    for thread_id in 0..num_partitions {
         let (tx, rx) = channel();
 
         let mut thread_writer = MultiplexWriter {
@@ -155,7 +158,7 @@ where
 
         let processor_clone = arc_processor.clone();
 
-        let f = thread_results.send_results(move || {
+        let f = Box::new(thread_results.send_results(move || {
             let r = processor_clone(&mut thread_writer, thread_id)?;
 
             thread_writer.flush().context()?;
@@ -165,11 +168,15 @@ where
                 .send(Message::Eof(thread_id))
                 .context()?;
             Ok(r)
-        });
-
-        thread_pool.run(Box::new(f));
+        }));
+        work.push_back(f);
 
         packet_receivers.push(rx);
+    }
+
+    if thread_pool.max_parallelism() > 1 {
+        spawn_processor_threads(thread_pool, max_processor_threads, work);
+        work = VecDeque::new();
     }
 
     // now we have all the threads running, we can write the data to the writer
@@ -206,6 +213,11 @@ where
             }
         }
     }
+
+    for f in work.drain(..) {
+        f();
+    }
+
     thread_results.receive_results()
 }
 
@@ -290,6 +302,7 @@ pub struct MultiplexReaderState<RESULT> {
     receiver_channels: Vec<Receiver<Result<RESULT>>>,
     retention_bytes: usize,
     current_state: State,
+    single_thread_work: Option<VecDeque<Box<dyn FnOnce() + Send>>>,
 }
 
 enum State {
@@ -308,10 +321,10 @@ enum State {
 /// The state object returned can be used to process incoming data and retrieve results/errors
 /// from the threads.
 pub fn multiplex_read<FN, RESULT>(
-    num_threads: usize,
+    num_partitions: usize,
+    max_processor_threads: usize,
     thread_pool: &dyn LeptonThreadPool,
     retention_bytes: usize,
-    max_processor_threads: usize,
     processor: FN,
 ) -> MultiplexReaderState<RESULT>
 where
@@ -329,7 +342,7 @@ where
     let mut work = VecDeque::new();
     let mut result_receiver = Vec::new();
 
-    for thread_id in 0..num_threads {
+    for thread_id in 0..num_partitions {
         let (tx, rx) = channel::<Message>();
         channel_to_sender.push(tx);
 
@@ -338,7 +351,7 @@ where
         let (result_tx, result_rx) = channel::<Result<RESULT>>();
         result_receiver.push(result_rx);
 
-        let f = move || {
+        let f: Box<dyn FnOnce() + Send> = Box::new(move || {
             // get the appropriate receiver so we can read out data from it
             let mut proc_reader = MultiplexReader {
                 thread_id: thread_id,
@@ -352,16 +365,40 @@ where
             {
                 let _ = result_tx.send(Err(e));
             }
-        };
+        });
 
         work.push_back(f);
     }
 
+    let single_thread_work = if thread_pool.max_parallelism() > 1 {
+        spawn_processor_threads(thread_pool, max_processor_threads, work);
+        None
+    } else {
+        Some(work)
+    };
+
+    MultiplexReaderState {
+        sender_channels: channel_to_sender,
+        receiver_channels: result_receiver,
+        current_state: State::StartBlock,
+        retention_bytes,
+        single_thread_work,
+    }
+}
+
+/// spawns the processor threads to handle the work items in the queue. There may be fewer workers
+/// than work items.
+fn spawn_processor_threads(
+    thread_pool: &dyn LeptonThreadPool,
+    max_processor_threads: usize,
+    work: VecDeque<Box<dyn FnOnce() + Send>>,
+) {
+    let work_threads = work.len().min(max_processor_threads);
     let shared_queue = Arc::new(Mutex::new(work));
 
     // spawn the worker threads to process all the items
     // (there may be less processor threads than the number of threads in the image)
-    for _i in 0..num_threads.min(max_processor_threads) {
+    for _i in 0..work_threads {
         let q = shared_queue.clone();
 
         thread_pool.run(Box::new(move || {
@@ -376,13 +413,6 @@ where
                 }
             }
         }));
-    }
-
-    MultiplexReaderState {
-        sender_channels: channel_to_sender,
-        receiver_channels: result_receiver,
-        current_state: State::StartBlock,
-        retention_bytes,
     }
 }
 
@@ -454,6 +484,15 @@ impl<RESULT> MultiplexReaderState<RESULT> {
             }
             self.sender_channels.clear();
 
+            // if we are running single threaded, now do all the work since we've buffered up everything
+            // and broken the sender channels, so there's no danger of deadlock
+            if let Some(single_thread_work) = self.single_thread_work.take() {
+                // run all the remaining work on this thread
+                for f in single_thread_work {
+                    f();
+                }
+            }
+
             // if we are complete, then walk through all the channels to get the first result
             while let Some(r) = self.receiver_channels.get_mut(0) {
                 match r.recv() {
@@ -486,19 +525,20 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
 #[cfg(test)]
 mod tests {
+    use byteorder::ReadBytesExt;
+
     use super::*;
-    use crate::DEFAULT_THREAD_POOL;
     use crate::lepton_error::{ExitCode, LeptonError};
+    use crate::{DEFAULT_THREAD_POOL, SingleThreadPool};
 
     /// simple end to end test that write the thread id and reads it back
     #[test]
     fn test_multiplex_end_to_end() {
-        use byteorder::ReadBytesExt;
-
         let mut output = Vec::new();
 
         let w = multiplex_write(
             &mut output,
+            10,
             10,
             &DEFAULT_THREAD_POOL,
             |writer, thread_id| -> Result<usize> {
@@ -513,13 +553,25 @@ mod tests {
 
         assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
+        for max_processor_threads in 1..=10 {
+            test_read(&output, &w, max_processor_threads);
+        }
+    }
+
+    fn test_read(output: &[u8], w: &[usize], max_processor_threads: usize) {
         let mut extra = Vec::new();
+        let single = SingleThreadPool::default();
 
         let mut multiplex_state = multiplex_read(
             10,
-            &DEFAULT_THREAD_POOL,
+            max_processor_threads,
+            if max_processor_threads == 1 {
+                // for a single thread we shouldn't spawn any threads
+                &single
+            } else {
+                &DEFAULT_THREAD_POOL
+            },
             0,
-            8,
             |thread_id, reader, result_tx: &Sender<Result<usize>>| {
                 for i in thread_id as u32..10000 {
                     let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
@@ -546,16 +598,16 @@ mod tests {
             r.push(res);
         }
 
-        assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(r[..], w[..]);
     }
 
     #[test]
     fn test_multiplex_read_error() {
         let mut multiplex_state = multiplex_read(
             10,
+            10,
             &DEFAULT_THREAD_POOL,
             0,
-            8,
             |_, _, _: &Sender<Result<()>>| -> Result<()> {
                 Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
             },
@@ -570,9 +622,9 @@ mod tests {
     fn test_multiplex_read_panic() {
         let mut multiplex_state = multiplex_read(
             10,
+            10,
             &DEFAULT_THREAD_POOL,
             0,
-            8,
             |_, _, _: &Sender<Result<()>>| -> Result<()> {
                 panic!();
             },
@@ -589,6 +641,7 @@ mod tests {
 
         let e: LeptonError = multiplex_write(
             &mut output,
+            10,
             10,
             &DEFAULT_THREAD_POOL,
             |_, thread_id| -> Result<usize> {
@@ -614,6 +667,7 @@ mod tests {
 
         let e: LeptonError = multiplex_write(
             &mut output,
+            10,
             10,
             &DEFAULT_THREAD_POOL,
             |_, thread_id| -> Result<usize> {

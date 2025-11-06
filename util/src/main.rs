@@ -167,7 +167,7 @@ Options:
         &mut pargs,
         "--threads",
         parse_u32,
-        &mut enabled_features.max_threads,
+        &mut enabled_features.max_partitions,
     )?;
 
     override_if(

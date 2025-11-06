@@ -72,7 +72,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
 pub fn decode_lepton_file_image<R: BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lh = LeptonHeader::default_boxed();
     let mut enabled_features = enabled_features.clone();
@@ -572,9 +572,9 @@ impl<'a> LeptonFileReader<'a> {
 
         let multiplex_reader_state = multiplex_read(
             thread_handoff.len(),
+            features.max_processor_threads as usize,
             thread_pool,
             retention_bytes,
-            features.max_threads as usize,
             move |thread_id, reader, result_tx| {
                 process(
                     reader,
