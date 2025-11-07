@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
     CpuTimeMeasure, DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonThreadPool,
-    LeptonThreadPriority, Metrics, SimpleThreadPool, decode_lepton, dump_jpeg, encode_lepton,
-    encode_lepton_verify,
+    LeptonThreadPriority, Metrics, SimpleThreadPool, StreamPosition, decode_lepton, dump_jpeg,
+    encode_lepton, encode_lepton_verify,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -91,6 +91,29 @@ impl From<std::io::Error> for UtilError {
     #[track_caller]
     fn from(e: std::io::Error) -> Self {
         UtilError(e.into())
+    }
+}
+
+struct RecordStreamPosition<W: Write> {
+    writer: W,
+    position: u64,
+}
+
+impl<W: Write> Write for RecordStreamPosition<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.writer.write(buf)?;
+        self.position += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+impl<W: Write> StreamPosition for RecordStreamPosition<W> {
+    fn position(&mut self) -> u64 {
+        self.position
     }
 }
 
@@ -279,7 +302,36 @@ Options:
             .into());
         }
 
-        std::io::stdin().read_to_end(&mut input_data)?;
+        // special case for piped input, stream output data as we process it instead of buffering it all
+        let mut data = Vec::new();
+        std::io::stdin().read_to_end(&mut data)?;
+
+        let mut cursor = Cursor::new(&data);
+
+        let mut output = RecordStreamPosition {
+            writer: std::io::stdout(),
+            position: 0,
+        };
+
+        match id_file_type(&data)? {
+            FileType::Jpeg => {
+                lepton_jpeg::encode_lepton(
+                    &mut cursor,
+                    &mut output,
+                    &enabled_features,
+                    thread_pool,
+                )?;
+            }
+            FileType::Lepton => {
+                lepton_jpeg::decode_lepton(
+                    &mut cursor,
+                    &mut output,
+                    &enabled_features,
+                    thread_pool,
+                )?;
+            }
+        }
+        return Ok(());
     } else {
         let mut file_in = File::open(filenames[0].as_os_str())
             .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string()))?;
@@ -299,17 +351,7 @@ Options:
     let mut current_iteration = 0;
 
     // see what file type we have
-    let file_type = if input_data[0] == 0xff && input_data[1] == 0xd8 {
-        FileType::Jpeg
-    } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
-        FileType::Lepton
-    } else {
-        return Err(LeptonError::new(
-            ExitCode::BadLeptonFile,
-            "ERROR input file is not a valid JPEG or Lepton file",
-        )
-        .into());
-    };
+    let file_type = id_file_type(&input_data)?;
 
     // get a writable version of the input data so we can corrupt it if the user wants to
     let mut writable_input_data = Cow::from(&input_data);
@@ -399,6 +441,20 @@ Options:
     }
 
     Ok(())
+}
+
+fn id_file_type(input_data: &[u8]) -> Result<FileType, LeptonError> {
+    Ok(if input_data[0] == 0xff && input_data[1] == 0xd8 {
+        FileType::Jpeg
+    } else if input_data[0] == 0xcf && input_data[1] == 0x84 {
+        FileType::Lepton
+    } else {
+        return Err(LeptonError::new(
+            ExitCode::BadLeptonFile,
+            "ERROR input file is not a valid JPEG or Lepton file",
+        )
+        .into());
+    })
 }
 
 /// randomly corrupts data if there is a seed
