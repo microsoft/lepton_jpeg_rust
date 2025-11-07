@@ -1,3 +1,12 @@
+//! Implements a multiplexer that reads and writes blocks to a stream from multiple partitions. Each
+//! partition can run on it own thread to allow for increased parallelism when processing large images.
+//!
+//! The write implementation identifies the blocks by partition_id and tries to write in 64K blocks. The file
+//! ends up with an interleaved stream of blocks from each partition.
+//!
+//! The read implementation reads the blocks from the file and sends them to the appropriate worker thread
+//! for the partition.
+
 use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
@@ -10,12 +19,6 @@ use byteorder::WriteBytesExt;
 use super::simple_threadpool::LeptonThreadPool;
 
 use crate::lepton_error::{AddContext, ExitCode, Result};
-/// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
-///
-/// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
-/// ends up with an interleaved stream of blocks from each thread.
-///
-/// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
 use crate::{helpers::*, lepton_error::err_exit_code, structs::partial_buffer::PartialBuffer};
 
 /// The message that is sent between the threads
@@ -25,7 +28,7 @@ enum Message {
 }
 
 pub struct MultiplexWriter {
-    thread_id: usize,
+    partition_id: usize,
     sender: Sender<Message>,
     buffer: Vec<u8>,
 }
@@ -59,7 +62,7 @@ impl Write for MultiplexWriter {
             swap(&mut new_buffer, &mut self.buffer);
 
             self.sender
-                .send(Message::WriteBlock(self.thread_id, new_buffer))
+                .send(Message::WriteBlock(self.partition_id, new_buffer))
                 .unwrap();
         }
         Ok(())
@@ -122,8 +125,8 @@ impl<RESULT> ThreadResults<RESULT> {
     }
 }
 
-/// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
-/// on each of them, and collect the output written by each thread to the writer in blocks identified by the thread_id.
+/// Given an arbitrary writer, this function will launch the given number of partitions and call the processor function
+/// on each of them, and collect the output written by each partition to the writer in blocks identified by the partition_id.
 ///
 /// This output stream can be processed by multiple_read to get the data back, using the same number of threads.
 pub fn multiplex_write<WRITE, FN, RESULT>(
@@ -147,11 +150,11 @@ where
 
     let mut work: VecDeque<Box<dyn FnOnce() + Send>> = VecDeque::new();
 
-    for thread_id in 0..num_partitions {
+    for partition_id in 0..num_partitions {
         let (tx, rx) = channel();
 
         let mut thread_writer = MultiplexWriter {
-            thread_id: thread_id,
+            partition_id,
             sender: tx,
             buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
         };
@@ -159,13 +162,13 @@ where
         let processor_clone = arc_processor.clone();
 
         let f = Box::new(thread_results.send_results(move || {
-            let r = processor_clone(&mut thread_writer, thread_id)?;
+            let r = processor_clone(&mut thread_writer, partition_id)?;
 
             thread_writer.flush().context()?;
 
             thread_writer
                 .sender
-                .send(Message::Eof(thread_id))
+                .send(Message::Eof(partition_id))
                 .context()?;
             Ok(r)
         }));
@@ -192,9 +195,9 @@ where
     let mut current_thread_writer = 0;
     loop {
         match packet_receivers[current_thread_writer].recv() {
-            Ok(Message::WriteBlock(thread_id, b)) => {
-                // block length and thread header
-                let tid = thread_id as u8;
+            Ok(Message::WriteBlock(partition_id, b)) => {
+                // block length and partition header
+                let tid = partition_id as u8;
                 let l = b.len() - 1;
                 if l == 4095 || l == 16383 || l == 65535 {
                     // length is a special power of 2 - standard block length is 2^16
@@ -225,11 +228,11 @@ where
 }
 
 /// Used by the processor thread to read data in a blocking way.
-/// The thread_id is used only to assert that we are only
+/// The partition_id is used only to assert that we are only
 /// getting the data that we are expecting.
 pub struct MultiplexReader {
     /// the multiplexed thread stream we are processing
-    thread_id: usize,
+    partition_id: usize,
 
     /// the receiver part of the channel to get more buffers
     receiver: Receiver<Message>,
@@ -275,7 +278,7 @@ impl MultiplexReader {
                     }
                     Message::WriteBlock(tid, block) => {
                         debug_assert_eq!(
-                            tid, self.thread_id,
+                            tid, self.partition_id,
                             "incoming thread must be equal to processing thread"
                         );
                         self.current_buffer = Cursor::new(block);
@@ -293,7 +296,7 @@ impl MultiplexReader {
 }
 
 /// Reads data in multiplexed format and sends it to the appropriate processor, each
-/// running on its own thread. The processor function is called with the thread_id and
+/// running on its own thread. The processor function is called with the partition_id and
 /// a blocking reader that it can use to read its own data.
 ///
 /// Once the multiplexed data is finished reading, we break the channel to the worker threads
@@ -316,7 +319,7 @@ enum State {
 
 /// Given a number of threads, this function will create a multiplexed reader state that
 /// can be used to process incoming multiplexed data. The processor function is called
-/// on each thread with the thread_id and a blocking reader that it can use to read its own data.
+/// on each thread with the partition_id and a blocking reader that it can use to read its own data.
 ///
 /// Each processor is also given a sender channel that it can use to send back results or errors.
 /// Partial results can be sent back by sending multiple results before the end of file is reached.
@@ -345,7 +348,7 @@ where
     let mut work = VecDeque::new();
     let mut result_receiver = Vec::new();
 
-    for thread_id in 0..num_partitions {
+    for partition_id in 0..num_partitions {
         let (tx, rx) = channel::<Message>();
         channel_to_sender.push(tx);
 
@@ -357,14 +360,14 @@ where
         let f: Box<dyn FnOnce() + Send> = Box::new(move || {
             // get the appropriate receiver so we can read out data from it
             let mut proc_reader = MultiplexReader {
-                thread_id: thread_id,
+                partition_id,
                 current_buffer: Cursor::new(Vec::new()),
                 receiver: rx,
                 end_of_file: false,
             };
 
             if let Err(e) =
-                catch_unwind_result(|| cloned_processor(thread_id, &mut proc_reader, &result_tx))
+                catch_unwind_result(|| cloned_processor(partition_id, &mut proc_reader, &result_tx))
             {
                 let _ = result_tx.send(Err(e));
             }
@@ -428,20 +431,20 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     if let Some(a) = source.take_n::<1>(self.retention_bytes) {
                         let thread_marker = a[0];
 
-                        let thread_id = thread_marker & 0xf;
+                        let partition_id = thread_marker & 0xf;
 
-                        if usize::from(thread_id) >= self.sender_channels.len() {
+                        if usize::from(partition_id) >= self.sender_channels.len() {
                             return err_exit_code(
                                 ExitCode::BadLeptonFile,
-                                format!("invalid thread_id {0}", thread_id),
+                                format!("invalid partition_id {0}", partition_id),
                             );
                         }
 
                         if thread_marker < 16 {
-                            self.current_state = State::U16Length(thread_id);
+                            self.current_state = State::U16Length(partition_id);
                         } else {
                             let flags = (thread_marker >> 4) & 3;
-                            self.current_state = State::Block(thread_id, 1024 << (2 * flags));
+                            self.current_state = State::Block(partition_id, 1024 << (2 * flags));
                         }
                     } else {
                         break;
@@ -457,12 +460,12 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         break;
                     }
                 }
-                State::Block(thread_id, data_length) => {
+                State::Block(partition_id, data_length) => {
                     if let Some(a) = source.take(data_length, self.retention_bytes) {
                         // ignore if we get error sending because channel died since we will collect
                         // the error later. We don't want to interrupt the other threads that are processing
                         // so we only get the error from the thread that actually errored out.
-                        let tid = usize::from(thread_id);
+                        let tid = usize::from(partition_id);
                         let _ = self.sender_channels[tid].send(Message::WriteBlock(tid, a));
                         self.current_state = State::StartBlock;
                     } else {
@@ -481,9 +484,9 @@ impl<RESULT> MultiplexReaderState<RESULT> {
     pub fn retrieve_result(&mut self, complete: bool) -> Result<Option<RESULT>> {
         if complete {
             // if we are complete, send eof to all threads
-            for thread_id in 0..self.sender_channels.len() {
+            for partition_id in 0..self.sender_channels.len() {
                 // send eof to all threads (ignore results since they might be dead already)
-                let _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
+                let _ = self.sender_channels[partition_id].send(Message::Eof(partition_id));
             }
             self.sender_channels.clear();
 
@@ -544,12 +547,12 @@ mod tests {
             10,
             10,
             &DEFAULT_THREAD_POOL,
-            |writer, thread_id| -> Result<usize> {
-                for i in thread_id as u32..10000 {
+            |writer, partition_id| -> Result<usize> {
+                for i in partition_id as u32..10000 {
                     writer.write_u32::<byteorder::LittleEndian>(i)?;
                 }
 
-                Ok(thread_id)
+                Ok(partition_id)
             },
         )
         .unwrap();
@@ -575,12 +578,12 @@ mod tests {
                 &DEFAULT_THREAD_POOL
             },
             0,
-            |thread_id, reader, result_tx: &Sender<Result<usize>>| {
-                for i in thread_id as u32..10000 {
-                    let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
-                    assert_eq!(read_thread_id, i);
+            |partition_id, reader, result_tx: &Sender<Result<usize>>| {
+                for i in partition_id as u32..10000 {
+                    let read_partition_id = reader.read_u32::<byteorder::LittleEndian>()?;
+                    assert_eq!(read_partition_id, i);
                 }
-                result_tx.send(Ok(thread_id))?;
+                result_tx.send(Ok(partition_id))?;
                 Ok(())
             },
         );
@@ -647,9 +650,9 @@ mod tests {
             10,
             10,
             &DEFAULT_THREAD_POOL,
-            |_, thread_id| -> Result<usize> {
-                if thread_id == 3 {
-                    // have one thread fail
+            |_, partition_id| -> Result<usize> {
+                if partition_id == 3 {
+                    // have one partition fail
                     Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
                 } else {
                     Ok(0)
@@ -673,8 +676,8 @@ mod tests {
             10,
             10,
             &DEFAULT_THREAD_POOL,
-            |_, thread_id| -> Result<usize> {
-                if thread_id == 5 {
+            |_, partition_id| -> Result<usize> {
+                if partition_id == 5 {
                     panic!();
                 }
                 Ok(0)
