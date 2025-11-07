@@ -174,9 +174,16 @@ where
         packet_receivers.push(rx);
     }
 
+    drop(arc_processor);
+
     if thread_pool.max_parallelism() > 1 {
         spawn_processor_threads(thread_pool, max_processor_threads, work);
-        work = VecDeque::new();
+    } else {
+        // single threaded, just run all the work inline, which will
+        // fill build up the receiver queue to write the image
+        for f in work.drain(..) {
+            f();
+        }
     }
 
     // now we have all the threads running, we can write the data to the writer
@@ -212,10 +219,6 @@ where
                 current_thread_writer = current_thread_writer % packet_receivers.len();
             }
         }
-    }
-
-    for f in work.drain(..) {
-        f();
     }
 
     thread_results.receive_results()

@@ -714,7 +714,7 @@ mod tests {
     use default_boxed::DefaultBoxed;
 
     use crate::{
-        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton,
+        DEFAULT_THREAD_POOL, EnabledFeatures, SingleThreadPool, decode_lepton,
         helpers::read_file,
         structs::{
             lepton_header::{FIXED_HEADER_SIZE, LeptonHeader},
@@ -815,6 +815,44 @@ mod tests {
     #[test]
     fn test_truncate4() {
         test_file("truncate4")
+    }
+
+    #[test]
+    fn test_decode_single_threaded() {
+        let filename = "iphone";
+        let file = read_file(filename, ".lep");
+        let original = read_file(filename, ".jpg");
+
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+        let mut output = Vec::new();
+        decode_lepton(
+            &mut Cursor::new(&file),
+            &mut output,
+            &enabled_features,
+            &SingleThreadPool::default(),
+        )
+        .unwrap();
+
+        assert_eq!(output.len(), original.len());
+        assert!(output == original);
+    }
+
+    #[test]
+    fn test_encode_single_threaded() {
+        let filename = "iphone";
+        let file = read_file(filename, ".jpg");
+
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+        let mut output = Vec::new();
+        crate::encode_lepton(
+            &mut Cursor::new(&file),
+            &mut Cursor::new(&mut output),
+            &enabled_features,
+            &SingleThreadPool::default(),
+        )
+        .unwrap();
     }
 
     fn test_file(filename: &str) {
