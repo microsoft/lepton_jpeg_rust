@@ -4,9 +4,10 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use std::cmp::min;
-use std::io::{BufRead, Cursor, Write};
+use std::collections::VecDeque;
+use std::io::{BufRead, Cursor, Read, Write};
 use std::mem;
+use std::sync::mpsc::Sender;
 
 use default_boxed::DefaultBoxed;
 #[cfg(feature = "detailed_tracing")]
@@ -22,7 +23,7 @@ use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
-use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState};
+use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState, multiplex_read};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::simple_threadpool::ThreadPoolHolder;
@@ -47,13 +48,16 @@ pub fn decode_lepton<R: BufRead, W: Write>(
     let mut decoder =
         LeptonFileReader::new(enabled_features.clone(), ThreadPoolHolder::Dyn(thread_pool));
 
-    let mut done = false;
-    while !done {
+    loop {
         let buffer = reader.fill_buf().context()?;
 
-        done = decoder
-            .process_buffer(buffer, buffer.len() == 0, writer, usize::MAX)
+        decoder
+            .process_buffer(buffer, buffer.len() == 0, writer)
             .context()?;
+
+        if buffer.len() == 0 {
+            break;
+        }
 
         let amt = buffer.len();
         reader.consume(amt);
@@ -68,7 +72,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
 pub fn decode_lepton_file_image<R: BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
-    thread_pool: &'static dyn LeptonThreadPool,
+    thread_pool: &dyn LeptonThreadPool,
 ) -> Result<(Box<LeptonHeader>, Vec<BlockBasedImage>)> {
     let mut lh = LeptonHeader::default_boxed();
     let mut enabled_features = enabled_features.clone();
@@ -95,12 +99,11 @@ pub fn decode_lepton_file_image<R: BufRead>(
         &enabled_features,
         4,
         thread_pool,
-        |_thread_handoff, image_data, _, _| {
-            // just return the image data directly to be merged together
-            return Ok(image_data);
-        },
+        progressive_decoding_thread,
     )
     .context()?;
+
+    let mut results = Vec::new();
 
     // process the rest of the file (except for the 4 byte EOF marker)
     let mut extra_buffer = Vec::new();
@@ -112,13 +115,14 @@ pub fn decode_lepton_file_image<R: BufRead>(
         }
         state.process_buffer(&mut PartialBuffer::new(b, &mut extra_buffer))?;
         reader.consume(b_len);
+
+        if let Some((_m, r)) = state.retrieve_result(false)? {
+            results.push(r);
+        }
     }
 
-    // run the threads first, since we need everything before we can start decoding
-    let mut results = Vec::new();
-
-    for (_metric, vec) in state.complete().context()? {
-        results.push(vec);
+    while let Some((_m, r)) = state.retrieve_result(true)? {
+        results.push(r);
     }
 
     // merge the corresponding components so that we get a single set of coefficient maps (since each thread did a piece of the work)
@@ -138,9 +142,60 @@ enum DecoderState {
     CMP(),
     ScanProgressive(MultiplexReaderState<(Metrics, Vec<BlockBasedImage>)>),
     ScanBaseline(MultiplexReaderState<(Metrics, Vec<u8>)>),
-    AppendTrailer(Vec<Vec<u8>>),
-    ReturnResults(usize, Vec<Vec<u8>>),
     EOI,
+}
+
+/// A writer that limits the amount of data written to a specified amount, silently truncating any excess data.
+///
+/// This is used to ensure that we do not write more data than the expected JPEG file size during decoding.
+struct LimitedOutputWriter<'a, W: Write> {
+    inner: &'a mut W,
+    amount_left: &'a mut u64,
+}
+
+impl<W: Write> Write for LimitedOutputWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let to_write = std::cmp::min(buf.len() as u64, *self.amount_left) as usize;
+        let written = self.inner.write(&buf[0..to_write])?;
+        *self.amount_left -= written as u64;
+
+        // always say we wrote everything, the goal here is to silently truncate
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Writes to a fixed size output buffer and queues up any extra data
+/// that doesn't fit and writes it out first on the next call.
+struct FixedBufferOuputWriter<'a> {
+    amount_written: usize,
+    output_buffer: &'a mut [u8],
+    extra_queue: &'a mut VecDeque<u8>,
+}
+
+impl Write for FixedBufferOuputWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let amount_for_output = buf
+            .len()
+            .min(self.output_buffer.len() - self.amount_written);
+
+        self.output_buffer[self.amount_written..self.amount_written + amount_for_output]
+            .copy_from_slice(&buf[..amount_for_output]);
+        self.amount_written += amount_for_output;
+
+        if amount_for_output < buf.len() {
+            self.extra_queue.extend(&buf[amount_for_output..]);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // nothing to do since we don't buffer anything
+        Ok(())
+    }
 }
 
 /// This is the state machine for the decoder for reading lepton files. The
@@ -153,6 +208,7 @@ pub struct LeptonFileReader<'a> {
     extra_buffer: Vec<u8>,
     metrics: Metrics,
     total_read_size: u64,
+    jpeg_file_size_left: u64,
     input_complete: bool,
     thread_pool: ThreadPoolHolder<'a>,
 }
@@ -168,6 +224,7 @@ impl<'a> LeptonFileReader<'a> {
             metrics: Metrics::default(),
             total_read_size: 0,
             input_complete: false,
+            jpeg_file_size_left: 0,
             thread_pool,
         }
     }
@@ -176,33 +233,30 @@ impl<'a> LeptonFileReader<'a> {
     /// If the input is complete, then input_complete should be set to true.
     ///
     /// Any available output is written to the output buffer, which can be zero if the
-    /// input is not yet complete. Once the input has been marked as complete, then the
-    /// call will always return some data until the end of the file is reached, at which
-    /// it will return true.
+    /// input is not yet complete. Once the input has been marked as complete, the
+    /// call will return all remaining output.
     ///
     /// # Arguments
     /// * `input` - The input buffer to process.
     /// * `input_complete` - True if the input is complete and no more data will be provided.
     /// * `writer` - The writer to write the output to.
-    /// * `output_buffer_size` - The maximum amount of output to write to the writer before returning.
-    ///
-    /// # Returns
-    ///
-    /// Returns true if the end of the file has been reached, otherwise false. If an error occurs
-    /// then an error code is returned and no further calls should be made.
     pub fn process_buffer(
         &mut self,
         in_buffer: &[u8],
         input_complete: bool,
         output: &mut impl Write,
-        mut output_max_size: usize,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if self.input_complete && in_buffer.len() > 0 {
             return err_exit_code(
                 ExitCode::SyntaxError,
                 "ERROR: input was marked as complete but more data was provided",
             );
         }
+
+        let mut limited_output = LimitedOutputWriter {
+            inner: output,
+            amount_left: &mut self.jpeg_file_size_left,
+        };
 
         self.total_read_size += in_buffer.len() as u64;
 
@@ -218,7 +272,9 @@ impl<'a> LeptonFileReader<'a> {
                                 &mut self.enabled_features,
                             )
                             .context()?;
+
                         self.state = DecoderState::CompressedHeader(compressed_header_size);
+                        *limited_output.amount_left = self.lh.jpeg_file_size.into();
                     }
                 }
                 DecoderState::CompressedHeader(compressed_length) => {
@@ -241,6 +297,7 @@ impl<'a> LeptonFileReader<'a> {
                             &self.lh,
                             &self.enabled_features,
                             &self.thread_pool,
+                            &mut limited_output,
                         )?;
                     }
                 }
@@ -252,82 +309,65 @@ impl<'a> LeptonFileReader<'a> {
                         Self::verify_eof_file_size(self.total_read_size, &mut in_buffer)?;
 
                         // complete the operation and merge the metrics
-                        let results =
-                            Self::merge_metrics(&mut self.metrics, state.complete().context()?);
+                        // progressive JPEGs cannot return partial results
+                        let mut results = Vec::new();
+                        while let Some((m, r)) = state.retrieve_result(true)? {
+                            self.metrics.merge_from(m);
 
-                        self.state = Self::process_progressive(
+                            results.push(r);
+                        }
+
+                        Self::process_progressive(
                             &mut self.lh,
                             &self.enabled_features,
                             results,
+                            &mut limited_output,
                         )?;
+
+                        self.state = DecoderState::EOI;
                     }
                 }
                 DecoderState::ScanBaseline(state) => {
                     state.process_buffer(&mut in_buffer)?;
 
+                    // baseline images can return partial results
+                    if let Some((m, r)) = state.retrieve_result(false)? {
+                        self.metrics.merge_from(m);
+                        limited_output.write_all(&r)?;
+                    }
+
                     if input_complete {
                         Self::verify_eof_file_size(self.total_read_size, &mut in_buffer)?;
 
-                        // complete the operation and merge the metrics
-                        let results =
-                            Self::merge_metrics(&mut self.metrics, state.complete().context()?);
+                        // once we've complete the input, block for all remaining results
+                        while let Some((m, r)) = state.retrieve_result(true)? {
+                            self.metrics.merge_from(m);
+                            limited_output.write_all(&r)?;
+                        }
 
-                        self.state = Self::process_baseline(&self.lh, results)?;
-                    }
-                }
-                DecoderState::AppendTrailer(results) => {
-                    // Blit any trailing header data.
-                    // Run this logic even if early_eof_encountered to be compatible with C++ version.
-                    results.push(
-                        self.lh.rinfo.raw_jpeg_header[self.lh.raw_jpeg_header_read_index..]
-                            .to_vec(),
-                    );
-                    results.push(mem::take(&mut self.lh.rinfo.garbage_data));
-
-                    // find the total size that we have generated
-                    let total_length = results.iter().map(|x| x.len()).sum::<usize>();
-
-                    // now go back and shorted the results if they are too long until we have
-                    // the correct size. This consolidates the truncation logic into a single place.
-                    // Multiple results could be truncated, so we need to loop
-                    // and remove the last result until we reach the limit.
-                    if total_length > self.lh.jpeg_file_size as usize {
-                        let mut amount_to_remove = total_length - self.lh.jpeg_file_size as usize;
-                        while amount_to_remove > 0 {
-                            if let Some(last) = results.last_mut() {
-                                if last.len() <= amount_to_remove {
-                                    amount_to_remove -= last.len();
-                                    results.pop();
-                                } else {
-                                    last.truncate(last.len() - amount_to_remove);
-                                    amount_to_remove = 0;
-                                }
+                        // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
+                        // Run this logic even if early_eof_encountered to be compatible with C++ version.
+                        //
+                        // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
+                        // data to store any extra RST codes or whatever else might be at the end of the file.
+                        if self.lh.rinfo.rst_err.len() > 0 {
+                            let cumulative_reset_markers = if self.lh.jpeg_header.rsti != 0 {
+                                (self.lh.jpeg_header.mcuc - 1) / self.lh.jpeg_header.rsti
                             } else {
-                                break; // no more results to remove.
+                                0
+                            } as u8;
+
+                            for i in 0..self.lh.rinfo.rst_err[0] {
+                                let rst = jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7);
+
+                                limited_output.write_all(&[0xff, rst])?;
                             }
                         }
+
+                        write_tail(&mut self.lh, &mut limited_output)?;
+
+                        self.state = DecoderState::EOI;
                     }
-
-                    self.state = DecoderState::ReturnResults(0, mem::take(results));
-                }
-                DecoderState::ReturnResults(offset, leftover) => {
-                    while output_max_size > 0 {
-                        let bytes_to_write = min(output_max_size, leftover[0].len() - *offset);
-                        output.write_all(&leftover[0][*offset..*offset + bytes_to_write])?;
-                        *offset += bytes_to_write;
-                        output_max_size -= bytes_to_write;
-
-                        if *offset == leftover[0].len() {
-                            leftover.remove(0);
-                            *offset = 0;
-
-                            if leftover.len() == 0 {
-                                self.state = DecoderState::EOI;
-                                break;
-                            }
-                        }
-                    }
-                    break;
                 }
                 DecoderState::EOI => {
                     break;
@@ -338,9 +378,7 @@ impl<'a> LeptonFileReader<'a> {
         if input_complete {
             self.input_complete = true;
             match self.state {
-                DecoderState::AppendTrailer(..)
-                | DecoderState::ReturnResults(..)
-                | DecoderState::EOI => {
+                DecoderState::EOI => {
                     // all good, we don't need any more data to continue decoding
                 }
                 _ => {
@@ -351,10 +389,43 @@ impl<'a> LeptonFileReader<'a> {
             }
         }
 
-        Ok(match self.state {
-            DecoderState::EOI => true,
-            _ => false,
-        })
+        Ok(())
+    }
+
+    /// Processes input data, writing output to the output buffer and any extra to the output_extra queue.
+    ///
+    /// This is necessary because in the unmanaged wrapper we cannot expand the buffer that was given to us,
+    /// so we have to write as much as we can to the output buffer and then queue up any extra data for next time.
+    ///
+    /// This avoids adding complexity to the main processing loop for dealing with the case where the output
+    /// buffer is too small.
+    ///
+    /// Returns a tuple (complete, amount_written) where complete is true if all output was written.
+    pub fn process_limited_buffer(
+        &mut self,
+        input: &[u8],
+        input_complete: bool,
+        output_buffer: &mut [u8],
+        output_extra: &mut VecDeque<u8>,
+    ) -> std::io::Result<(bool, usize)> {
+        // first write any extra data we have pending from last time
+        let mut amount_written = 0;
+        while amount_written < output_buffer.len() && output_extra.len() > 0 {
+            amount_written += output_extra
+                .read(&mut output_buffer[amount_written..])
+                .unwrap();
+        }
+
+        // now call process buffer with the remaining space
+        let mut w = FixedBufferOuputWriter {
+            amount_written,
+            output_buffer,
+            extra_queue: output_extra,
+        };
+
+        self.process_buffer(input, input_complete, &mut w)?;
+
+        Ok((input_complete && w.extra_queue.len() == 0, w.amount_written))
     }
 
     /// destructively reads the metrics
@@ -367,73 +438,39 @@ impl<'a> LeptonFileReader<'a> {
         &self.metrics
     }
 
-    fn process_baseline(lh: &LeptonHeader, mut results: Vec<Vec<u8>>) -> Result<DecoderState> {
-        let mut header = Vec::new();
-        header.write_all(&SOI)?;
-        header
-            .write_all(&lh.rinfo.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
-            .context()?;
-
-        results.insert(0, header);
-
-        // Injection of restart codes for RST errors supports JPEGs with trailing RSTs.
-        // Run this logic even if early_eof_encountered to be compatible with C++ version.
-        //
-        // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
-        // data to store any extra RST codes or whatever else might be at the end of the file.
-        if lh.rinfo.rst_err.len() > 0 {
-            let mut markers = Vec::new();
-
-            let cumulative_reset_markers = if lh.jpeg_header.rsti != 0 {
-                (lh.jpeg_header.mcuc - 1) / lh.jpeg_header.rsti
-            } else {
-                0
-            } as u8;
-
-            for i in 0..lh.rinfo.rst_err[0] {
-                let rst = jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7);
-                markers.push(0xFF);
-                markers.push(rst);
-            }
-
-            results.push(markers);
-        }
-
-        Ok(DecoderState::AppendTrailer(results))
-    }
-
     fn process_progressive(
         lh: &mut LeptonHeader,
         enabled_features: &EnabledFeatures,
         mut image_segments: Vec<Vec<BlockBasedImage>>,
-    ) -> Result<DecoderState> {
+        output: &mut impl Write,
+    ) -> Result<()> {
         let num_components = image_segments[0].len();
         let mut merged = Vec::new();
         for i in 0..num_components {
             merged.push(BlockBasedImage::merge(&mut image_segments, i).context()?);
         }
 
-        let mut header = Vec::new();
-        header.write_all(&SOI)?;
-        header
+        output.write_all(&SOI)?;
+        output
             .write_all(&lh.rinfo.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
             .context()?;
 
-        let mut results = Vec::new();
-        results.push(header);
         let mut scnc = 0;
 
         loop {
             // progressive JPEG consists of scans followed by headers
             let scan =
                 jpeg_write_entire_scan(&merged[..], &lh.jpeg_header, &lh.rinfo, scnc).context()?;
-            results.push(scan);
+
+            output.write_all(&scan).context()?;
 
             // read the next headers (DHT, etc) while mirroring it back to the writer
             let old_pos = lh.raw_jpeg_header_read_index;
             let result = lh.advance_next_header_segment(enabled_features).context()?;
 
-            results.push(lh.rinfo.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index].to_vec());
+            output
+                .write_all(&lh.rinfo.raw_jpeg_header[old_pos..lh.raw_jpeg_header_read_index])
+                .context()?;
 
             if !result {
                 break;
@@ -443,7 +480,9 @@ impl<'a> LeptonFileReader<'a> {
             scnc += 1;
         }
 
-        Ok(DecoderState::AppendTrailer(results))
+        write_tail(lh, output)?;
+
+        Ok(())
     }
 
     fn process_cmp(
@@ -451,6 +490,7 @@ impl<'a> LeptonFileReader<'a> {
         lh: &LeptonHeader,
         enabled_features: &EnabledFeatures,
         thread_pool: &dyn LeptonThreadPool,
+        output: &mut impl Write,
     ) -> Result<DecoderState> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
@@ -461,68 +501,26 @@ impl<'a> LeptonFileReader<'a> {
                 enabled_features,
                 4, /* retain the last 4 bytes for the very end, since that is the file size, and shouldn't be parsed */
                 thread_pool,
-                |_thread_handoff, image_data, _, _| {
-                    // just return the image data directly to be merged together
-                    return Ok(image_data);
-                },
+                progressive_decoding_thread,
             )
             .context()?;
 
             DecoderState::ScanProgressive(mux)
         } else {
+            output.write_all(&SOI)?;
+            output
+                .write_all(&lh.rinfo.raw_jpeg_header[0..lh.raw_jpeg_header_read_index])
+                .context()?;
+
             let mux = Self::run_lepton_decoder_threads(
                 &lh,
                 &enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
-                |thread_handoff, image_data, jpeg_header, rinfo| {
-                    let restart_info = RestartSegmentCodingInfo {
-                        overhang_byte: thread_handoff.overhang_byte,
-                        num_overhang_bits: thread_handoff.num_overhang_bits,
-                        luma_y_start: thread_handoff.luma_y_start,
-                        luma_y_end: thread_handoff.luma_y_end,
-                        last_dc: thread_handoff.last_dc,
-                    };
-
-                    let mut result_buffer = jpeg_write_baseline_row_range(
-                        thread_handoff.segment_size as usize,
-                        &restart_info,
-                        &image_data,
-                        &jpeg_header,
-                        &rinfo,
-                    )
-                    .context()?;
-
-                    #[cfg(feature = "detailed_tracing")]
-                    info!(
-                        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
-                        thread_handoff.luma_y_start,
-                        thread_handoff.segment_size,
-                        result_buffer.len(),
-                        thread_handoff.segment_offset_in_file,
-                        thread_handoff.overhang_byte,
-                        thread_handoff.num_overhang_bits
-                    );
-
-                    if result_buffer.len() > thread_handoff.segment_size as usize {
-                        warn!("warning: truncating segment");
-                        result_buffer.resize(thread_handoff.segment_size as usize, 0);
-                    }
-
-                    return Ok(result_buffer);
-                },
+                baseline_decoding_thread,
             )?;
             DecoderState::ScanBaseline(mux)
         })
-    }
-
-    fn merge_metrics<T>(metrics: &mut Metrics, r: Vec<(Metrics, Vec<T>)>) -> Vec<Vec<T>> {
-        let mut results = Vec::new();
-        for (metric, vec) in r {
-            metrics.merge_from(metric);
-            results.push(vec);
-        }
-        results
     }
 
     fn verify_eof_file_size(total_read_size: u64, in_buffer: &mut PartialBuffer<'_>) -> Result<()> {
@@ -553,11 +551,15 @@ impl<'a> LeptonFileReader<'a> {
         retention_bytes: usize,
         thread_pool: &dyn LeptonThreadPool,
         process: fn(
+            reader: &mut MultiplexReader,
+            features: &EnabledFeatures,
+            qt: &[QuantizationTables],
             thread_handoff: &ThreadHandoff,
-            image_data: Vec<BlockBasedImage>,
             jpeg_header: &JpegHeader,
             rinfo: &ReconstructionInfo,
-        ) -> Result<P>,
+            is_last_thread: bool,
+            sender: &Sender<Result<(Metrics, P)>>,
+        ) -> Result<()>,
     ) -> Result<MultiplexReaderState<(Metrics, P)>> {
         let qt = QuantizationTables::construct_quantization_tables(&lh.jpeg_header)?;
 
@@ -568,84 +570,140 @@ impl<'a> LeptonFileReader<'a> {
         let jpeg_header = lh.jpeg_header.clone();
         let rinfo = lh.rinfo.clone();
 
-        let multiplex_reader_state = MultiplexReaderState::new(
+        let multiplex_reader_state = multiplex_read(
             thread_handoff.len(),
+            features.max_processor_threads as usize,
             thread_pool,
             retention_bytes,
-            features.max_threads as usize,
-            move |thread_id, reader| -> Result<(Metrics, P)> {
-                Self::run_lepton_decoder_processor(
-                    &jpeg_header,
-                    &rinfo,
-                    &thread_handoff[thread_id],
-                    thread_id == thread_handoff.len() - 1,
-                    &qt,
+            move |thread_id, reader, result_tx| {
+                process(
                     reader,
                     &features,
-                    process,
+                    &qt,
+                    &thread_handoff[thread_id],
+                    &jpeg_header,
+                    &rinfo,
+                    thread_id == thread_handoff.len() - 1,
+                    result_tx,
                 )
             },
         );
 
         Ok(multiplex_reader_state)
     }
+}
 
-    /// the logic of a decoder thread. Takes a range of rows
-    fn run_lepton_decoder_processor<P>(
-        jpeg_header: &JpegHeader,
-        rinfo: &ReconstructionInfo,
-        thread_handoff: &ThreadHandoff,
-        is_last_thread: bool,
-        qt: &[QuantizationTables],
-        reader: &mut MultiplexReader,
-        features: &EnabledFeatures,
-        process: fn(
-            &ThreadHandoff,
-            Vec<BlockBasedImage>,
-            &JpegHeader,
-            &ReconstructionInfo,
-        ) -> Result<P>,
-    ) -> Result<(Metrics, P)> {
-        let cpu_time = CpuTimeMeasure::new();
+fn write_tail(lh: &mut LeptonHeader, output: &mut impl Write) -> Result<()> {
+    output
+        .write_all(&lh.rinfo.raw_jpeg_header[lh.raw_jpeg_header_read_index..])
+        .context()?;
+    output.write_all(&mut lh.rinfo.garbage_data).context()?;
+    Ok(())
+}
 
-        let mut image_data = Vec::new();
-        for i in 0..jpeg_header.cmpc {
-            image_data.push(BlockBasedImage::new(
-                &jpeg_header,
-                i,
-                thread_handoff.luma_y_start,
-                if is_last_thread {
-                    // if this is the last thread, then the image should extend all the way to the bottom
-                    jpeg_header.cmp_info[0].bcv
-                } else {
-                    thread_handoff.luma_y_end
-                },
-            )?);
-        }
+/// The thread function for progressive decoding.
+///
+/// Progressive encoding runs multiple passes on the same image data,
+/// so we can only calculate the set of images in parallel, and then
+/// merge them together into a single image that the progressive JPEG
+/// writer can use to write out the full progressive scan data.
+fn progressive_decoding_thread(
+    reader: &mut MultiplexReader,
+    features: &EnabledFeatures,
+    qt: &[QuantizationTables],
+    thread_handoff: &ThreadHandoff,
+    jpeg_header: &JpegHeader,
+    rinfo: &ReconstructionInfo,
+    is_last_thread: bool,
+    sender: &Sender<Result<(Metrics, Vec<BlockBasedImage>)>>,
+) -> Result<()> {
+    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
 
-        let mut metrics = Metrics::default();
+    let (mut metrics, image_data) = lepton_decode_row_range(
+        qt,
+        jpeg_header,
+        &rinfo.truncate_components,
+        reader,
+        thread_handoff.luma_y_start,
+        thread_handoff.luma_y_end,
+        is_last_thread,
+        true,
+        features,
+    )?;
 
-        metrics.merge_from(
-            lepton_decode_row_range(
-                &qt,
-                &rinfo.truncate_components,
-                &mut image_data,
-                reader,
-                thread_handoff.luma_y_start,
-                thread_handoff.luma_y_end,
-                is_last_thread,
-                true,
-                &features,
-            )
-            .context()?,
-        );
+    metrics.record_cpu_worker_time(cpu_time.elapsed());
 
-        let process_result = process(thread_handoff, image_data, jpeg_header, rinfo)?;
+    sender.send(Ok((metrics, image_data)))?;
 
-        metrics.record_cpu_worker_time(cpu_time.elapsed());
+    Ok(())
+}
 
-        Ok((metrics, process_result))
+/// The thread function for baseline decoding.
+///
+/// Baseline encoding can do both the image decoding and JPEG writing in parallel.
+/// Each thread decodes its own segment and writes out the JPEG data bytes for that segment.
+fn baseline_decoding_thread(
+    reader: &mut MultiplexReader,
+    features: &EnabledFeatures,
+    qt: &[QuantizationTables],
+    thread_handoff: &ThreadHandoff,
+    jpeg_header: &JpegHeader,
+    rinfo: &ReconstructionInfo,
+    is_last_thread: bool,
+    sender: &Sender<Result<(Metrics, Vec<u8>)>>,
+) -> Result<()> {
+    let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
+
+    let (mut metrics, image_data) = lepton_decode_row_range(
+        qt,
+        jpeg_header,
+        &rinfo.truncate_components,
+        reader,
+        thread_handoff.luma_y_start,
+        thread_handoff.luma_y_end,
+        is_last_thread,
+        true,
+        features,
+    )?;
+
+    let restart_info = RestartSegmentCodingInfo {
+        overhang_byte: thread_handoff.overhang_byte,
+        num_overhang_bits: thread_handoff.num_overhang_bits,
+        luma_y_start: thread_handoff.luma_y_start,
+        luma_y_end: thread_handoff.luma_y_end,
+        last_dc: thread_handoff.last_dc,
+    };
+
+    let mut result_buffer = jpeg_write_baseline_row_range(
+        thread_handoff.segment_size as usize,
+        &restart_info,
+        &image_data,
+        &jpeg_header,
+        &rinfo,
+    )
+    .context()?;
+
+    #[cfg(feature = "detailed_tracing")]
+    info!(
+        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
+        thread_handoff.luma_y_start,
+        thread_handoff.segment_size,
+        result_buffer.len(),
+        thread_handoff.segment_offset_in_file,
+        thread_handoff.overhang_byte,
+        thread_handoff.num_overhang_bits
+    );
+
+    if result_buffer.len() > thread_handoff.segment_size as usize {
+        warn!("warning: truncating segment");
+        result_buffer.resize(thread_handoff.segment_size as usize, 0);
     }
+
+    metrics.record_cpu_worker_time(cpu_time.elapsed());
+
+    sender.send(Ok((metrics, result_buffer)))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -656,7 +714,7 @@ mod tests {
     use default_boxed::DefaultBoxed;
 
     use crate::{
-        DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton,
+        DEFAULT_THREAD_POOL, EnabledFeatures, SingleThreadPool, decode_lepton,
         helpers::read_file,
         structs::{
             lepton_header::{FIXED_HEADER_SIZE, LeptonHeader},
@@ -757,6 +815,44 @@ mod tests {
     #[test]
     fn test_truncate4() {
         test_file("truncate4")
+    }
+
+    #[test]
+    fn test_decode_single_threaded() {
+        let filename = "iphone";
+        let file = read_file(filename, ".lep");
+        let original = read_file(filename, ".jpg");
+
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+        let mut output = Vec::new();
+        decode_lepton(
+            &mut Cursor::new(&file),
+            &mut output,
+            &enabled_features,
+            &SingleThreadPool::default(),
+        )
+        .unwrap();
+
+        assert_eq!(output.len(), original.len());
+        assert!(output == original);
+    }
+
+    #[test]
+    fn test_encode_single_threaded() {
+        let filename = "iphone";
+        let file = read_file(filename, ".jpg");
+
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+
+        let mut output = Vec::new();
+        crate::encode_lepton(
+            &mut Cursor::new(&file),
+            &mut Cursor::new(&mut output),
+            &enabled_features,
+            &SingleThreadPool::default(),
+        )
+        .unwrap();
     }
 
     fn test_file(filename: &str) {

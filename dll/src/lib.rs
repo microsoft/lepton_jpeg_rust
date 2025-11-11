@@ -8,6 +8,7 @@
 #![forbid(unused_crate_dependencies)]
 
 use std::{
+    collections::VecDeque,
     io::Cursor,
     sync::{
         LazyLock,
@@ -45,6 +46,9 @@ struct RayonThreadPool {
 }
 
 impl LeptonThreadPool for RayonThreadPool {
+    fn max_parallelism(&self) -> usize {
+        NUM_THREADS.load(Ordering::SeqCst) as usize
+    }
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.pool.spawn(f);
     }
@@ -115,7 +119,7 @@ pub unsafe extern "C" fn WrapperCompressImage2(
 
         let mut features = EnabledFeatures::compat_lepton_vector_write();
         if number_of_threads > 0 {
-            features.max_threads = number_of_threads;
+            features.max_partitions = number_of_threads;
         }
 
         let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
@@ -227,7 +231,7 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
         };
 
         if number_of_threads > 0 {
-            enabled_features.max_threads = number_of_threads;
+            enabled_features.max_partitions = number_of_threads;
         }
 
         let thread_pool: &dyn LeptonThreadPool = if flags & USE_RAYON_THREAD_POOL != 0 {
@@ -301,6 +305,7 @@ pub unsafe extern "C" fn get_version(
 struct DecompressionContext<'a> {
     magic: u32,
     internal: LeptonFileReader<'a>,
+    extra_data: VecDeque<u8>,
 }
 
 const MAGIC_DECOMRESSION_CONTEXT: u32 = 0xdec0de00;
@@ -325,6 +330,7 @@ impl<'a> DecompressionContext<'a> {
         let context = Box::new(Self {
             magic: MAGIC_DECOMRESSION_CONTEXT,
             internal,
+            extra_data: VecDeque::new(),
         });
 
         Box::into_raw(context) as *mut std::ffi::c_void
@@ -409,15 +415,14 @@ pub unsafe extern "C" fn decompress_image(
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
         let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
 
-        let mut writer = Cursor::new(output);
-        let done = context.internal.process_buffer(
+        let (done, size) = context.internal.process_limited_buffer(
             input,
             input_complete,
-            &mut writer,
-            output_buffer_size as usize,
+            output,
+            &mut context.extra_data,
         )?;
 
-        *result_size = writer.position().into();
+        *result_size = size as u64;
         Ok(done)
     }) {
         Ok(done) => {

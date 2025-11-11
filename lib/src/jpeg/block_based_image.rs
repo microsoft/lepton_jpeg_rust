@@ -312,7 +312,7 @@ impl AlignedBlock {
         /// counts a row of non-zero values in the 7x7 block
         #[inline(always)]
         fn count_non_zeros_7x7_row(v: i16x8) -> i16x8 {
-            !v.cmp_eq(i16x8::ZERO) & i16x8::new([0, 1, 1, 1, 1, 1, 1, 1])
+            !v.simd_eq(i16x8::ZERO) & i16x8::new([0, 1, 1, 1, 1, 1, 1, 1])
         }
 
         let mut sum = i16x8::ZERO;

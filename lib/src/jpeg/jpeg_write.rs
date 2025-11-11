@@ -374,10 +374,10 @@ pub(crate) fn encode_block_seq(
     // to efficiently skip zero blocks using trailing zero scan.
     let block_simd: &[i16x16; 4] = cast_ref(block.get_block());
 
-    let mut mask = (block_simd[0].cmp_eq(i16x16::ZERO).move_mask() as u64)
-        | ((block_simd[1].cmp_eq(i16x16::ZERO).move_mask() as u64) << 16)
-        | ((block_simd[2].cmp_eq(i16x16::ZERO).move_mask() as u64) << 32)
-        | ((block_simd[3].cmp_eq(i16x16::ZERO).move_mask() as u64) << 48);
+    let mut mask = (block_simd[0].simd_eq(i16x16::ZERO).to_bitmask() as u64)
+        | ((block_simd[1].simd_eq(i16x16::ZERO).to_bitmask() as u64) << 16)
+        | ((block_simd[2].simd_eq(i16x16::ZERO).to_bitmask() as u64) << 32)
+        | ((block_simd[3].simd_eq(i16x16::ZERO).to_bitmask() as u64) << 48);
 
     // abs value of all coefficients. Super fast to calculate here
     // for everything, even if it is zero and not needed.

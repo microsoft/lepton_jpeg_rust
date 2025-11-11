@@ -1,4 +1,4 @@
-use lepton_jpeg::{LeptonThreadPool, SingleThreadPool};
+use lepton_jpeg::{DEFAULT_THREAD_POOL, LeptonThreadPool, SingleThreadPool};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use std::io::Cursor;
@@ -17,6 +17,9 @@ struct RayonThreadPool {
 impl LeptonThreadPool for RayonThreadPool {
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.pool.spawn(f);
+    }
+    fn max_parallelism(&self) -> usize {
+        std::thread::available_parallelism().unwrap().get()
     }
 }
 
@@ -53,7 +56,7 @@ fn parse_config(
                 }
                 "max_partitions" => {
                     let val: u32 = value.extract()?;
-                    features.max_threads = val;
+                    features.max_partitions = val;
                 }
                 "max_jpeg_file_size" => {
                     let val: u32 = value.extract()?;
@@ -101,7 +104,7 @@ pub fn compress_bytes(
         match threads {
             ThreadOptions::SingleThread => &single,
             ThreadOptions::PerCpu => &RAYON_THREAD_POOL,
-            ThreadOptions::NoLimit => &lepton_jpeg::DEFAULT_THREAD_POOL,
+            ThreadOptions::NoLimit => &DEFAULT_THREAD_POOL,
         },
     )
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Compression failed: {}", e)))?;
@@ -128,7 +131,7 @@ pub fn decompress_bytes(
         match threads {
             ThreadOptions::SingleThread => &single,
             ThreadOptions::PerCpu => &RAYON_THREAD_POOL,
-            ThreadOptions::NoLimit => &lepton_jpeg::DEFAULT_THREAD_POOL,
+            ThreadOptions::NoLimit => &DEFAULT_THREAD_POOL,
         },
     )
     .map_err(|e| {

@@ -176,8 +176,10 @@ pub fn read_jpeg<R: BufRead + Seek>(
         );
     }
 
-    let merged_handoffs =
-        split_row_handoffs_to_threads(&thread_handoff[..], enabled_features.max_threads as usize);
+    let merged_handoffs = split_row_handoffs_to_threads(
+        &thread_handoff[..],
+        enabled_features.max_partitions as usize,
+    );
     lp.thread_handoff = merged_handoffs;
     lp.jpeg_file_size = (reader.stream_position().context()? - stream_start_position) as u32;
 
@@ -259,6 +261,7 @@ fn run_lepton_encoder_threads<W: Write>(
     let mut thread_results = multiplex_write(
         writer,
         thread_handoffs.len(),
+        features.max_processor_threads as usize,
         thread_pool,
         move |thread_writer, thread_id| {
             let cpu_time = CpuTimeMeasure::new();
@@ -399,7 +402,7 @@ mod tests {
         let original = read_file(filename, ".jpg");
 
         let mut enabled_features = EnabledFeatures::compat_lepton_vector_write();
-        enabled_features.max_threads = 2;
+        enabled_features.max_partitions = 2;
 
         let mut output = Vec::new();
 

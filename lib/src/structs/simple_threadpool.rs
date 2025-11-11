@@ -12,7 +12,6 @@
 ///
 /// No unsafe code is used.
 use std::{
-    cell::LazyCell,
     sync::{
         Arc, LazyLock, Mutex,
         mpsc::{Sender, channel},
@@ -25,6 +24,8 @@ use std::{
 /// but also requires the thread pool to be static, since we don't require the thread
 /// to return within a specific lifetime.
 pub trait LeptonThreadPool {
+    /// Returns the maximum parallelism supported by the thread pool.
+    fn max_parallelism(&self) -> usize;
     /// Runs a closure on a thread from the thread pool. The thread
     /// thread lifetime is not specified, so it can must be static.
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>);
@@ -42,6 +43,12 @@ pub enum ThreadPoolHolder<'a> {
 }
 
 impl LeptonThreadPool for ThreadPoolHolder<'_> {
+    fn max_parallelism(&self) -> usize {
+        match self {
+            ThreadPoolHolder::Dyn(p) => p.max_parallelism(),
+            ThreadPoolHolder::Owned(p) => p.max_parallelism(),
+        }
+    }
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         match self {
             ThreadPoolHolder::Dyn(p) => p.run(f),
@@ -145,6 +152,9 @@ pub static DEFAULT_THREAD_POOL: SimpleThreadPool =
     SimpleThreadPool::new(LeptonThreadPriority::Normal);
 
 impl LeptonThreadPool for SimpleThreadPool {
+    fn max_parallelism(&self) -> usize {
+        *NUM_CPUS
+    }
     fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
         self.execute(f);
     }
@@ -173,37 +183,15 @@ fn test_threadpool() {
     println!("Idle threads: {}", DEFAULT_THREAD_POOL.get_idle_threads());
 }
 
-/// single thread pool that creates just one threadpool thread
-/// useful for benchmarks to measure total end-to-end runtime
-///
-/// Note that the thread is not created until the first job is run.
-/// The thread will be destroyed when this object is dropped.
-pub struct SingleThreadPool {
-    sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>>,
-}
-
-impl Default for SingleThreadPool {
-    fn default() -> Self {
-        let sender: LazyCell<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>> =
-            LazyCell::new(|| {
-                let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
-
-                // runs a single thread in our thread pool that processes all the requests
-                DEFAULT_THREAD_POOL.run(Box::new(move || {
-                    for job in rx {
-                        job();
-                    }
-                }));
-
-                tx
-            });
-
-        SingleThreadPool { sender }
-    }
-}
+/// single thread pool that creates that doesn't create any threads
+#[derive(Default)]
+pub struct SingleThreadPool {}
 
 impl LeptonThreadPool for SingleThreadPool {
-    fn run(&self, f: Box<dyn FnOnce() + Send + 'static>) {
-        self.sender.send(f).unwrap();
+    fn max_parallelism(&self) -> usize {
+        1
+    }
+    fn run(&self, _f: Box<dyn FnOnce() + Send + 'static>) {
+        panic!("SingleThreadPool does not support run; execute directly instead");
     }
 }

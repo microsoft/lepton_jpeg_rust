@@ -1,3 +1,12 @@
+//! Implements a multiplexer that reads and writes blocks to a stream from multiple partitions. Each
+//! partition can run on it own thread to allow for increased parallelism when processing large images.
+//!
+//! The write implementation identifies the blocks by partition_id and tries to write in 64K blocks. The file
+//! ends up with an interleaved stream of blocks from each partition.
+//!
+//! The read implementation reads the blocks from the file and sends them to the appropriate worker thread
+//! for the partition.
+
 use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
@@ -10,12 +19,6 @@ use byteorder::WriteBytesExt;
 use super::simple_threadpool::LeptonThreadPool;
 
 use crate::lepton_error::{AddContext, ExitCode, Result};
-/// Implements a multiplexer that reads and writes blocks to a stream from multiple threads.
-///
-/// The write implementation identifies the blocks by thread_id and tries to write in 64K blocks. The file
-/// ends up with an interleaved stream of blocks from each thread.
-///
-/// The read implementation reads the blocks from the file and sends them to the appropriate worker thread.
 use crate::{helpers::*, lepton_error::err_exit_code, structs::partial_buffer::PartialBuffer};
 
 /// The message that is sent between the threads
@@ -25,7 +28,7 @@ enum Message {
 }
 
 pub struct MultiplexWriter {
-    thread_id: usize,
+    partition_id: usize,
     sender: Sender<Message>,
     buffer: Vec<u8>,
 }
@@ -59,7 +62,7 @@ impl Write for MultiplexWriter {
             swap(&mut new_buffer, &mut self.buffer);
 
             self.sender
-                .send(Message::WriteBlock(self.thread_id, new_buffer))
+                .send(Message::WriteBlock(self.partition_id, new_buffer))
                 .unwrap();
         }
         Ok(())
@@ -122,13 +125,14 @@ impl<RESULT> ThreadResults<RESULT> {
     }
 }
 
-/// Given an arbitrary writer, this function will launch the given number of threads and call the processor function
-/// on each of them, and collect the output written by each thread to the writer in blocks identified by the thread_id.
+/// Given an arbitrary writer, this function will launch the given number of partitions and call the processor function
+/// on each of them, and collect the output written by each partition to the writer in blocks identified by the partition_id.
 ///
 /// This output stream can be processed by multiple_read to get the data back, using the same number of threads.
 pub fn multiplex_write<WRITE, FN, RESULT>(
     writer: &mut WRITE,
-    num_threads: usize,
+    num_partitions: usize,
+    max_processor_threads: usize,
     thread_pool: &dyn LeptonThreadPool,
     processor: FN,
 ) -> Result<Vec<RESULT>>
@@ -144,32 +148,45 @@ where
 
     let arc_processor = Arc::new(Box::new(processor));
 
-    for thread_id in 0..num_threads {
+    let mut work: VecDeque<Box<dyn FnOnce() + Send>> = VecDeque::new();
+
+    for partition_id in 0..num_partitions {
         let (tx, rx) = channel();
 
         let mut thread_writer = MultiplexWriter {
-            thread_id: thread_id,
+            partition_id,
             sender: tx,
             buffer: Vec::with_capacity(WRITE_BUFFER_SIZE),
         };
 
         let processor_clone = arc_processor.clone();
 
-        let f = thread_results.send_results(move || {
-            let r = processor_clone(&mut thread_writer, thread_id)?;
+        let f = Box::new(thread_results.send_results(move || {
+            let r = processor_clone(&mut thread_writer, partition_id)?;
 
             thread_writer.flush().context()?;
 
             thread_writer
                 .sender
-                .send(Message::Eof(thread_id))
+                .send(Message::Eof(partition_id))
                 .context()?;
             Ok(r)
-        });
-
-        thread_pool.run(Box::new(f));
+        }));
+        work.push_back(f);
 
         packet_receivers.push(rx);
+    }
+
+    drop(arc_processor);
+
+    if thread_pool.max_parallelism() > 1 {
+        spawn_processor_threads(thread_pool, max_processor_threads, work);
+    } else {
+        // single threaded, just run all the work inline, which will
+        // fill build up the receiver queue to write the image
+        for f in work.drain(..) {
+            f();
+        }
     }
 
     // now we have all the threads running, we can write the data to the writer
@@ -178,9 +195,9 @@ where
     let mut current_thread_writer = 0;
     loop {
         match packet_receivers[current_thread_writer].recv() {
-            Ok(Message::WriteBlock(thread_id, b)) => {
-                // block length and thread header
-                let tid = thread_id as u8;
+            Ok(Message::WriteBlock(partition_id, b)) => {
+                // block length and partition header
+                let tid = partition_id as u8;
                 let l = b.len() - 1;
                 if l == 4095 || l == 16383 || l == 65535 {
                     // length is a special power of 2 - standard block length is 2^16
@@ -206,15 +223,16 @@ where
             }
         }
     }
+
     thread_results.receive_results()
 }
 
 /// Used by the processor thread to read data in a blocking way.
-/// The thread_id is used only to assert that we are only
+/// The partition_id is used only to assert that we are only
 /// getting the data that we are expecting.
 pub struct MultiplexReader {
     /// the multiplexed thread stream we are processing
-    thread_id: usize,
+    partition_id: usize,
 
     /// the receiver part of the channel to get more buffers
     receiver: Receiver<Message>,
@@ -260,7 +278,7 @@ impl MultiplexReader {
                     }
                     Message::WriteBlock(tid, block) => {
                         debug_assert_eq!(
-                            tid, self.thread_id,
+                            tid, self.partition_id,
                             "incoming thread must be equal to processing thread"
                         );
                         self.current_buffer = Cursor::new(block);
@@ -278,7 +296,7 @@ impl MultiplexReader {
 }
 
 /// Reads data in multiplexed format and sends it to the appropriate processor, each
-/// running on its own thread. The processor function is called with the thread_id and
+/// running on its own thread. The processor function is called with the partition_id and
 /// a blocking reader that it can use to read its own data.
 ///
 /// Once the multiplexed data is finished reading, we break the channel to the worker threads
@@ -287,9 +305,10 @@ impl MultiplexReader {
 /// of the results back to the caller.
 pub struct MultiplexReaderState<RESULT> {
     sender_channels: Vec<Sender<Message>>,
-    result_receiver: ThreadResults<RESULT>,
+    receiver_channels: Vec<Receiver<Result<RESULT>>>,
     retention_bytes: usize,
     current_state: State,
+    single_thread_work: Option<VecDeque<Box<dyn FnOnce() + Send>>>,
 }
 
 enum State {
@@ -298,76 +317,112 @@ enum State {
     Block(u8, usize),
 }
 
-impl<RESULT> MultiplexReaderState<RESULT> {
-    pub fn new<FN>(
-        num_threads: usize,
-        thread_pool: &dyn LeptonThreadPool,
-        retention_bytes: usize,
-        max_processor_threads: usize,
-        processor: FN,
-    ) -> MultiplexReaderState<RESULT>
-    where
-        FN: Fn(usize, &mut MultiplexReader) -> Result<RESULT> + Send + Sync + 'static,
-        RESULT: Send + 'static,
-    {
-        let arc_processor = Arc::new(Box::new(processor));
+/// Given a number of threads, this function will create a multiplexed reader state that
+/// can be used to process incoming multiplexed data. The processor function is called
+/// on each thread with the partition_id and a blocking reader that it can use to read its own data.
+///
+/// Each processor is also given a sender channel that it can use to send back results or errors.
+/// Partial results can be sent back by sending multiple results before the end of file is reached.
+///
+/// The state object returned can be used to process incoming data and retrieve results/errors
+/// from the threads.
+pub fn multiplex_read<FN, RESULT>(
+    num_partitions: usize,
+    max_processor_threads: usize,
+    thread_pool: &dyn LeptonThreadPool,
+    retention_bytes: usize,
+    processor: FN,
+) -> MultiplexReaderState<RESULT>
+where
+    FN: Fn(usize, &mut MultiplexReader, &Sender<Result<RESULT>>) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    RESULT: Send + 'static,
+{
+    let arc_processor = Arc::new(Box::new(processor));
 
-        let mut channel_to_sender = Vec::new();
+    let mut channel_to_sender = Vec::new();
 
-        // collect the worker threads in a queue so we can spawn them
-        let mut work = VecDeque::new();
-        let mut result_receiver = ThreadResults::new();
+    // collect the worker threads in a queue so we can spawn them
+    let mut work = VecDeque::new();
+    let mut result_receiver = Vec::new();
 
-        for thread_id in 0..num_threads {
-            let (tx, rx) = channel::<Message>();
-            channel_to_sender.push(tx);
+    for partition_id in 0..num_partitions {
+        let (tx, rx) = channel::<Message>();
+        channel_to_sender.push(tx);
 
-            let cloned_processor = arc_processor.clone();
+        let cloned_processor = arc_processor.clone();
 
-            let f = result_receiver.send_results(move || {
-                // get the appropriate receiver so we can read out data from it
-                let mut proc_reader = MultiplexReader {
-                    thread_id: thread_id,
-                    current_buffer: Cursor::new(Vec::new()),
-                    receiver: rx,
-                    end_of_file: false,
-                };
+        let (result_tx, result_rx) = channel::<Result<RESULT>>();
+        result_receiver.push(result_rx);
 
-                cloned_processor(thread_id, &mut proc_reader)
-            });
+        let f: Box<dyn FnOnce() + Send> = Box::new(move || {
+            // get the appropriate receiver so we can read out data from it
+            let mut proc_reader = MultiplexReader {
+                partition_id,
+                current_buffer: Cursor::new(Vec::new()),
+                receiver: rx,
+                end_of_file: false,
+            };
 
-            work.push_back(f);
-        }
+            if let Err(e) =
+                catch_unwind_result(|| cloned_processor(partition_id, &mut proc_reader, &result_tx))
+            {
+                let _ = result_tx.send(Err(e));
+            }
+        });
 
-        let shared_queue = Arc::new(Mutex::new(work));
-
-        // spawn the worker threads to process all the items
-        // (there may be less processor threads than the number of threads in the image)
-        for _i in 0..num_threads.min(max_processor_threads) {
-            let q = shared_queue.clone();
-
-            thread_pool.run(Box::new(move || {
-                loop {
-                    // do this to make sure the lock gets
-                    let w = q.lock().unwrap().pop_front();
-
-                    if let Some(f) = w {
-                        f();
-                    } else {
-                        break;
-                    }
-                }
-            }));
-        }
-
-        MultiplexReaderState {
-            sender_channels: channel_to_sender,
-            result_receiver: result_receiver,
-            current_state: State::StartBlock,
-            retention_bytes,
-        }
+        work.push_back(f);
     }
 
+    let single_thread_work = if thread_pool.max_parallelism() > 1 {
+        spawn_processor_threads(thread_pool, max_processor_threads, work);
+        None
+    } else {
+        Some(work)
+    };
+
+    MultiplexReaderState {
+        sender_channels: channel_to_sender,
+        receiver_channels: result_receiver,
+        current_state: State::StartBlock,
+        retention_bytes,
+        single_thread_work,
+    }
+}
+
+/// spawns the processor threads to handle the work items in the queue. There may be fewer workers
+/// than work items.
+fn spawn_processor_threads(
+    thread_pool: &dyn LeptonThreadPool,
+    max_processor_threads: usize,
+    work: VecDeque<Box<dyn FnOnce() + Send>>,
+) {
+    let work_threads = work.len().min(max_processor_threads);
+    let shared_queue = Arc::new(Mutex::new(work));
+
+    // spawn the worker threads to process all the items
+    // (there may be less processor threads than the number of threads in the image)
+    for _i in 0..work_threads {
+        let q = shared_queue.clone();
+
+        thread_pool.run(Box::new(move || {
+            loop {
+                // do this to make sure the lock gets
+                let w = q.lock().unwrap().pop_front();
+
+                if let Some(f) = w {
+                    f();
+                } else {
+                    break;
+                }
+            }
+        }));
+    }
+}
+
+impl<RESULT> MultiplexReaderState<RESULT> {
     /// process as much incoming data as we can and send it to the appropriate thread
     pub fn process_buffer(&mut self, source: &mut PartialBuffer<'_>) -> Result<()> {
         while source.continue_processing() {
@@ -376,20 +431,20 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     if let Some(a) = source.take_n::<1>(self.retention_bytes) {
                         let thread_marker = a[0];
 
-                        let thread_id = thread_marker & 0xf;
+                        let partition_id = thread_marker & 0xf;
 
-                        if usize::from(thread_id) >= self.sender_channels.len() {
+                        if usize::from(partition_id) >= self.sender_channels.len() {
                             return err_exit_code(
                                 ExitCode::BadLeptonFile,
-                                format!("invalid thread_id {0}", thread_id),
+                                format!("invalid partition_id {0}", partition_id),
                             );
                         }
 
                         if thread_marker < 16 {
-                            self.current_state = State::U16Length(thread_id);
+                            self.current_state = State::U16Length(partition_id);
                         } else {
                             let flags = (thread_marker >> 4) & 3;
-                            self.current_state = State::Block(thread_id, 1024 << (2 * flags));
+                            self.current_state = State::Block(partition_id, 1024 << (2 * flags));
                         }
                     } else {
                         break;
@@ -405,12 +460,12 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                         break;
                     }
                 }
-                State::Block(thread_id, data_length) => {
+                State::Block(partition_id, data_length) => {
                     if let Some(a) = source.take(data_length, self.retention_bytes) {
                         // ignore if we get error sending because channel died since we will collect
                         // the error later. We don't want to interrupt the other threads that are processing
                         // so we only get the error from the thread that actually errored out.
-                        let tid = usize::from(thread_id);
+                        let tid = usize::from(partition_id);
                         let _ = self.sender_channels[tid].send(Message::WriteBlock(tid, a));
                         self.current_state = State::StartBlock;
                     } else {
@@ -423,140 +478,214 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         Ok(())
     }
 
-    /// Called once all the incoming buffers are passed to process buffers,
-    /// waits for all the threads to finish processing and returns the results.
-    pub fn complete(&mut self) -> Result<Vec<RESULT>> {
-        for thread_id in 0..self.sender_channels.len() {
-            // send eof to all threads (ignore results since they might be dead already)
-            let _ = self.sender_channels[thread_id].send(Message::Eof(thread_id));
-        }
+    /// retrieves the next available result from the threads. If complete is true, this function
+    /// will block until all threads are complete and return the first result or error it finds.
+    /// If complete is false, this function will return immediately if no results are available.
+    pub fn retrieve_result(&mut self, complete: bool) -> Result<Option<RESULT>> {
+        if complete {
+            // if we are complete, send eof to all threads
+            for partition_id in 0..self.sender_channels.len() {
+                // send eof to all threads (ignore results since they might be dead already)
+                let _ = self.sender_channels[partition_id].send(Message::Eof(partition_id));
+            }
+            self.sender_channels.clear();
 
-        self.result_receiver.receive_results()
+            // if we are running single threaded, now do all the work since we've buffered up everything
+            // and broken the sender channels, so there's no danger of deadlock
+            if let Some(single_thread_work) = self.single_thread_work.take() {
+                // run all the remaining work on this thread
+                for f in single_thread_work {
+                    f();
+                }
+            }
+
+            // if we are complete, then walk through all the channels to get the first result
+            while let Some(r) = self.receiver_channels.get_mut(0) {
+                match r.recv() {
+                    Ok(v) => match v {
+                        Ok(v) => return Ok(Some(v)),
+                        Err(e) => return Err(e),
+                    },
+                    Err(_) => {
+                        // channel is closed, remove it
+                        self.receiver_channels.remove(0);
+                    }
+                }
+            }
+        } else {
+            // if we aren't complete, use non-blocking to try to get some results
+            // from the first thread
+            if let Some(r) = self.receiver_channels.get_mut(0) {
+                if let Ok(v) = r.try_recv() {
+                    match v {
+                        Ok(v) => return Ok(Some(v)),
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+        }
+        // nothing left to read
+        Ok(None)
     }
 }
 
 #[cfg(test)]
-use crate::DEFAULT_THREAD_POOL;
-
-/// simple end to end test that write the thread id and reads it back
-#[test]
-fn test_multiplex_end_to_end() {
+mod tests {
     use byteorder::ReadBytesExt;
 
-    let mut output = Vec::new();
+    use super::*;
+    use crate::lepton_error::{ExitCode, LeptonError};
+    use crate::{DEFAULT_THREAD_POOL, SingleThreadPool};
 
-    let w = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |writer, thread_id| -> Result<usize> {
-            for i in thread_id as u32..10000 {
-                writer.write_u32::<byteorder::LittleEndian>(i)?;
-            }
+    /// simple end to end test that write the thread id and reads it back
+    #[test]
+    fn test_multiplex_end_to_end() {
+        let mut output = Vec::new();
 
-            Ok(thread_id)
-        },
-    )
-    .unwrap();
+        let w = multiplex_write(
+            &mut output,
+            10,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |writer, partition_id| -> Result<usize> {
+                for i in partition_id as u32..10000 {
+                    writer.write_u32::<byteorder::LittleEndian>(i)?;
+                }
 
-    assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+                Ok(partition_id)
+            },
+        )
+        .unwrap();
 
-    let mut extra = Vec::new();
+        assert_eq!(w[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-    let mut multiplex_state = MultiplexReaderState::new(
-        10,
-        &DEFAULT_THREAD_POOL,
-        0,
-        8,
-        |thread_id, reader| -> Result<usize> {
-            for i in thread_id as u32..10000 {
-                let read_thread_id = reader.read_u32::<byteorder::LittleEndian>()?;
-                assert_eq!(read_thread_id, i);
-            }
-            Ok(thread_id)
-        },
-    );
-
-    // do worst case, we are just given byte at a time
-    for i in 0..output.len() {
-        let mut i = PartialBuffer::new(&output[i..=i], &mut extra);
-        multiplex_state.process_buffer(&mut i).unwrap();
+        for max_processor_threads in 1..=10 {
+            test_read(&output, &w, max_processor_threads);
+        }
     }
 
-    let r = multiplex_state.complete().unwrap();
+    fn test_read(output: &[u8], w: &[usize], max_processor_threads: usize) {
+        let mut extra = Vec::new();
+        let single = SingleThreadPool::default();
 
-    assert_eq!(r[..], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-}
-
-#[cfg(test)]
-use crate::lepton_error::LeptonError;
-
-#[test]
-fn test_multiplex_read_error() {
-    let mut multiplex_state =
-        MultiplexReaderState::new(10, &DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
-            Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
-        });
-
-    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
-    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert!(e.message().starts_with("test error"));
-}
-
-#[test]
-fn test_multiplex_read_panic() {
-    let mut multiplex_state =
-        MultiplexReaderState::new(10, &DEFAULT_THREAD_POOL, 0, 8, |_, _| -> Result<usize> {
-            panic!();
-        });
-
-    let e: LeptonError = multiplex_state.complete().unwrap_err().into();
-    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
-}
-
-// test catching errors in the multiplex_write function
-#[test]
-fn test_multiplex_write_error() {
-    let mut output = Vec::new();
-
-    let e: LeptonError = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |_, thread_id| -> Result<usize> {
-            if thread_id == 3 {
-                // have one thread fail
-                Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+        let mut multiplex_state = multiplex_read(
+            10,
+            max_processor_threads,
+            if max_processor_threads == 1 {
+                // for a single thread we shouldn't spawn any threads
+                &single
             } else {
-                Ok(0)
+                &DEFAULT_THREAD_POOL
+            },
+            0,
+            |partition_id, reader, result_tx: &Sender<Result<usize>>| {
+                for i in partition_id as u32..10000 {
+                    let read_partition_id = reader.read_u32::<byteorder::LittleEndian>()?;
+                    assert_eq!(read_partition_id, i);
+                }
+                result_tx.send(Ok(partition_id))?;
+                Ok(())
+            },
+        );
+
+        // do worst case, we are just given byte at a time
+        let mut r = Vec::new();
+
+        for i in 0..output.len() {
+            let mut i = PartialBuffer::new(&output[i..=i], &mut extra);
+            multiplex_state.process_buffer(&mut i).unwrap();
+
+            if let Some(res) = multiplex_state.retrieve_result(false).unwrap() {
+                r.push(res);
             }
-        },
-    )
-    .unwrap_err()
-    .into();
+        }
 
-    assert_eq!(e.exit_code(), ExitCode::FileNotFound);
-    assert!(e.message().starts_with("test error"));
-}
+        while let Some(res) = multiplex_state.retrieve_result(true).unwrap() {
+            r.push(res);
+        }
 
-// test catching errors in the multiplex_write function
-#[test]
-fn test_multiplex_write_panic() {
-    let mut output = Vec::new();
+        assert_eq!(r[..], w[..]);
+    }
 
-    let e: LeptonError = multiplex_write(
-        &mut output,
-        10,
-        &DEFAULT_THREAD_POOL,
-        |_, thread_id| -> Result<usize> {
-            if thread_id == 5 {
+    #[test]
+    fn test_multiplex_read_error() {
+        let mut multiplex_state = multiplex_read(
+            10,
+            10,
+            &DEFAULT_THREAD_POOL,
+            0,
+            |_, _, _: &Sender<Result<()>>| -> Result<()> {
+                Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+            },
+        );
+
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+        assert!(e.message().starts_with("test error"));
+    }
+
+    #[test]
+    fn test_multiplex_read_panic() {
+        let mut multiplex_state = multiplex_read(
+            10,
+            10,
+            &DEFAULT_THREAD_POOL,
+            0,
+            |_, _, _: &Sender<Result<()>>| -> Result<()> {
                 panic!();
-            }
-            Ok(0)
-        },
-    )
-    .unwrap_err()
-    .into();
+            },
+        );
 
-    assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+    }
+
+    // test catching errors in the multiplex_write function
+    #[test]
+    fn test_multiplex_write_error() {
+        let mut output = Vec::new();
+
+        let e: LeptonError = multiplex_write(
+            &mut output,
+            10,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |_, partition_id| -> Result<usize> {
+                if partition_id == 3 {
+                    // have one partition fail
+                    Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
+                } else {
+                    Ok(0)
+                }
+            },
+        )
+        .unwrap_err()
+        .into();
+
+        assert_eq!(e.exit_code(), ExitCode::FileNotFound);
+        assert!(e.message().starts_with("test error"));
+    }
+
+    // test catching errors in the multiplex_write function
+    #[test]
+    fn test_multiplex_write_panic() {
+        let mut output = Vec::new();
+
+        let e: LeptonError = multiplex_write(
+            &mut output,
+            10,
+            10,
+            &DEFAULT_THREAD_POOL,
+            |_, partition_id| -> Result<usize> {
+                if partition_id == 5 {
+                    panic!();
+                }
+                Ok(0)
+            },
+        )
+        .unwrap_err()
+        .into();
+
+        assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
+    }
 }
