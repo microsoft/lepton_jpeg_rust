@@ -96,8 +96,6 @@ extends:
                     AuthSignCertName: 'CodeSigningCertificate'
                     FolderPath: '$(Build.SourcesDirectory)'
                     Pattern: '
-                      target\debug\lepton_jpeg.dll,
-                      target\debug\lepton_jpeg_util.exe,
                       target\release\lepton_jpeg.dll,
                       target\release\lepton_jpeg_avx2.dll,
                       target\release\lepton_jpeg_util.exe,
