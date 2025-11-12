@@ -9,7 +9,7 @@ pub struct CpuTimeMeasure {
     #[cfg(windows)]
     start: ThreadTime,
     #[cfg(not(windows))]
-    start: std::time::SystemTime,
+    start: std::time::Instant,
 }
 
 impl CpuTimeMeasure {
@@ -19,7 +19,7 @@ impl CpuTimeMeasure {
             #[cfg(windows)]
             start: ThreadTime::now(),
             #[cfg(not(windows))]
-            start: std::time::SystemTime::now(),
+            start: std::time::Instant::now(),
         }
     }
 
@@ -31,7 +31,7 @@ impl CpuTimeMeasure {
         }
         #[cfg(not(windows))]
         {
-            self.start.elapsed().unwrap()
+            self.start.elapsed()
         }
     }
 }

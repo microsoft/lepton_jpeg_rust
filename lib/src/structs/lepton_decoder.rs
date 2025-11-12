@@ -47,7 +47,17 @@ pub fn lepton_decode_row_range<R: Read>(
 
     let mut image_data = Vec::new();
     for i in 0..jpeg_header.cmpc {
-        image_data.push(BlockBasedImage::new(&jpeg_header, i, min_y, max_y)?);
+        image_data.push(BlockBasedImage::new(
+            &jpeg_header,
+            i,
+            min_y,
+            if is_last_thread {
+                // if this is the last thread, then the image should extend all the way to the bottom
+                jpeg_header.cmp_info[0].bcv
+            } else {
+                max_y
+            },
+        )?);
     }
 
     let mut is_top_row = Vec::new();
