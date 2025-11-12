@@ -33,7 +33,7 @@ assert jpg_data == decompressed
 
 ### Building From Source
 
-- [Rust 1.88 or Above](https://www.rust-lang.org/tools/install)
+- [Rust 1.89 or Above](https://www.rust-lang.org/tools/install)
 
 ``` bash
 git clone https://github.com/microsoft/lepton_jpeg_rust
