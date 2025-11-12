@@ -61,6 +61,7 @@ extends:
                     cargo install junit-test
                     junit-test
                     copy junit.xml $(System.DefaultWorkingDirectory)\TEST-rust.xml
+                    rd /s /q target\debug
                   displayName: 'Test debug'
 
                 - task: PublishTestResults@2
