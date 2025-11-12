@@ -11,11 +11,6 @@
     <tags>lepton</tags>
   </metadata>
   <files>
-    <file src="..\target\debug\lepton_jpeg_util.exe" target="exe\debug\x64" />
-    <file src="..\target\debug\lepton_jpeg_util.pdb" target="exe\debug\x64" />
-    <file src="..\target\debug\lepton_jpeg.dll" target="lib\debug\x64" />
-    <file src="..\target\debug\lepton_jpeg.pdb" target="lib\debug\x64" />
-
     <file src="..\target\release\lepton_jpeg_util.exe" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg_util.pdb" target="exe\release\x64" />
     <file src="..\target\release\lepton_jpeg_util_avx2.exe" target="exe\release\x64" />
