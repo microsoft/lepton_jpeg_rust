@@ -5,7 +5,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
+use std::fs::read_dir;
 use std::io::Cursor;
+use std::path::Path;
 
 use lepton_jpeg::{
     DEFAULT_THREAD_POOL, EnabledFeatures, decode_lepton, encode_lepton, encode_lepton_verify,
@@ -315,4 +317,88 @@ fn verify_encode_image_with_zeros_in_dqt_tables() {
             &DEFAULT_THREAD_POOL,
         ),
     );
+}
+
+/// tests all previous fuzzing failures to ensure they remain fixed. This requires them to be
+/// checked into the repository under the fuzz/artifacts/fuzz_target_1 directory as crash-xxxx files
+#[test]
+fn test_previous_fuzz_failures() {
+    for entry in read_dir(
+        Path::new(env!("WORKSPACE_ROOT"))
+            .join("fuzz")
+            .join("artifacts")
+            .join("fuzz_target_1"),
+    )
+    .unwrap()
+    {
+        let entry = entry.unwrap();
+        let path = entry.path();
+
+        // see if it starts with crash-
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        if !filename.starts_with("crash-") {
+            continue;
+        }
+
+        println!(
+            "testing fuzz failure reproduction for file {}",
+            path.display()
+        );
+
+        let data = std::fs::read(path).unwrap();
+        test_fuzz_failure(&data);
+    }
+
+    /// mirrors what we do for fuzz testing so that we can reproduce failures found by the fuzzer
+    /// and ensure that they remain fixed
+    fn test_fuzz_failure(data: &[u8]) {
+        let mut output = Vec::new();
+
+        let use_16bit = match data.len() % 2 {
+            0 => false,
+            _ => true,
+        };
+        let accept_invalid_dht = match (data.len() / 2) % 2 {
+            0 => false,
+            _ => true,
+        };
+
+        // keep the jpeg dimensions small otherwise the fuzzer gets really slow
+        let features = EnabledFeatures {
+            progressive: true,
+            reject_dqts_with_zeros: true,
+            max_jpeg_height: 1024,
+            max_jpeg_width: 1024,
+            use_16bit_dc_estimate: use_16bit,
+            use_16bit_adv_predict: use_16bit,
+            accept_invalid_dht: accept_invalid_dht,
+            ..EnabledFeatures::compat_lepton_vector_write()
+        };
+
+        let r;
+        {
+            let mut writer = Cursor::new(&mut output);
+
+            r = encode_lepton(
+                &mut Cursor::new(&data),
+                &mut writer,
+                &features,
+                &DEFAULT_THREAD_POOL,
+            );
+        }
+
+        let mut original = Vec::new();
+
+        match r {
+            Ok(_) => {
+                let _ = decode_lepton(
+                    &mut Cursor::new(&output),
+                    &mut original,
+                    &features,
+                    &DEFAULT_THREAD_POOL,
+                );
+            }
+            Err(_) => {}
+        }
+    }
 }
