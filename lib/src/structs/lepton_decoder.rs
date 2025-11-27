@@ -28,8 +28,10 @@ use crate::structs::probability_tables::ProbabilityTables;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::vpx_bool_reader::VPXBoolReader;
 
-// reads stream from reader and populates image_data with the decoded data
-
+/// reads stream from reader and populates image_data with the decoded data
+/// the row_callback is called each time a full MCU row is decoded. This allows
+/// the caller to process rows as they are decoded instead of waiting for the
+/// entire image to be decoded.
 #[inline(never)] // don't inline so that the profiler can get proper data
 pub fn lepton_decode_row_range<R: Read, ROW: FnMut(&RowSpec, &[BlockBasedImage]) -> Result<()>>(
     qt: &[QuantizationTables],

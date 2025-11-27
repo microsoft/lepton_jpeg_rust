@@ -925,11 +925,11 @@ fn jpeg_write_baseline_row_range(
             continue;
         }
 
-        if cur_row.min_row_luma_y < restart_info.luma_y_start {
+        if cur_row.luma_y < restart_info.luma_y_start {
             continue;
         }
 
-        if cur_row.next_row_luma_y > restart_info.luma_y_end {
+        if cur_row.luma_y > restart_info.luma_y_end {
             break; // we're done here
         }
 
