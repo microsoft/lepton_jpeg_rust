@@ -663,10 +663,13 @@ fn baseline_decoding_thread(
         last_dc: thread_handoff.last_dc,
     };
 
+    const BUFFER_SIZE: usize = 128 * 1024;
+
     // track how muchd data we can generate
     let mut amount_left = thread_handoff.segment_size as usize;
 
-    let mut inc_writer = JpegIncrementalWriter::new(amount_left, rinfo, &restart_info, jpeg_header);
+    let mut inc_writer =
+        JpegIncrementalWriter::new(BUFFER_SIZE, rinfo, Some(&restart_info), jpeg_header, 0);
 
     let (mut metrics, _image_data) = lepton_decode_row_range(
         qt,
@@ -682,7 +685,7 @@ fn baseline_decoding_thread(
             inc_writer.process_row(row_spec, image_data).context()?;
 
             // send out any data we have buffered if we have enough
-            if inc_writer.amount_buffered() >= 128 * 1024 {
+            if inc_writer.amount_buffered() >= BUFFER_SIZE {
                 let mut buf = inc_writer.detach_buffer();
                 if buf.len() > amount_left {
                     warn!(
@@ -692,6 +695,7 @@ fn baseline_decoding_thread(
                     );
                     buf.truncate(amount_left);
                 }
+
                 amount_left -= buf.len();
 
                 sender.send(Ok((Metrics::default(), buf)))?;
