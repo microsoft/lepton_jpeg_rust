@@ -31,7 +31,7 @@ use crate::structs::vpx_bool_reader::VPXBoolReader;
 // reads stream from reader and populates image_data with the decoded data
 
 #[inline(never)] // don't inline so that the profiler can get proper data
-pub fn lepton_decode_row_range<R: Read>(
+pub fn lepton_decode_row_range<R: Read, ROW: FnMut(&RowSpec, &[BlockBasedImage]) -> Result<()>>(
     qt: &[QuantizationTables],
     jpeg_header: &JpegHeader,
     trunc: &TruncateComponents,
@@ -41,6 +41,7 @@ pub fn lepton_decode_row_range<R: Read>(
     is_last_thread: bool,
     full_file_compression: bool,
     features: &EnabledFeatures,
+    mut row_callback: ROW,
 ) -> Result<(Metrics, Vec<BlockBasedImage>)> {
     let component_size_in_blocks = trunc.get_component_sizes_in_blocks();
     let max_coded_heights = trunc.get_max_coded_heights();
@@ -133,6 +134,10 @@ pub fn lepton_decode_row_range<R: Read>(
             features,
         )
         .context()?;
+
+        if cur_row.last_row_to_complete_mcu {
+            row_callback(&cur_row, &image_data[..]).context()?;
+        }
     }
     Ok((bool_reader.drain_stats(), image_data))
 }

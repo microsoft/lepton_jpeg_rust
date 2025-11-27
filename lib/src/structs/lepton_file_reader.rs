@@ -18,7 +18,7 @@ use crate::enabled_features::EnabledFeatures;
 use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
-use crate::jpeg::jpeg_write::{jpeg_write_baseline_row_range, jpeg_write_entire_scan};
+use crate::jpeg::jpeg_write::{JpegIncrementalWriter, jpeg_write_entire_scan};
 use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
@@ -629,6 +629,7 @@ fn progressive_decoding_thread(
         is_last_thread,
         true,
         features,
+        |_, _| Ok(()),
     )?;
 
     metrics.record_cpu_worker_time(cpu_time.elapsed());
@@ -654,7 +655,20 @@ fn baseline_decoding_thread(
 ) -> Result<()> {
     let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
 
-    let (mut metrics, image_data) = lepton_decode_row_range(
+    let restart_info = RestartSegmentCodingInfo {
+        overhang_byte: thread_handoff.overhang_byte,
+        num_overhang_bits: thread_handoff.num_overhang_bits,
+        luma_y_start: thread_handoff.luma_y_start,
+        luma_y_end: thread_handoff.luma_y_end,
+        last_dc: thread_handoff.last_dc,
+    };
+
+    // track how muchd data we can generate
+    let mut amount_left = thread_handoff.segment_size as usize;
+
+    let mut inc_writer = JpegIncrementalWriter::new(amount_left, rinfo, &restart_info, jpeg_header);
+
+    let (mut metrics, _image_data) = lepton_decode_row_range(
         qt,
         jpeg_header,
         &rinfo.truncate_components,
@@ -664,44 +678,42 @@ fn baseline_decoding_thread(
         is_last_thread,
         true,
         features,
+        |row_spec, image_data| {
+            inc_writer.process_row(row_spec, image_data).context()?;
+
+            // send out any data we have buffered if we have enough
+            if inc_writer.amount_buffered() >= 128 * 1024 {
+                let mut buf = inc_writer.detach_buffer();
+                if buf.len() > amount_left {
+                    warn!(
+                        "Truncating output buffer from {} to {}",
+                        buf.len(),
+                        amount_left
+                    );
+                    buf.truncate(amount_left);
+                }
+                amount_left -= buf.len();
+
+                sender.send(Ok((Metrics::default(), buf)))?;
+            }
+
+            Ok(())
+        },
     )?;
-
-    let restart_info = RestartSegmentCodingInfo {
-        overhang_byte: thread_handoff.overhang_byte,
-        num_overhang_bits: thread_handoff.num_overhang_bits,
-        luma_y_start: thread_handoff.luma_y_start,
-        luma_y_end: thread_handoff.luma_y_end,
-        last_dc: thread_handoff.last_dc,
-    };
-
-    let mut result_buffer = jpeg_write_baseline_row_range(
-        thread_handoff.segment_size as usize,
-        &restart_info,
-        &image_data,
-        &jpeg_header,
-        &rinfo,
-    )
-    .context()?;
-
-    #[cfg(feature = "detailed_tracing")]
-    info!(
-        "ystart = {0}, segment_size = {1}, amount = {2}, offset = {3}, ob = {4}, nb = {5}",
-        thread_handoff.luma_y_start,
-        thread_handoff.segment_size,
-        result_buffer.len(),
-        thread_handoff.segment_offset_in_file,
-        thread_handoff.overhang_byte,
-        thread_handoff.num_overhang_bits
-    );
-
-    if result_buffer.len() > thread_handoff.segment_size as usize {
-        warn!("warning: truncating segment");
-        result_buffer.resize(thread_handoff.segment_size as usize, 0);
-    }
 
     metrics.record_cpu_worker_time(cpu_time.elapsed());
 
-    sender.send(Ok((metrics, result_buffer)))?;
+    let mut buf = inc_writer.detach_buffer();
+    if buf.len() > amount_left {
+        warn!(
+            "Truncating output buffer from {} to {}",
+            buf.len(),
+            amount_left
+        );
+        buf.truncate(amount_left);
+    }
+
+    sender.send(Ok((metrics, buf)))?;
 
     Ok(())
 }

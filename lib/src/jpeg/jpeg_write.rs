@@ -48,6 +48,59 @@ use super::jpeg_header::{HuffCodes, JpegHeader, ReconstructionInfo, RestartSegme
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
 
+pub struct JpegIncrementalWriter<'a> {
+    last_dc: [i16; 4],
+    huffw: BitWriter,
+    reconstruction_info: &'a ReconstructionInfo,
+    jpeg_header: &'a JpegHeader,
+}
+
+impl<'a> JpegIncrementalWriter<'a> {
+    pub fn new(
+        capacity: usize,
+        reconstruction_info: &'a ReconstructionInfo,
+        rinfo: &RestartSegmentCodingInfo,
+        jpeg_header: &'a JpegHeader,
+    ) -> JpegIncrementalWriter<'a> {
+        let mut huffw = BitWriter::new(Vec::with_capacity(capacity));
+        huffw.reset_from_overhang_byte_and_num_bits(
+            rinfo.overhang_byte,
+            u32::from(rinfo.num_overhang_bits),
+        );
+
+        JpegIncrementalWriter {
+            last_dc: rinfo.last_dc,
+            huffw,
+            jpeg_header,
+            reconstruction_info,
+        }
+    }
+
+    pub fn amount_buffered(&self) -> usize {
+        self.huffw.amount_buffered()
+    }
+
+    pub fn process_row(&mut self, cur_row: &RowSpec, image_data: &[BlockBasedImage]) -> Result<()> {
+        if cur_row.last_row_to_complete_mcu {
+            recode_one_mcu_row(
+                &mut self.huffw,
+                cur_row.mcu_row_index * self.jpeg_header.mcuh.get(),
+                &mut self.last_dc,
+                image_data,
+                self.jpeg_header,
+                self.reconstruction_info,
+                0,
+            )
+            .context()?;
+        }
+        Ok(())
+    }
+
+    pub fn detach_buffer(&mut self) -> Vec<u8> {
+        self.huffw.detach_buffer()
+    }
+}
+
 /// write a range of rows corresponding to the restart_info structure.
 /// Returns the encoded data as a buffer.
 ///
@@ -61,28 +114,11 @@ pub fn jpeg_write_baseline_row_range(
 ) -> Result<Vec<u8>> {
     let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
 
-    let mut data_buffer = Vec::new();
-    if let Err(e) = data_buffer.try_reserve_exact(encoded_length) {
-        return err_exit_code(
-            ExitCode::OutOfMemory,
-            format!(
-                "unable to allocate {} bytes for jpeg output buffer: {:?}",
-                encoded_length, e
-            ),
-        );
-    }
-
-    let mut huffw = BitWriter::new(data_buffer);
-    huffw.reset_from_overhang_byte_and_num_bits(
-        restart_info.overhang_byte,
-        u32::from(restart_info.num_overhang_bits),
-    );
-
-    let mut last_dc = restart_info.last_dc;
+    let mut writer = JpegIncrementalWriter::new(encoded_length, rinfo, restart_info, jpeg_header);
 
     let mut decode_index = 0;
     loop {
-        let cur_row = RowSpec::get_row_spec_from_index(
+        let cur_row: RowSpec = RowSpec::get_row_spec_from_index(
             decode_index,
             image_data,
             rinfo.truncate_components.mcu_count_vertical,
@@ -107,21 +143,10 @@ pub fn jpeg_write_baseline_row_range(
             break; // we're done here
         }
 
-        if cur_row.last_row_to_complete_mcu {
-            recode_one_mcu_row(
-                &mut huffw,
-                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
-                &mut last_dc,
-                image_data,
-                jpeg_header,
-                rinfo,
-                0,
-            )
-            .context()?;
-        }
+        writer.process_row(&cur_row, image_data).context()?;
     }
 
-    Ok(huffw.detach_buffer())
+    Ok(writer.detach_buffer())
 }
 
 /// writes an entire scan vs only a range of rows as above.

@@ -139,6 +139,10 @@ impl BitWriter {
     pub fn has_no_remainder(&self) -> bool {
         return self.current_bit == 64;
     }
+
+    pub fn amount_buffered(&self) -> usize {
+        self.data_buffer.len()
+    }
 }
 
 #[cfg(test)]
