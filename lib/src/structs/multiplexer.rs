@@ -11,7 +11,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
@@ -482,6 +482,10 @@ impl<RESULT> MultiplexReaderState<RESULT> {
     /// will block until all threads are complete and return the first result or error it finds.
     /// If complete is false, this function will return immediately if no results are available.
     pub fn retrieve_result(&mut self, complete: bool) -> Result<Option<RESULT>> {
+        if let Some(value) = Self::try_get_result(&mut self.receiver_channels)? {
+            return Ok(Some(value));
+        }
+
         if complete {
             // if we are complete, send eof to all threads
             for partition_id in 0..self.sender_channels.len() {
@@ -492,14 +496,17 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
             // if we are running single threaded, now do all the work since we've buffered up everything
             // and broken the sender channels, so there's no danger of deadlock
-            if let Some(single_thread_work) = self.single_thread_work.take() {
-                // run all the remaining work on this thread
-                for f in single_thread_work {
+            if let Some(single_thread_work) = &mut self.single_thread_work {
+                while let Some(f) = single_thread_work.pop_front() {
                     f();
+
+                    if let Some(value) = Self::try_get_result(&mut self.receiver_channels)? {
+                        return Ok(Some(value));
+                    }
                 }
             }
 
-            // if we are complete, then walk through all the channels to get the first result
+            // if we are complete, then walk through all the channels to get the first result by blocking
             while let Some(r) = self.receiver_channels.get_mut(0) {
                 match r.recv() {
                     Ok(v) => match v {
@@ -512,19 +519,33 @@ impl<RESULT> MultiplexReaderState<RESULT> {
                     }
                 }
             }
-        } else {
-            // if we aren't complete, use non-blocking to try to get some results
-            // from the first thread
-            if let Some(r) = self.receiver_channels.get_mut(0) {
-                if let Ok(v) = r.try_recv() {
-                    match v {
-                        Ok(v) => return Ok(Some(v)),
-                        Err(e) => return Err(e),
-                    }
+        }
+        // nothing left to read
+        Ok(None)
+    }
+
+    /// tries to get a result from the receiver channels without blocking
+    fn try_get_result(
+        receiver_channels: &mut Vec<Receiver<Result<RESULT>>>,
+    ) -> Result<Option<RESULT>> {
+        // if we aren't complete, use non-blocking to try to get some results
+        // from the first thread
+        while let Some(r) = receiver_channels.get_mut(0) {
+            match r.try_recv() {
+                Ok(v) => match v {
+                    Ok(v) => return Ok(Some(v)),
+                    Err(e) => return Err(e),
+                },
+                Err(TryRecvError::Disconnected) => {
+                    // finished, so remove it and try the next one
+                    receiver_channels.remove(0);
+                }
+                Err(TryRecvError::Empty) => {
+                    // no result yet, exit loop without result
+                    break;
                 }
             }
         }
-        // nothing left to read
         Ok(None)
     }
 }
