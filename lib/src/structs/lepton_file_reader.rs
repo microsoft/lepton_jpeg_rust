@@ -23,7 +23,9 @@ use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
-use crate::structs::multiplexer::{MultiplexReader, MultiplexReaderState, multiplex_read};
+use crate::structs::multiplexer::{
+    MultiplexReadResult, MultiplexReader, MultiplexReaderState, multiplex_read,
+};
 use crate::structs::partial_buffer::PartialBuffer;
 use crate::structs::quantization_tables::QuantizationTables;
 use crate::structs::simple_threadpool::ThreadPoolHolder;
@@ -116,12 +118,12 @@ pub fn decode_lepton_file_image<R: BufRead>(
         state.process_buffer(&mut PartialBuffer::new(b, &mut extra_buffer))?;
         reader.consume(b_len);
 
-        if let Some((_m, r)) = state.retrieve_result(false)? {
+        if let Some(r) = state.retrieve_result(false)? {
             results.push(r);
         }
     }
 
-    while let Some((_m, r)) = state.retrieve_result(true)? {
+    while let Some(r) = state.retrieve_result(true)? {
         results.push(r);
     }
 
@@ -140,8 +142,8 @@ enum DecoderState {
     FixedHeader(),
     CompressedHeader(usize),
     CMP(),
-    ScanProgressive(MultiplexReaderState<(Metrics, Vec<BlockBasedImage>)>),
-    ScanBaseline(MultiplexReaderState<(Metrics, Vec<u8>)>),
+    ScanProgressive(MultiplexReaderState<Vec<BlockBasedImage>>),
+    ScanBaseline(MultiplexReaderState<Vec<u8>>),
     EOI,
 }
 
@@ -155,12 +157,20 @@ struct LimitedOutputWriter<'a, W: Write> {
 
 impl<W: Write> Write for LimitedOutputWriter<'_, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // only write up to the amount left
         let to_write = std::cmp::min(buf.len() as u64, *self.amount_left) as usize;
         let written = self.inner.write(&buf[0..to_write])?;
-        *self.amount_left -= written as u64;
 
-        // always say we wrote everything, the goal here is to silently truncate
-        Ok(buf.len())
+        if written < to_write {
+            // short write, propagate since we haven't hit the limit yet
+            *self.amount_left -= written as u64;
+            Ok(written)
+        } else {
+            *self.amount_left -= written as u64;
+
+            // always say we wrote everything, the goal here is to silently truncate
+            Ok(buf.len())
+        }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -311,9 +321,7 @@ impl<'a> LeptonFileReader<'a> {
                         // complete the operation and merge the metrics
                         // progressive JPEGs cannot return partial results
                         let mut results = Vec::new();
-                        while let Some((m, r)) = state.retrieve_result(true)? {
-                            self.metrics.merge_from(m);
-
+                        while let Some(r) = state.retrieve_result(true)? {
                             results.push(r);
                         }
 
@@ -324,15 +332,18 @@ impl<'a> LeptonFileReader<'a> {
                             &mut limited_output,
                         )?;
 
+                        self.metrics.merge_from(state.take_metrics());
+
                         self.state = DecoderState::EOI;
                     }
                 }
                 DecoderState::ScanBaseline(state) => {
                     state.process_buffer(&mut in_buffer)?;
 
-                    // baseline images can return partial results
-                    if let Some((m, r)) = state.retrieve_result(false)? {
-                        self.metrics.merge_from(m);
+                    // baseline images can return partial results as decoding progresses,
+                    // send these to the output by querying the state machine with complete
+                    // set to false, which means we won't block if nothing is available
+                    while let Some(r) = state.retrieve_result(false)? {
                         limited_output.write_all(&r)?;
                     }
 
@@ -340,8 +351,7 @@ impl<'a> LeptonFileReader<'a> {
                         Self::verify_eof_file_size(self.total_read_size, &mut in_buffer)?;
 
                         // once we've complete the input, block for all remaining results
-                        while let Some((m, r)) = state.retrieve_result(true)? {
-                            self.metrics.merge_from(m);
+                        while let Some(r) = state.retrieve_result(true)? {
                             limited_output.write_all(&r)?;
                         }
 
@@ -365,6 +375,8 @@ impl<'a> LeptonFileReader<'a> {
                         }
 
                         write_tail(&mut self.lh, &mut limited_output)?;
+
+                        self.metrics.merge_from(state.take_metrics());
 
                         self.state = DecoderState::EOI;
                     }
@@ -558,9 +570,9 @@ impl<'a> LeptonFileReader<'a> {
             jpeg_header: &JpegHeader,
             rinfo: &ReconstructionInfo,
             is_last_thread: bool,
-            sender: &Sender<Result<(Metrics, P)>>,
+            sender: &Sender<MultiplexReadResult<P>>,
         ) -> Result<()>,
-    ) -> Result<MultiplexReaderState<(Metrics, P)>> {
+    ) -> Result<MultiplexReaderState<P>> {
         let qt = QuantizationTables::construct_quantization_tables(&lh.jpeg_header)?;
 
         let features = features.clone();
@@ -615,7 +627,7 @@ fn progressive_decoding_thread(
     jpeg_header: &JpegHeader,
     rinfo: &ReconstructionInfo,
     is_last_thread: bool,
-    sender: &Sender<Result<(Metrics, Vec<BlockBasedImage>)>>,
+    sender: &Sender<MultiplexReadResult<Vec<BlockBasedImage>>>,
 ) -> Result<()> {
     let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
 
@@ -634,7 +646,8 @@ fn progressive_decoding_thread(
 
     metrics.record_cpu_worker_time(cpu_time.elapsed());
 
-    sender.send(Ok((metrics, image_data)))?;
+    sender.send(MultiplexReadResult::Result(image_data))?;
+    sender.send(MultiplexReadResult::Complete(metrics))?;
 
     Ok(())
 }
@@ -651,7 +664,7 @@ fn baseline_decoding_thread(
     jpeg_header: &JpegHeader,
     rinfo: &ReconstructionInfo,
     is_last_thread: bool,
-    sender: &Sender<Result<(Metrics, Vec<u8>)>>,
+    sender: &Sender<MultiplexReadResult<Vec<u8>>>,
 ) -> Result<()> {
     let cpu_time: CpuTimeMeasure = CpuTimeMeasure::new();
 
@@ -698,7 +711,7 @@ fn baseline_decoding_thread(
 
                 amount_left -= buf.len();
 
-                sender.send(Ok((Metrics::default(), buf)))?;
+                sender.send(MultiplexReadResult::Result(buf))?;
             }
 
             Ok(())
@@ -717,7 +730,9 @@ fn baseline_decoding_thread(
         buf.truncate(amount_left);
     }
 
-    sender.send(Ok((metrics, buf)))?;
+    sender.send(MultiplexReadResult::Result(buf))?;
+
+    sender.send(MultiplexReadResult::Complete(metrics))?;
 
     Ok(())
 }
@@ -725,7 +740,7 @@ fn baseline_decoding_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{BufWriter, Cursor};
 
     use default_boxed::DefaultBoxed;
 
@@ -896,5 +911,52 @@ mod tests {
 
         assert_eq!(output.len(), original.len());
         assert!(output == original);
+    }
+
+    struct RecordStreamPosition<W: Write> {
+        writer: W,
+        position: u64,
+    }
+
+    impl<W: Write> Write for RecordStreamPosition<W> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if buf.len() == 0 {
+                return Ok(0);
+            }
+
+            // only accept one byte at a time to test position tracking
+            let n = self.writer.write(&[buf[0]])?;
+            self.position += n as u64;
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.writer.flush()
+        }
+    }
+
+    #[test]
+    fn test_streaming_results() {
+        let data = read_file("hq", ".lep");
+        let original_data = read_file("hq", ".jpg");
+
+        let mut cursor = Cursor::new(&data);
+
+        let mut output_vector = Vec::new();
+
+        let mut output = RecordStreamPosition {
+            writer: BufWriter::new(&mut output_vector),
+            position: 0,
+        };
+
+        let enabled_features = EnabledFeatures::compat_lepton_vector_read();
+        let thread_pool = &DEFAULT_THREAD_POOL;
+
+        decode_lepton(&mut cursor, &mut output, &enabled_features, thread_pool).unwrap();
+
+        drop(output);
+
+        assert_eq!(output_vector.len(), original_data.len());
+        assert!(output_vector == original_data);
     }
 }

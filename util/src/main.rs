@@ -316,8 +316,10 @@ Options:
 
         let mut cursor = Cursor::new(&data);
 
+        let mut output_vector = Vec::new();
+
         let mut output = RecordStreamPosition {
-            writer: std::io::stdout(),
+            writer: &mut output_vector,
             position: 0,
         };
 
@@ -339,6 +341,11 @@ Options:
                 )?;
             }
         }
+
+        drop(output);
+
+        std::io::stdout().write_all(&output_vector[..])?;
+
         return Ok(());
     } else {
         let mut file_in = File::open(filenames[0].as_os_str())
