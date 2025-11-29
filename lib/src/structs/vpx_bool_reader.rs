@@ -57,7 +57,10 @@ impl<R: Read> VPXBoolReader<R> {
         let mut dummy_branch = Branch::new();
         let bit = r.get_bit(&mut dummy_branch, ModelComponent::Dummy)?; // marker false bit
         if bit {
-            return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
+            return err_exit_code(
+                ExitCode::StreamInconsistent,
+                "Couldnt read marker bit StreamInconsistent",
+            );
         }
 
         return Ok(r);
