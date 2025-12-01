@@ -317,7 +317,7 @@ Options:
         let mut cursor = Cursor::new(&data);
 
         let mut output = RecordStreamPosition {
-            writer: &mut std::io::stdout(),
+            writer: std::io::stdout(),
             position: 0,
         };
 
