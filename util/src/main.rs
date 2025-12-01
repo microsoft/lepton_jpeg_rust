@@ -316,10 +316,8 @@ Options:
 
         let mut cursor = Cursor::new(&data);
 
-        let mut output_vector = Vec::new();
-
         let mut output = RecordStreamPosition {
-            writer: &mut output_vector,
+            writer: &mut std::io::stdout(),
             position: 0,
         };
 
@@ -341,10 +339,6 @@ Options:
                 )?;
             }
         }
-
-        drop(output);
-
-        std::io::stdout().write_all(&output_vector[..])?;
 
         return Ok(());
     } else {
