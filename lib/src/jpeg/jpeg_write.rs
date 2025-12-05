@@ -48,80 +48,75 @@ use super::jpeg_header::{HuffCodes, JpegHeader, ReconstructionInfo, RestartSegme
 use super::jpeg_position_state::JpegPositionState;
 use super::row_spec::RowSpec;
 
-/// write a range of rows corresponding to the restart_info structure.
-/// Returns the encoded data as a buffer.
-///
-/// Only works with baseline non-progressive images.
-pub fn jpeg_write_baseline_row_range(
-    encoded_length: usize,
-    restart_info: &RestartSegmentCodingInfo,
-    image_data: &[BlockBasedImage],
-    jpeg_header: &JpegHeader,
-    rinfo: &ReconstructionInfo,
-) -> Result<Vec<u8>> {
-    let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
+pub struct JpegIncrementalWriter<'a> {
+    last_dc: [i16; 4],
+    huffw: BitWriter,
+    reconstruction_info: &'a ReconstructionInfo,
+    jpeg_header: &'a JpegHeader,
+    capacity: usize,
+    current_scan_index: usize,
+}
 
-    let mut data_buffer = Vec::new();
-    if let Err(e) = data_buffer.try_reserve_exact(encoded_length) {
-        return err_exit_code(
-            ExitCode::OutOfMemory,
-            format!(
-                "unable to allocate {} bytes for jpeg output buffer: {:?}",
-                encoded_length, e
-            ),
-        );
+impl<'a> JpegIncrementalWriter<'a> {
+    pub fn new(
+        capacity: usize,
+        reconstruction_info: &'a ReconstructionInfo,
+        rinfo: Option<&RestartSegmentCodingInfo>,
+        jpeg_header: &'a JpegHeader,
+        current_scan_index: usize,
+    ) -> JpegIncrementalWriter<'a> {
+        let mut huffw = BitWriter::new(Vec::with_capacity(capacity));
+
+        if let Some(rinfo) = rinfo {
+            huffw.reset_from_overhang_byte_and_num_bits(
+                rinfo.overhang_byte,
+                u32::from(rinfo.num_overhang_bits),
+            );
+        }
+
+        JpegIncrementalWriter {
+            last_dc: if let Some(r) = rinfo {
+                r.last_dc
+            } else {
+                [0i16; 4]
+            },
+            huffw,
+            jpeg_header,
+            reconstruction_info,
+            capacity,
+            current_scan_index,
+        }
     }
 
-    let mut huffw = BitWriter::new(data_buffer);
-    huffw.reset_from_overhang_byte_and_num_bits(
-        restart_info.overhang_byte,
-        u32::from(restart_info.num_overhang_bits),
-    );
+    pub fn amount_buffered(&self) -> usize {
+        self.huffw.amount_buffered()
+    }
 
-    let mut last_dc = restart_info.last_dc;
-
-    let mut decode_index = 0;
-    loop {
-        let cur_row = RowSpec::get_row_spec_from_index(
-            decode_index,
-            image_data,
-            rinfo.truncate_components.mcu_count_vertical,
-            &max_coded_heights,
-        );
-
-        decode_index += 1;
-
-        if cur_row.done {
-            break;
-        }
-
-        if cur_row.skip {
-            continue;
-        }
-
-        if cur_row.min_row_luma_y < restart_info.luma_y_start {
-            continue;
-        }
-
-        if cur_row.next_row_luma_y > restart_info.luma_y_end {
-            break; // we're done here
-        }
-
+    pub fn process_row(
+        &mut self,
+        cur_row: &RowSpec,
+        image_data: &[BlockBasedImage],
+    ) -> Result<bool> {
         if cur_row.last_row_to_complete_mcu {
-            recode_one_mcu_row(
-                &mut huffw,
-                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
-                &mut last_dc,
+            self.huffw.ensure_space(self.capacity);
+
+            return Ok(recode_one_mcu_row(
+                &mut self.huffw,
+                cur_row.mcu_row_index * self.jpeg_header.mcuh.get(),
+                &mut self.last_dc,
                 image_data,
-                jpeg_header,
-                rinfo,
-                0,
+                self.jpeg_header,
+                self.reconstruction_info,
+                self.current_scan_index,
             )
-            .context()?;
+            .context()?);
         }
+        Ok(false)
     }
 
-    Ok(huffw.detach_buffer())
+    pub fn detach_buffer(&mut self) -> Vec<u8> {
+        self.huffw.detach_buffer()
+    }
 }
 
 /// writes an entire scan vs only a range of rows as above.
@@ -132,11 +127,10 @@ pub fn jpeg_write_entire_scan(
     rinfo: &ReconstructionInfo,
     current_scan_index: usize,
 ) -> Result<Vec<u8>> {
+    let mut inc_write =
+        JpegIncrementalWriter::new(128 * 1024, rinfo, None, jpeg_header, current_scan_index);
+
     let max_coded_heights = rinfo.truncate_components.get_max_coded_heights();
-
-    let mut last_dc = [0i16; 4];
-
-    let mut huffw = BitWriter::new(Vec::with_capacity(128 * 1024));
 
     let mut decode_index = 0;
     loop {
@@ -157,25 +151,12 @@ pub fn jpeg_write_entire_scan(
             continue;
         }
 
-        if cur_row.last_row_to_complete_mcu {
-            let r = recode_one_mcu_row(
-                &mut huffw,
-                cur_row.mcu_row_index * jpeg_header.mcuh.get(),
-                &mut last_dc,
-                image_data,
-                jpeg_header,
-                rinfo,
-                current_scan_index,
-            )
-            .context()?;
-
-            if r {
-                break;
-            }
+        if inc_write.process_row(&cur_row, image_data)? {
+            break;
         }
     }
 
-    Ok(huffw.detach_buffer())
+    Ok(inc_write.detach_buffer())
 }
 
 #[inline(never)]
@@ -906,6 +887,56 @@ mod tests {
             f();
         }
     }
+}
+
+/// write a range of rows corresponding to the restart_info structure.
+/// Returns the encoded data as a buffer.
+///
+/// Only works with baseline non-progressive images.
+#[cfg(any(test, feature = "micro_benchmark"))]
+fn jpeg_write_baseline_row_range(
+    encoded_length: usize,
+    restart_info: &RestartSegmentCodingInfo,
+    image_data: &[BlockBasedImage],
+    jpeg_header: &JpegHeader,
+    rinfo: &ReconstructionInfo,
+) -> Result<Vec<u8>> {
+    let max_coded_heights: Vec<u32> = rinfo.truncate_components.get_max_coded_heights();
+
+    let mut writer =
+        JpegIncrementalWriter::new(encoded_length, rinfo, Some(restart_info), jpeg_header, 0);
+
+    let mut decode_index = 0;
+    loop {
+        let cur_row: RowSpec = RowSpec::get_row_spec_from_index(
+            decode_index,
+            image_data,
+            rinfo.truncate_components.mcu_count_vertical,
+            &max_coded_heights,
+        );
+
+        decode_index += 1;
+
+        if cur_row.done {
+            break;
+        }
+
+        if cur_row.skip {
+            continue;
+        }
+
+        if cur_row.luma_y < restart_info.luma_y_start {
+            continue;
+        }
+
+        if cur_row.luma_y > restart_info.luma_y_end {
+            break; // we're done here
+        }
+
+        writer.process_row(&cur_row, image_data).context()?;
+    }
+
+    Ok(writer.detach_buffer())
 }
 
 #[cfg(any(test, feature = "micro_benchmark"))]

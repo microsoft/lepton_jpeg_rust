@@ -11,7 +11,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Cursor, Read, Write};
 use std::mem::swap;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 use byteorder::WriteBytesExt;
@@ -19,6 +19,7 @@ use byteorder::WriteBytesExt;
 use super::simple_threadpool::LeptonThreadPool;
 
 use crate::lepton_error::{AddContext, ExitCode, Result};
+use crate::{LeptonError, Metrics};
 use crate::{helpers::*, lepton_error::err_exit_code, structs::partial_buffer::PartialBuffer};
 
 /// The message that is sent between the threads
@@ -305,16 +306,23 @@ impl MultiplexReader {
 /// of the results back to the caller.
 pub struct MultiplexReaderState<RESULT> {
     sender_channels: Vec<Sender<Message>>,
-    receiver_channels: Vec<Receiver<Result<RESULT>>>,
+    receiver_channels: Vec<Receiver<MultiplexReadResult<RESULT>>>,
     retention_bytes: usize,
     current_state: State,
     single_thread_work: Option<VecDeque<Box<dyn FnOnce() + Send>>>,
+    merged_metrics: Metrics,
 }
 
 enum State {
     StartBlock,
     U16Length(u8),
     Block(u8, usize),
+}
+
+pub enum MultiplexReadResult<RESULT> {
+    Result(RESULT),
+    Error(LeptonError),
+    Complete(Metrics),
 }
 
 /// Given a number of threads, this function will create a multiplexed reader state that
@@ -334,7 +342,7 @@ pub fn multiplex_read<FN, RESULT>(
     processor: FN,
 ) -> MultiplexReaderState<RESULT>
 where
-    FN: Fn(usize, &mut MultiplexReader, &Sender<Result<RESULT>>) -> Result<()>
+    FN: Fn(usize, &mut MultiplexReader, &Sender<MultiplexReadResult<RESULT>>) -> Result<()>
         + Send
         + Sync
         + 'static,
@@ -354,7 +362,7 @@ where
 
         let cloned_processor = arc_processor.clone();
 
-        let (result_tx, result_rx) = channel::<Result<RESULT>>();
+        let (result_tx, result_rx) = channel::<MultiplexReadResult<RESULT>>();
         result_receiver.push(result_rx);
 
         let f: Box<dyn FnOnce() + Send> = Box::new(move || {
@@ -369,7 +377,7 @@ where
             if let Err(e) =
                 catch_unwind_result(|| cloned_processor(partition_id, &mut proc_reader, &result_tx))
             {
-                let _ = result_tx.send(Err(e));
+                let _ = result_tx.send(MultiplexReadResult::Error(e));
             }
         });
 
@@ -389,6 +397,7 @@ where
         current_state: State::StartBlock,
         retention_bytes,
         single_thread_work,
+        merged_metrics: Metrics::default(),
     }
 }
 
@@ -482,6 +491,12 @@ impl<RESULT> MultiplexReaderState<RESULT> {
     /// will block until all threads are complete and return the first result or error it finds.
     /// If complete is false, this function will return immediately if no results are available.
     pub fn retrieve_result(&mut self, complete: bool) -> Result<Option<RESULT>> {
+        if let Some(value) =
+            Self::try_get_result(&mut self.receiver_channels, &mut self.merged_metrics)?
+        {
+            return Ok(Some(value));
+        }
+
         if complete {
             // if we are complete, send eof to all threads
             for partition_id in 0..self.sender_channels.len() {
@@ -492,34 +507,34 @@ impl<RESULT> MultiplexReaderState<RESULT> {
 
             // if we are running single threaded, now do all the work since we've buffered up everything
             // and broken the sender channels, so there's no danger of deadlock
-            if let Some(single_thread_work) = self.single_thread_work.take() {
-                // run all the remaining work on this thread
-                for f in single_thread_work {
+            if let Some(single_thread_work) = &mut self.single_thread_work {
+                while let Some(f) = single_thread_work.pop_front() {
                     f();
-                }
-            }
 
-            // if we are complete, then walk through all the channels to get the first result
-            while let Some(r) = self.receiver_channels.get_mut(0) {
-                match r.recv() {
-                    Ok(v) => match v {
-                        Ok(v) => return Ok(Some(v)),
-                        Err(e) => return Err(e),
-                    },
-                    Err(_) => {
-                        // channel is closed, remove it
-                        self.receiver_channels.remove(0);
+                    if let Some(value) =
+                        Self::try_get_result(&mut self.receiver_channels, &mut self.merged_metrics)?
+                    {
+                        return Ok(Some(value));
                     }
                 }
             }
-        } else {
-            // if we aren't complete, use non-blocking to try to get some results
-            // from the first thread
-            if let Some(r) = self.receiver_channels.get_mut(0) {
-                if let Ok(v) = r.try_recv() {
-                    match v {
-                        Ok(v) => return Ok(Some(v)),
-                        Err(e) => return Err(e),
+
+            // if we are complete, then walk through all the channels to get the first result by blocking
+            while let Some(r) = self.receiver_channels.get_mut(0) {
+                match r.recv() {
+                    Ok(v) => match v {
+                        MultiplexReadResult::Result(v) => return Ok(Some(v)),
+                        MultiplexReadResult::Error(e) => return Err(e),
+                        MultiplexReadResult::Complete(m) => {
+                            // finished, so remove it and try the next one
+                            self.merged_metrics.merge_from(m);
+                            self.receiver_channels.remove(0);
+                        }
+                    },
+                    Err(e) => {
+                        // channel is closed unexpectedly, clear out all channels and return error
+                        self.receiver_channels.clear();
+                        return Err(e.into());
                     }
                 }
             }
@@ -527,10 +542,51 @@ impl<RESULT> MultiplexReaderState<RESULT> {
         // nothing left to read
         Ok(None)
     }
+
+    /// tries to get a result from the receiver channels without blocking
+    fn try_get_result(
+        receiver_channels: &mut Vec<Receiver<MultiplexReadResult<RESULT>>>,
+        metrics: &mut Metrics,
+    ) -> Result<Option<RESULT>> {
+        // if we aren't complete, use non-blocking to try to get some results
+        // from the first thread
+        while let Some(r) = receiver_channels.get_mut(0) {
+            match r.try_recv() {
+                Ok(v) => match v {
+                    MultiplexReadResult::Result(v) => return Ok(Some(v)),
+                    MultiplexReadResult::Error(e) => return Err(e),
+                    MultiplexReadResult::Complete(m) => {
+                        // finished, so remove it and try the next one
+                        metrics.merge_from(m);
+                        receiver_channels.remove(0);
+                    }
+                },
+                Err(TryRecvError::Disconnected) => {
+                    // finished, so remove it and try the next one
+                    return Err(LeptonError::new(
+                        ExitCode::AssertionFailure,
+                        "multiplexed reader channel disconnected unexpectedly",
+                    ));
+                }
+                Err(TryRecvError::Empty) => {
+                    // no result yet, exit loop without result
+                    break;
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// takes the merged metrics from all the threads
+    pub fn take_metrics(&mut self) -> Metrics {
+        std::mem::take(&mut self.merged_metrics)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use byteorder::ReadBytesExt;
 
     use super::*;
@@ -578,12 +634,17 @@ mod tests {
                 &DEFAULT_THREAD_POOL
             },
             0,
-            |partition_id, reader, result_tx: &Sender<Result<usize>>| {
+            |partition_id, reader, result_tx: &Sender<MultiplexReadResult<usize>>| {
                 for i in partition_id as u32..10000 {
                     let read_partition_id = reader.read_u32::<byteorder::LittleEndian>()?;
                     assert_eq!(read_partition_id, i);
                 }
-                result_tx.send(Ok(partition_id))?;
+                result_tx.send(MultiplexReadResult::Result(partition_id))?;
+
+                let mut metrics = Metrics::default();
+                metrics.record_cpu_worker_time(Duration::new(1, 0));
+
+                result_tx.send(MultiplexReadResult::Complete(metrics))?;
                 Ok(())
             },
         );
@@ -604,6 +665,9 @@ mod tests {
             r.push(res);
         }
 
+        let metrics = multiplex_state.take_metrics();
+        assert_eq!(metrics.get_cpu_time_worker_time(), Duration::new(10, 0));
+
         assert_eq!(r[..], w[..]);
     }
 
@@ -614,7 +678,7 @@ mod tests {
             10,
             &DEFAULT_THREAD_POOL,
             0,
-            |_, _, _: &Sender<Result<()>>| -> Result<()> {
+            |_, _, _: &Sender<MultiplexReadResult<()>>| -> Result<()> {
                 Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
             },
         );
@@ -631,7 +695,7 @@ mod tests {
             10,
             &DEFAULT_THREAD_POOL,
             0,
-            |_, _, _: &Sender<Result<()>>| -> Result<()> {
+            |_, _, _: &Sender<MultiplexReadResult<()>>| -> Result<()> {
                 panic!();
             },
         );

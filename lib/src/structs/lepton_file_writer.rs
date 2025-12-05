@@ -393,6 +393,24 @@ mod tests {
         println!("{:x?}", lh.git_revision_prefix);
     }
 
+    /// ensure we fail if the output buffer is too small
+    #[test]
+    fn test_too_small_output() {
+        let original = read_file("slrcity", ".jpg");
+
+        let mut output = Vec::new();
+        output.resize(original.len() / 2, 0u8);
+
+        let r = encode_lepton(
+            &mut Cursor::new(&original),
+            &mut Cursor::new(&mut output[..]),
+            &EnabledFeatures::compat_lepton_vector_write(),
+            &DEFAULT_THREAD_POOL,
+        );
+
+        assert!(r.is_err() && r.err().unwrap().exit_code() == ExitCode::OsError);
+    }
+
     #[test]
     fn test_slrcity() {
         test_file("slrcity")

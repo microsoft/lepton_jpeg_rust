@@ -127,6 +127,13 @@ impl BitWriter {
         mem::take(&mut self.data_buffer)
     }
 
+    pub fn ensure_space(&mut self, amount: usize) {
+        if self.data_buffer.capacity() < amount {
+            let len = self.data_buffer.len();
+            self.data_buffer.reserve(amount - len);
+        }
+    }
+
     pub fn reset_from_overhang_byte_and_num_bits(&mut self, overhang_byte: u8, num_bits: u32) {
         self.data_buffer.clear();
 
@@ -138,6 +145,10 @@ impl BitWriter {
 
     pub fn has_no_remainder(&self) -> bool {
         return self.current_bit == 64;
+    }
+
+    pub fn amount_buffered(&self) -> usize {
+        self.data_buffer.len()
     }
 }
 

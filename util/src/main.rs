@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
     CpuTimeMeasure, DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonThreadPool,
-    LeptonThreadPriority, Metrics, SimpleThreadPool, StreamPosition, decode_lepton, dump_jpeg,
-    encode_lepton, encode_lepton_verify,
+    LeptonThreadPriority, Metrics, SimpleThreadPool, SingleThreadPool, StreamPosition,
+    decode_lepton, dump_jpeg, encode_lepton, encode_lepton_verify,
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
@@ -242,16 +242,24 @@ Options:
         enabled_features.use_16bit_dc_estimate = false;
     }
 
-    let thread_pool = if pargs.contains("--highpriority") {
+    let singlethreaded = pargs.contains("--singlethreaded");
+    let highpriority = pargs.contains("--highpriority");
+    let lowpriority = pargs.contains("--lowpriority");
+
+    let thread_pool: &dyn LeptonThreadPool = if highpriority {
         // used to force to run on p-cores, make sure this and
         // any threadpool threads are set to the highest priority
         &HIGH_PRIORITY_THREAD_POOL
-    } else if pargs.contains("--lowpriority") {
+    } else if lowpriority {
         // used to force to run on e-cores, make sure this and
         // any threadpool threads are set to the lowest priority
         &LOW_PRIORITY_THREAD_POOL
     } else {
-        &DEFAULT_THREAD_POOL
+        if singlethreaded {
+            &SingleThreadPool {}
+        } else {
+            &DEFAULT_THREAD_POOL
+        }
     };
 
     let filenames = pargs.finish();
@@ -331,6 +339,7 @@ Options:
                 )?;
             }
         }
+
         return Ok(());
     } else {
         let mut file_in = File::open(filenames[0].as_os_str())

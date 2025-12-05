@@ -9,8 +9,6 @@ use crate::consts::COLOR_CHANNEL_NUM_BLOCK_TYPES;
 use super::block_based_image::BlockBasedImage;
 
 pub struct RowSpec {
-    pub min_row_luma_y: u32,
-    pub next_row_luma_y: u32,
     pub luma_y: u32,
     pub component: usize,
     pub curr_y: u32,
@@ -51,8 +49,6 @@ impl RowSpec {
             done: false,
             mcu_row_index: mcu_row,
             component: num_cmp,
-            min_row_luma_y,
-            next_row_luma_y: min_row_luma_y + component_multiple[0],
             luma_y: min_row_luma_y,
             curr_y: 0,
             last_row_to_complete_mcu: false,
