@@ -959,4 +959,22 @@ mod tests {
         assert_eq!(output_vector.len(), original_data.len());
         assert!(output_vector == original_data);
     }
+
+    /// ensure we fail if the output buffer is too small
+    #[test]
+    fn test_too_small_output() {
+        let original = read_file("slrcity", ".lep");
+
+        let mut output = Vec::new();
+        output.resize(original.len() / 2, 0u8);
+
+        let r = decode_lepton(
+            &mut Cursor::new(&original),
+            &mut Cursor::new(&mut output[..]),
+            &EnabledFeatures::compat_lepton_vector_read(),
+            &DEFAULT_THREAD_POOL,
+        );
+
+        assert!(r.is_err() && r.err().unwrap().exit_code() == ExitCode::OsError);
+    }
 }
