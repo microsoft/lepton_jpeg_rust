@@ -6,6 +6,7 @@ authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
 [profile.release]
 debug = true
+lto = true
 
 [workspace]
 members = ["lib", "dll", "util", "python"]
