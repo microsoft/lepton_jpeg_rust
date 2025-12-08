@@ -84,7 +84,7 @@ pub unsafe extern "C" fn WrapperCompressImage(
     result_size: *mut u64,
 ) -> i32 {
     let mut cpu_usage: u64 = 0;
-    WrapperCompressImage2(
+    WrapperCompressImage3(
         input_buffer,
         input_buffer_size,
         output_buffer,
@@ -92,6 +92,8 @@ pub unsafe extern "C" fn WrapperCompressImage(
         number_of_threads as u32,
         result_size,
         (&mut cpu_usage) as *mut u64,
+        0,
+        std::ptr::null_mut(),
         0,
     )
 }
@@ -108,6 +110,35 @@ pub unsafe extern "C" fn WrapperCompressImage2(
     result_size: *mut u64,
     cpu_usage: *mut u64,
     flags: u32,
+) -> i32 {
+    WrapperCompressImage3(
+        input_buffer,
+        input_buffer_size,
+        output_buffer,
+        output_buffer_size,
+        number_of_threads,
+        result_size,
+        cpu_usage,
+        flags,
+        std::ptr::null_mut(),
+        0,
+    )
+}
+
+/// C ABI interface for compressing image, exposed from DLL
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
+pub unsafe extern "C" fn WrapperCompressImage3(
+    input_buffer: *const u8,
+    input_buffer_size: u64,
+    output_buffer: *mut u8,
+    output_buffer_size: u64,
+    number_of_threads: u32,
+    result_size: *mut u64,
+    cpu_usage: *mut u64,
+    flags: u32,
+    error_string: *mut std::os::raw::c_uchar,
+    error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
         let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
@@ -141,6 +172,13 @@ pub unsafe extern "C" fn WrapperCompressImage2(
             return 0;
         }
         Err(e) => {
+            if error_string_buffer_len > 0 {
+                copy_cstring_utf8_to_buffer(
+                    e.message(),
+                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
+                );
+            }
+
             return e.exit_code().as_integer_error_code();
         }
     }
@@ -158,7 +196,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     result_size: *mut u64,
 ) -> i32 {
     let mut cpu_usage: u64 = 0;
-    return WrapperDecompressImage3(
+    return WrapperDecompressImage4(
         input_buffer,
         input_buffer_size,
         output_buffer,
@@ -166,6 +204,8 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         number_of_threads as u32,
         result_size,
         (&mut cpu_usage) as *mut u64,
+        0,
+        std::ptr::null_mut(),
         0,
     );
 }
@@ -185,7 +225,7 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
     use_16bit_dc_estimate: bool,
 ) -> i32 {
     let mut cpu_usage: u64 = 0;
-    WrapperDecompressImage3(
+    WrapperDecompressImage4(
         input_buffer,
         input_buffer_size,
         output_buffer,
@@ -198,6 +238,8 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
         } else {
             0
         },
+        std::ptr::null_mut(),
+        0,
     )
 }
 
@@ -213,6 +255,35 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
     result_size: *mut u64,
     cpu_usage: *mut u64,
     flags: u32,
+) -> i32 {
+    WrapperDecompressImage4(
+        input_buffer,
+        input_buffer_size,
+        output_buffer,
+        output_buffer_size,
+        number_of_threads,
+        result_size,
+        cpu_usage,
+        flags,
+        std::ptr::null_mut(),
+        0,
+    )
+}
+
+/// C ABI interface for decompressing image, exposed from DLL.
+#[unsafe(no_mangle)]
+#[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
+pub unsafe extern "C" fn WrapperDecompressImage4(
+    input_buffer: *const u8,
+    input_buffer_size: u64,
+    output_buffer: *mut u8,
+    output_buffer_size: u64,
+    number_of_threads: u32,
+    result_size: *mut u64,
+    cpu_usage: *mut u64,
+    flags: u32,
+    error_string: *mut std::os::raw::c_uchar,
+    error_string_buffer_len: u64,
 ) -> i32 {
     match catch_unwind_result(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
@@ -277,6 +348,12 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
             return 0;
         }
         Err(e) => {
+            if error_string_buffer_len > 0 {
+                copy_cstring_utf8_to_buffer(
+                    e.message(),
+                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
+                );
+            }
             return e.exit_code().as_integer_error_code();
         }
     }
@@ -433,10 +510,12 @@ pub unsafe extern "C" fn decompress_image(
             }
         }
         Err(e) => {
-            copy_cstring_utf8_to_buffer(
-                e.message(),
-                std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
-            );
+            if error_string_buffer_len > 0 {
+                copy_cstring_utf8_to_buffer(
+                    e.message(),
+                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
+                );
+            }
             e.exit_code().as_integer_error_code()
         }
     }
@@ -612,6 +691,83 @@ mod tests {
                 (&mut original_size) as *mut u64,
                 (&mut cpu_usage) as *mut u64,
                 USE_SINGLE_THREAD_POOL,
+            );
+
+            assert_eq!(retval, 0);
+        }
+        assert_eq!(input.len() as u64, original_size);
+        assert_eq!(input[..], original[..(original_size as usize)]);
+    }
+
+    /// test version 3 of external interface with single thread
+    #[test]
+    fn extern_interface_3_single_thread() {
+        let input = read_file("slrcity", ".jpg");
+
+        let mut compressed = Vec::new();
+
+        compressed.resize(input.len() + 10000, 0);
+
+        let mut result_size: u64 = 0;
+        let mut cpu_usage: u64 = 0;
+
+        let mut error_string = [0u8; 1024];
+
+        unsafe {
+            let retval = WrapperCompressImage3(
+                input[..].as_ptr(),
+                0,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+                error_string.as_mut_ptr(),
+                error_string.len() as u64,
+            );
+            // error string should complain about invalid input
+            assert_ne!(retval, 0);
+
+            // convert null terminated error_string into str
+            let error_str = std::str::from_utf8(&error_string)
+                .unwrap()
+                .trim_end_matches(char::from(0));
+
+            assert!(error_str.contains("jpeg must start with with 0xff 0xd8"));
+
+            let retval = WrapperCompressImage3(
+                input[..].as_ptr(),
+                input.len() as u64,
+                compressed[..].as_mut_ptr(),
+                compressed.len() as u64,
+                8,
+                (&mut result_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+                error_string.as_mut_ptr(),
+                error_string.len() as u64,
+            );
+
+            assert_eq!(retval, 0);
+        }
+
+        let mut original = Vec::new();
+        original.resize(input.len() + 10000, 0);
+
+        let mut original_size: u64 = 0;
+        unsafe {
+            let retval = WrapperDecompressImage4(
+                compressed[..].as_ptr(),
+                result_size,
+                original[..].as_mut_ptr(),
+                original.len() as u64,
+                8,
+                (&mut original_size) as *mut u64,
+                (&mut cpu_usage) as *mut u64,
+                USE_SINGLE_THREAD_POOL,
+                error_string.as_mut_ptr(),
+                error_string.len() as u64,
             );
 
             assert_eq!(retval, 0);

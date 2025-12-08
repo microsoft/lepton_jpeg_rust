@@ -10,10 +10,12 @@ use wide::{i16x8, i32x8, u16x8};
 use crate::consts::*;
 use crate::enabled_features;
 use crate::jpeg::block_based_image::AlignedBlock;
+use crate::lepton_error::err_exit_code;
 use crate::structs::block_context::NeighborData;
 use crate::structs::idct::*;
 use crate::structs::model::*;
 use crate::structs::quantization_tables::*;
+use crate::{ExitCode, Result};
 
 pub struct ProbabilityTables {
     left_present: bool,
@@ -212,21 +214,28 @@ impl ProbabilityTables {
         qt: &QuantizationTables,
         coefficient_tr: usize,
         pred: &[i32; 8],
-    ) -> i32 {
+    ) -> Result<i32> {
         if !ALL_PRESENT
             && ((HORIZONTAL && !self.above_present) || (!HORIZONTAL && !self.left_present))
         {
-            return 0;
+            return Ok(0);
         }
 
-        let mut best_prior: i32 = pred[if HORIZONTAL {
+        let best_prior: i32 = pred[if HORIZONTAL {
             coefficient_tr >> 3
         } else {
             coefficient_tr
         }];
-        best_prior /= (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
 
-        best_prior
+        let div = (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
+        if let Some(x) = best_prior.checked_div(div) {
+            return Ok(x);
+        } else {
+            return err_exit_code(
+                ExitCode::UnsupportedJpegWithZeroIdct0,
+                "integer overflow in coefficient context calculation",
+            );
+        }
     }
 
     pub fn adv_predict_dc_pix<const ALL_PRESENT: bool>(

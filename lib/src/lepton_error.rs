@@ -47,6 +47,8 @@ pub enum ExitCode {
     UnsupportedJpeg = 42,
 
     /// The JPEG file has a zero IDCT, which is not supported by the library.
+    /// Although the C++ library doesn't explicitly disallow this, it will lead to
+    /// undefined behavior depending on C++, since it can lead to a division-by-zero.
     UnsupportedJpegWithZeroIdct0 = 43,
 
     /// The JPEG file has invalid reset codes in the stream
