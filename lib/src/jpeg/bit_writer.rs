@@ -203,7 +203,7 @@ mod tests {
             let mut r = BitReader::new(Cursor::new(&buf));
 
             for i in 1..2048 {
-                assert_eq!(i, r.read(u32_bit_length(i as u32) as u32).unwrap());
+                assert_eq!(i, r.read(u32_bit_length(i) as u32).unwrap());
             }
 
             let mut pad = Some(0xff);
@@ -242,7 +242,7 @@ mod tests {
             if rng.gen_range(0..100) == 0 {
                 test_data.push(Action::Pad(0xff));
             } else {
-                test_data.push(Action::Write(v as u16, bits as u8));
+                test_data.push(Action::Write(v, bits));
             }
         }
         test_data.push(Action::Pad(0xff));
@@ -275,16 +275,16 @@ mod tests {
                         let (peekcode, peekbits) = r.peek();
                         let num_valid_bits = peekbits.min(8).min(u32::from(numbits));
 
-                        let mask = (0xff00 >> num_valid_bits) as u8;
+                        let mask = 0xff00u32 >> num_valid_bits;
 
                         assert_eq!(
-                            expected_peek_byte & mask,
+                            expected_peek_byte as u32 & mask,
                             peekcode & mask,
                             "peek unexpected result"
                         );
 
                         assert_eq!(
-                            code,
+                            u32::from(code),
                             r.read(numbits as u32).unwrap(),
                             "read unexpected result"
                         );
