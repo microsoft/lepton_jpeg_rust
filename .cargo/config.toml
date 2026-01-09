@@ -12,3 +12,10 @@ rustflags = ["-Clink-args=/DYNAMICBASE /CETCOMPAT"]
 
 [env]
 WORKSPACE_ROOT = { value = "", relative = true }
+
+# /sdl - Enable more security features and warnings.
+# /Qspectre - Enable mitigations for CVE 2017-5753, for a class of Spectre attacks.
+# /Zi - Generates complete debugging information.
+# /W3 - set error level
+# https://learn.microsoft.com/en-us/cpp/build/reference/compiler-options-listed-alphabetically?view=msvc-170
+CL = "/Qspectre /sdl /Zi /W3"

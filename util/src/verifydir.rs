@@ -135,20 +135,20 @@ pub fn call_executable_with_input(
     corrupt_data_if_enabled(corruption_seed, &mut input_data);
 
     // write to temporary file with potential corruption
-    let temp_filename_input =
+    let temp_jpeg_file =
         std::env::temp_dir().join(format!("lepton_jpeg_util_cpp_{}.jpg", Uuid::new_v4()));
-    std::fs::write(&temp_filename_input, &input_data).unwrap();
+    std::fs::write(&temp_jpeg_file, &input_data).unwrap();
 
-    let temp_filename_output =
+    let temp_lepton_file =
         std::env::temp_dir().join(format!("lepton_jpeg_util_cpp_{}.lep", Uuid::new_v4()));
 
     // delete output if already exists
-    let _ = std::fs::remove_file(&temp_filename_output);
+    let _ = std::fs::remove_file(&temp_lepton_file);
 
     // Spawn the command
     let child = Command::new(cpp_executable)
-        .arg(&temp_filename_input)
-        .arg(&temp_filename_output)
+        .arg(&temp_jpeg_file)
+        .arg(&temp_lepton_file)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -169,7 +169,7 @@ pub fn call_executable_with_input(
             stderr
         );
     } else {
-        let cpp_lepton_data = fs::read(&temp_filename_output).unwrap();
+        let cpp_lepton_data = fs::read(&temp_lepton_file).unwrap();
 
         let mut writer = Vec::new();
 
@@ -179,13 +179,17 @@ pub fn call_executable_with_input(
             &EnabledFeatures::compat_lepton_vector_read(),
             &RayonPool {},
         ) {
-            panic!(
-                "Error decoding CPP output for file {}: {} {} seed:{:?}",
-                input_filename.to_string_lossy(),
-                e,
+            write_exit(
+                &format!("error rust decoding {:?}", e),
+                input_filename,
+                corruption_seed,
+                &input_data,
                 stderr,
-                corruption_seed
+                exit_code,
+                &cpp_lepton_data,
+                &writer,
             );
+            return;
         }
 
         if writer != input_data {
@@ -195,22 +199,118 @@ pub fn call_executable_with_input(
                 writer.len()
             );
 
-            fs::write("r_corrupted_input.jpg", &input_data).unwrap();
-            fs::write("r_cpp_lepton.lep", &cpp_lepton_data).unwrap();
-            fs::write("r_rust_recorded.jpg", &writer).unwrap();
-
-            panic!(
-                "Verification failed for file {}: output does not match original {} {} seed:{:?}",
-                input_filename.to_string_lossy(),
-                exit_code,
+            write_exit(
+                "mismatch decoding",
+                input_filename,
+                corruption_seed,
+                &input_data,
                 stderr,
-                corruption_seed
+                exit_code,
+                &cpp_lepton_data,
+                &writer,
             );
+            return;
         }
+
+        _ = std::fs::remove_file(&temp_jpeg_file);
+        _ = std::fs::remove_file(&temp_lepton_file);
+
+        // now go the other way, try to compress and make sure we can uncompress
+        if let Ok((rustcompressed,_metrics)) = lepton_jpeg::encode_lepton_verify(
+            &input_data,
+            &EnabledFeatures::compat_lepton_vector_write(),
+            &RayonPool {},
+        ) {
+            fs::write(&temp_lepton_file, &rustcompressed).unwrap();
+
+            // first verify that the we could decode it ourselves
+            let mut rustdecoded = Vec::new();
+            if let Ok(_) = lepton_jpeg::decode_lepton(
+                &mut Cursor::new(&rustcompressed),
+                &mut rustdecoded,
+                &EnabledFeatures::compat_lepton_vector_read(),
+                &RayonPool {},
+            ) {
+                if rustdecoded == input_data {
+
+                    // now write it as a temporary file and try to decode it with CPP
+                    let child = Command::new(cpp_executable)
+                        .arg(&temp_lepton_file)
+                        .arg(&temp_jpeg_file)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .unwrap();
+
+                    // Wait for the child process to exit and collect output
+                    let output = child.wait_with_output().unwrap();
+
+                    // Extract the stdout, stderr, and exit status
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let exit_code = output.status.code().unwrap_or(-10000); // Handle the case where exit code is None
+
+                    if exit_code != 0 {
+                        write_exit(
+                            "cpp decode failed",
+                            input_filename,
+                            corruption_seed,
+                            &input_data,
+                            stderr,
+                            exit_code,
+                            &cpp_lepton_data,
+                            &writer,
+                        );
+                        return;
+                    }
+
+                    let cpp_redecoded = fs::read(&temp_jpeg_file).unwrap();
+                    if cpp_redecoded != input_data {
+                        write_exit(
+                            "mismatch cpp decoding",
+                            input_filename,
+                            corruption_seed,
+                            &input_data,
+                            stderr,
+                            exit_code,
+                            &cpp_lepton_data,
+                            &writer,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        _ = std::fs::remove_file(&temp_jpeg_file);
+        _ = std::fs::remove_file(&temp_lepton_file);
 
         log::info!("Verified file: {}", input_filename.to_string_lossy());
     }
 
-    _ = std::fs::remove_file(&temp_filename_input);
-    _ = std::fs::remove_file(&temp_filename_output);
+    _ = std::fs::remove_file(&temp_jpeg_file);
+    _ = std::fs::remove_file(&temp_lepton_file);
+}
+
+fn write_exit(
+    error_message: &str,
+    input_filename: &OsStr,
+    corruption_seed: &mut Option<u64>,
+    input_data: &Vec<u8>,
+    stderr: String,
+    exit_code: i32,
+    cpp_lepton_data: &Vec<u8>,
+    writer: &Vec<u8>,
+) {
+    fs::write("r_corrupted_input.jpg", input_data).unwrap();
+    fs::write("r_cpp_lepton.lep", &cpp_lepton_data).unwrap();
+    fs::write("r_rust_recorded.jpg", &writer).unwrap();
+
+    panic!(
+        "{} failed for file {}: output does not match original {} {} seed:{:?}",
+        error_message,
+        input_filename.to_string_lossy(),
+        exit_code,
+        stderr,
+        corruption_seed
+    );
 }
