@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::fs::{File, OpenOptions, remove_file};
+use std::fs::{File, OpenOptions};
 use std::io::{Cursor, IsTerminal, Read, Seek, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,6 +19,10 @@ use lepton_jpeg::{
 };
 use log::{error, info};
 use simple_logger::SimpleLogger;
+
+use crate::verifydir::corrupt_data_if_enabled;
+
+mod verifydir;
 
 static LOW_PRIORITY_THREAD_POOL: SimpleThreadPool =
     SimpleThreadPool::new(LeptonThreadPriority::Low);
@@ -273,22 +277,19 @@ Options:
         }
     }
 
-    // if we are verifying a directory, then we need to recursively verify all files in the directory
-    if let Some(verify_dir) = verify_dir {
-        execute_verify_dir(
-            &cppverify,
-            &verify_dir.as_path(),
-            &enabled_features,
-            verify,
-            &mut corrupt,
-            thread_pool,
-        )?;
-        return Ok(());
-    }
-
     // only output the log if we are connected to a console (otherwise if there is redirection we would corrupt the file)
     if stdout().is_terminal() {
         SimpleLogger::new().with_level(filter_level).init().unwrap();
+    }
+
+    // if we are verifying a directory, then we need to recursively verify all files in the directory
+    if let Some(verify_dir) = verify_dir {
+        verifydir::verify_dir(
+            verify_dir.as_path(),
+            cppverify.as_ref().unwrap(),
+            &mut corrupt,
+        )?;
+        return Ok(());
     }
 
     if dump {
@@ -464,121 +465,6 @@ fn id_file_type(input_data: &[u8]) -> Result<FileType, LeptonError> {
         )
         .into());
     })
-}
-
-/// randomly corrupts data if there is a seed
-fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>) {
-    fn simple_lcg(seed: &mut u64) -> u64 {
-        let r = seed.wrapping_mul(6364136223846793005) + 1;
-        *seed = r;
-        r
-    }
-
-    if let Some(seed) = seed {
-        if input_data.len() > 0 {
-            let r = simple_lcg(seed) as usize % input_data.len();
-
-            let bitnumber = simple_lcg(seed) as usize % 8;
-
-            input_data[r] ^= 1 << bitnumber;
-        }
-    }
-}
-
-/// recursively verify all files in a directory, including potentially verifying it with the CPP version of the decoder
-/// to make sure that we didn't break the format in some unexpected way
-fn execute_verify_dir(
-    cpp_executable: &Option<PathBuf>,
-    dir: &Path,
-    enabled_features: &EnabledFeatures,
-    verify: bool,
-    corrupt_data_seed: &mut Option<u64>,
-    thread_pool: &dyn LeptonThreadPool,
-) -> Result<(), LeptonError> {
-    let entries;
-    match std::fs::read_dir(dir) {
-        Ok(e) => entries = e,
-        Err(e) => {
-            eprintln!("error reading directory {:?} {:?}", dir, e);
-            return Ok(());
-        }
-    }
-
-    for entry in entries {
-        let entry = entry.unwrap();
-        let path = entry.path();
-
-        if path.is_dir() {
-            execute_verify_dir(
-                cpp_executable,
-                &path,
-                enabled_features,
-                verify,
-                corrupt_data_seed,
-                thread_pool,
-            )?;
-            continue;
-        }
-
-        if let Some(x) = path.extension() {
-            if x != "jpg" && x != "jpeg" {
-                continue;
-            }
-
-            let mut file_in;
-            match File::open(&path) {
-                Ok(f) => file_in = f,
-                Err(e) => {
-                    eprintln!("error reading file {:?} {:?}", path, e);
-                    continue;
-                }
-            }
-
-            let mut original_contents = Vec::new();
-            file_in.read_to_end(&mut original_contents).unwrap();
-
-            corrupt_data_if_enabled(corrupt_data_seed, &mut original_contents);
-
-            match do_work(
-                FileType::Jpeg,
-                verify,
-                &original_contents,
-                &enabled_features,
-                thread_pool,
-            ) {
-                Err(e) => {
-                    eprintln!("{:?} error {}", path, e);
-                }
-                Ok((output, _)) => {
-                    if let Some(cpp_executable) = cpp_executable {
-                        // create the input file for the lepton C++ decoder
-                        let verify_output = std::env::temp_dir().join("lepton_jpeg_util_cpp.lep");
-
-                        let mut file_out = File::create(&verify_output).unwrap();
-                        file_out.write_all(&output[..]).unwrap();
-                        drop(file_out);
-
-                        let r = execute_cpp_verify(
-                            cpp_executable,
-                            verify_output.as_os_str(),
-                            &original_contents,
-                        );
-                        let _ = remove_file(verify_output);
-                        if r.is_err() {
-                            eprintln!("{:?} CPP_VERIFY error {:?}", path, r);
-                            if let Some(s) = corrupt_data_seed {
-                                eprintln!("corruption seed was {0}", s);
-                            }
-                            // abort here, this is bad
-                            return r;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn execute_cpp_verify(

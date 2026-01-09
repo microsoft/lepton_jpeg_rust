@@ -263,11 +263,6 @@ impl<'a> LeptonFileReader<'a> {
             );
         }
 
-        let mut limited_output = LimitedOutputWriter {
-            inner: output,
-            amount_left: &mut self.jpeg_file_size_left,
-        };
-
         self.total_read_size += in_buffer.len() as u64;
 
         let mut in_buffer = PartialBuffer::new(in_buffer, &mut self.extra_buffer);
@@ -284,7 +279,8 @@ impl<'a> LeptonFileReader<'a> {
                             .context()?;
 
                         self.state = DecoderState::CompressedHeader(compressed_header_size);
-                        *limited_output.amount_left = self.lh.jpeg_file_size.into();
+
+                        self.jpeg_file_size_left = u64::from(self.lh.jpeg_file_size);
                     }
                 }
                 DecoderState::CompressedHeader(compressed_length) => {
@@ -297,11 +293,20 @@ impl<'a> LeptonFileReader<'a> {
                             )
                             .context()?;
 
+                        // we need to truncate our file to the size minus the garbage data so
+                        // that when we hit the garbage data, we have room to write it all out
+                        self.jpeg_file_size_left -= self.lh.rinfo.garbage_data.len() as u64;
+
                         self.state = DecoderState::CMP();
                     }
                 }
                 DecoderState::CMP() => {
                     if let Some(v) = in_buffer.take(3, 0) {
+                        let mut limited_output = LimitedOutputWriter {
+                            inner: output,
+                            amount_left: &mut self.jpeg_file_size_left,
+                        };
+
                         self.state = Self::process_cmp(
                             v,
                             &self.lh,
@@ -325,12 +330,24 @@ impl<'a> LeptonFileReader<'a> {
                             results.push(r);
                         }
 
+                        let mut limited_output = LimitedOutputWriter {
+                            inner: output,
+                            amount_left: &mut self.jpeg_file_size_left,
+                        };
+
                         Self::process_progressive(
                             &mut self.lh,
                             &self.enabled_features,
                             results,
                             &mut limited_output,
                         )?;
+
+                        write_tail(&mut self.lh, &mut limited_output)?;
+
+                        // here we write out any garbage data verbatim without truncating it
+                        output
+                            .write_all(&mut self.lh.rinfo.garbage_data)
+                            .context()?;
 
                         self.metrics.merge_from(state.take_metrics());
 
@@ -339,6 +356,11 @@ impl<'a> LeptonFileReader<'a> {
                 }
                 DecoderState::ScanBaseline(state) => {
                     state.process_buffer(&mut in_buffer)?;
+
+                    let mut limited_output = LimitedOutputWriter {
+                        inner: output,
+                        amount_left: &mut self.jpeg_file_size_left,
+                    };
 
                     // baseline images can return partial results as decoding progresses,
                     // send these to the output by querying the state machine with complete
@@ -375,6 +397,10 @@ impl<'a> LeptonFileReader<'a> {
                         }
 
                         write_tail(&mut self.lh, &mut limited_output)?;
+                        // here we write out any garbage data verbatim without truncating it
+                        output
+                            .write_all(&mut self.lh.rinfo.garbage_data)
+                            .context()?;
 
                         self.metrics.merge_from(state.take_metrics());
 
@@ -492,8 +518,6 @@ impl<'a> LeptonFileReader<'a> {
             scnc += 1;
         }
 
-        write_tail(lh, output)?;
-
         Ok(())
     }
 
@@ -609,7 +633,6 @@ fn write_tail(lh: &mut LeptonHeader, output: &mut impl Write) -> Result<()> {
     output
         .write_all(&lh.rinfo.raw_jpeg_header[lh.raw_jpeg_header_read_index..])
         .context()?;
-    output.write_all(&mut lh.rinfo.garbage_data).context()?;
     Ok(())
 }
 
@@ -976,5 +999,28 @@ mod tests {
         );
 
         assert!(r.is_err() && r.err().unwrap().exit_code() == ExitCode::OsError);
+    }
+
+    /// tests corner case where we have garbage data due to the trunction of the file,
+    /// but the garbage data is not actually valid JPEG data. So basically what happened
+    /// was that the file got truncated mid-byte and the remaining bits are just random.
+    #[test]
+    fn test_truncated_with_bad_garbage_data() {
+        let original = read_file("truncbad", ".lep");
+
+        let mut output = Vec::new();
+
+        let _ = decode_lepton(
+            &mut Cursor::new(&original),
+            &mut Cursor::new(&mut output),
+            &EnabledFeatures::compat_lepton_vector_read(),
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        let jpg = read_file("truncbad", ".jpg");
+
+        assert_eq!(jpg.len(), output.len());
+        assert!(output == jpg);
     }
 }
