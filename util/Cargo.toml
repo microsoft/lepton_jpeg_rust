@@ -12,6 +12,9 @@ lepton_jpeg = { path = "../lib" }
 pico-args = "0.5"
 log = "0.4"
 simple_logger ="5.0"
+rayon = "1" 
+uuid = { version = "1.19", features = ["v4"] }
+winpipe = "0.1"
 
 [[bin]]
 name="lepton_jpeg_util"

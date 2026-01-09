@@ -64,6 +64,7 @@ fn verify_decode(
         "trailingrst",
         "trailingrst2",
         "trunc",
+        "truncbad",          // the lepton format is truncated and invalid
         "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
         "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
     )]
