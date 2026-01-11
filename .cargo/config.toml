@@ -6,7 +6,7 @@ rustflags = ["-Ccontrol-flow-guard", "-Ctarget-feature=+crt-static"]
 
 # -Clink-args=/DYNAMICBASE /CETCOMPAT: Enable "shadow stack" (https://learn.microsoft.com/en-us/cpp/build/reference/cetcompat)
 [target.'cfg(all(target_os = "windows", any(target_arch = "i686", target_arch = "x86_64")))']
-rustflags = ["-Clink-args=/DYNAMICBASE /CETCOMPAT"]
+rustflags = ["-Clink-arg=/DYNAMICBASE", "-Clink-arg=/CETCOMPAT"]
 
 [registries]
 

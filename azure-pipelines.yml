@@ -78,6 +78,7 @@ extends:
                     copy target\release\lepton_jpeg_util.pdb target\release\lepton_jpeg_util_avx2.pdb
                     set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static -Clink-args=/DYNAMICBASE -Clink-args=/CETCOMPAT
                     cargo build --workspace --locked --release 2>&1
+                    rd /s /q target\release\build
 
                   displayName: 'Build Release'
                   
