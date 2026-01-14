@@ -701,8 +701,12 @@ fn baseline_decoding_thread(
 
     const BUFFER_SIZE: usize = 128 * 1024;
 
-    // track how muchd data we can generate
-    let mut amount_left = thread_handoff.segment_size as usize;
+    // track how much data we can generate (0 means unlimited matching C++)
+    let mut amount_left = if thread_handoff.segment_size == 0 {
+        usize::MAX
+    } else {
+        thread_handoff.segment_size as usize
+    };
 
     let mut inc_writer =
         JpegIncrementalWriter::new(BUFFER_SIZE, rinfo, Some(&restart_info), jpeg_header, 0);
@@ -1022,5 +1026,11 @@ mod tests {
 
         assert_eq!(jpg.len(), output.len());
         assert!(output == jpg);
+    }
+
+    /// Test decoding a file where segment_size is 0 (meaning unlimited).
+    #[test]
+    fn test_zero_segment_size() {
+        test_file("zero_segment_size")
     }
 }
