@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_util"
-version = "0.5.7"
+version = "0.5.5"
 dependencies = [
  "lepton_jpeg",
  "log",
