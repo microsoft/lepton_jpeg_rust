@@ -546,6 +546,15 @@ impl Default for JpegHeader {
 }
 
 impl JpegHeader {
+    /// true if this image is a single scan, which can be partitioned and decode
+    /// completely independently by separate threads. If this is not the case, then
+    /// we need to decode the entire image in memory and then encode the JPEG sequentially.
+    pub fn is_single_scan(&self) -> bool {
+        assert!(self.jpeg_type != JpegType::Unknown);
+
+        self.jpeg_type == JpegType::Sequential && self.cmpc == self.cs_cmpc
+    }
+
     #[inline(always)]
     pub(super) fn get_huff_dc_codes(&self, cmp: usize) -> &HuffCodes {
         &self.h_codes[0][usize::from(self.cmp_info[cmp].huff_dc)]
