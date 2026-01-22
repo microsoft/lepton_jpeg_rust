@@ -5,7 +5,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 #![forbid(trivial_numeric_casts)]
-#![forbid(unused_crate_dependencies)]
 
 use std::{
     collections::VecDeque,

@@ -66,6 +66,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
+name = "cc"
+version = "1.2.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4932aefd12402b36c60956a4fe0035421f544799057659ff86f923657aada3"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,6 +271,12 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 
 [[package]]
 name = "flate2"
@@ -485,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -503,16 +519,17 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_dll"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "lepton_jpeg",
+ "msvc_spectre_libs",
  "rayon",
  "rstest",
 ]
 
 [[package]]
 name = "lepton_jpeg_python"
-version = "0.5.5"
+version = "0.5.7"
 dependencies = [
  "lepton_jpeg",
  "pyo3",
@@ -533,10 +550,11 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_util"
-version = "0.5.5"
+version = "0.5.7"
 dependencies = [
  "lepton_jpeg",
  "log",
+ "msvc_spectre_libs",
  "pico-args",
  "rayon",
  "simple_logger",
@@ -579,6 +597,15 @@ checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "msvc_spectre_libs"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29e871a9861f3664f18b7e04e9301d4edd55090c2dadb4b1c602e26ab32b1f5b"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -980,6 +1007,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "shlex"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "simd-adler32"
