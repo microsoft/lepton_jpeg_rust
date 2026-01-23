@@ -794,55 +794,49 @@ mod tests {
         let mut reconstructed = Vec::new();
         reconstructed.extend_from_slice(&SOI);
 
-        match jpeg_header.jpeg_type {
-            JpegType::Sequential => {
-                // sequential JPEG consists of a single header + scan
-                reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
+        if jpeg_header.is_single_scan() {
+            // sequential JPEG consists of a single header + scan
+            reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
 
-                let mut prev_offset = 0;
-                for (offset, coding_info) in partitions {
-                    let mut r = jpeg_write_baseline_row_range(
-                        (offset - prev_offset) as usize,
-                        &coding_info,
-                        &image_data,
-                        &jpeg_header,
-                        &rinfo,
-                    )
-                    .unwrap();
+            let mut prev_offset = 0;
+            for (offset, coding_info) in partitions {
+                let mut r = jpeg_write_baseline_row_range(
+                    (offset - prev_offset) as usize,
+                    &coding_info,
+                    &image_data,
+                    &jpeg_header,
+                    &rinfo,
+                )
+                .unwrap();
 
-                    reconstructed.append(&mut r);
+                reconstructed.append(&mut r);
 
-                    prev_offset = offset;
-                }
-
-                assert_eq!(reconstructed.len(), end_scan_position as usize);
-
-                reconstructed.extend_from_slice(&EOI);
+                prev_offset = offset;
             }
-            JpegType::Progressive => {
-                // progressive JPEG consists of header + scan, header + scan, etc
-                let mut scnc = 0;
 
-                for (jh, raw_header) in headers {
-                    // progressive JPEG consists of headers + scan
-                    reconstructed.extend_from_slice(&raw_header);
+            assert_eq!(reconstructed.len(), end_scan_position as usize);
 
-                    let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
+            reconstructed.extend_from_slice(&EOI);
+        } else {
+            // progressive JPEG consists of header + scan, header + scan, etc
+            let mut scnc = 0;
 
-                    reconstructed.extend_from_slice(&scan);
+            for (jh, raw_header) in headers {
+                // progressive JPEG consists of headers + scan
+                reconstructed.extend_from_slice(&raw_header);
 
-                    // advance to next scan
-                    scnc += 1;
-                }
+                let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
 
-                reconstructed.extend_from_slice(&EOI);
+                reconstructed.extend_from_slice(&scan);
 
-                // progressive includes EOI in the scan
-                assert_eq!(reconstructed.len(), end_scan_position as usize);
+                // advance to next scan
+                scnc += 1;
             }
-            _ => {
-                panic!("unexpected JPEG type: {:?}", jpeg_header.jpeg_type);
-            }
+
+            reconstructed.extend_from_slice(&EOI);
+
+            // progressive includes EOI in the scan
+            assert_eq!(reconstructed.len(), end_scan_position as usize);
         }
 
         reconstructed

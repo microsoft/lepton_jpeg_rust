@@ -531,7 +531,12 @@ impl<'a> LeptonFileReader<'a> {
         if v[..] != LEPTON_HEADER_COMPLETION_MARKER {
             return err_exit_code(ExitCode::BadLeptonFile, "CMP marker not found");
         }
-        Ok(if lh.jpeg_header.jpeg_type == JpegType::Progressive {
+
+        // use progressive logic, which reads the entire block into memory and then performs
+        // the jpeg decoding. This permits multiple scans that are each encoded in two cases:
+        //  - progressive images
+        //  - baseline multiscan images (rare but permitted)
+        Ok(if !lh.jpeg_header.is_single_scan() {
             let mux = Self::run_lepton_decoder_threads(
                 lh,
                 enabled_features,
@@ -1001,12 +1006,8 @@ mod tests {
         assert!(r.is_err() && r.err().unwrap().exit_code() == ExitCode::OsError);
     }
 
-    /// tests corner case where we have garbage data due to the trunction of the file,
-    /// but the garbage data is not actually valid JPEG data. So basically what happened
-    /// was that the file got truncated mid-byte and the remaining bits are just random.
-    #[test]
-    fn test_truncated_with_bad_garbage_data() {
-        let original = read_file("truncbad", ".lep");
+    fn verifydecode(filename: &str) {
+        let original = read_file(filename, ".lep");
 
         let mut output = Vec::new();
 
@@ -1018,9 +1019,17 @@ mod tests {
         )
         .unwrap();
 
-        let jpg = read_file("truncbad", ".jpg");
+        let jpg = read_file(filename, ".jpg");
 
         assert_eq!(jpg.len(), output.len());
         assert!(output == jpg);
+    }
+
+    /// tests corner case where we have garbage data due to the trunction of the file,
+    /// but the garbage data is not actually valid JPEG data. So basically what happened
+    /// was that the file got truncated mid-byte and the remaining bits are just random.
+    #[test]
+    fn test_truncated_with_bad_garbage_data() {
+        verifydecode("truncbad");
     }
 }

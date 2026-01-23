@@ -97,10 +97,10 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
     on_header_callback(jpeg_header, &rinfo.raw_jpeg_header);
 
-    if !enabled_features.progressive && jpeg_header.jpeg_type == JpegType::Progressive {
+    if !enabled_features.progressive && !jpeg_header.is_single_scan() {
         return err_exit_code(
             ExitCode::ProgressiveUnsupported,
-            "file is progressive, but this is disabled",
+            "file is progressive or contains multiple scans, but this is disabled",
         )
         .context();
     }
@@ -151,7 +151,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
         .context();
     }
 
-    if jpeg_header.jpeg_type == JpegType::Sequential {
+    if jpeg_header.is_single_scan() {
         if rinfo.early_eof_encountered {
             if enabled_features.stop_reading_at_eoi {
                 return err_exit_code(ExitCode::ShortRead, "early EOF encountered");
@@ -200,7 +200,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             reader.read_to_end(&mut rinfo.garbage_data).context()?;
         }
     } else {
-        assert!(jpeg_header.jpeg_type == JpegType::Progressive);
+        assert!(jpeg_header.jpeg_type != JpegType::Unknown);
 
         if rinfo.early_eof_encountered {
             return err_exit_code(
