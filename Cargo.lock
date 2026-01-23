@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_root"
-version = "0.5.8"
+version = "0.0.0"
 dependencies = [
  "criterion",
  "lepton_jpeg",
