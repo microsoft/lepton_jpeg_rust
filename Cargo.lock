@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_dll"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "lepton_jpeg",
  "msvc_spectre_libs",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_python"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "lepton_jpeg",
  "pyo3",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_root"
-version = "0.5.6"
+version = "0.5.8"
 dependencies = [
  "criterion",
  "lepton_jpeg",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "lepton_jpeg_util"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "lepton_jpeg",
  "log",
