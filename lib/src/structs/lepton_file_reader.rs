@@ -295,7 +295,9 @@ impl<'a> LeptonFileReader<'a> {
 
                         // we need to truncate our file to the size minus the garbage data so
                         // that when we hit the garbage data, we have room to write it all out
-                        self.jpeg_file_size_left -= self.lh.rinfo.garbage_data.len() as u64;
+                        if !self.lh.bad_truncation_version() {
+                            self.jpeg_file_size_left -= self.lh.rinfo.garbage_data.len() as u64;
+                        }
 
                         self.state = DecoderState::CMP();
                     }
@@ -345,9 +347,7 @@ impl<'a> LeptonFileReader<'a> {
                         write_tail(&mut self.lh, &mut limited_output)?;
 
                         // here we write out any garbage data verbatim without truncating it
-                        output
-                            .write_all(&mut self.lh.rinfo.garbage_data)
-                            .context()?;
+                        write_garbage_data(&self.lh, limited_output)?;
 
                         self.metrics.merge_from(state.take_metrics());
 
@@ -397,10 +397,8 @@ impl<'a> LeptonFileReader<'a> {
                         }
 
                         write_tail(&mut self.lh, &mut limited_output)?;
-                        // here we write out any garbage data verbatim without truncating it
-                        output
-                            .write_all(&mut self.lh.rinfo.garbage_data)
-                            .context()?;
+
+                        write_garbage_data(&self.lh, limited_output)?;
 
                         self.metrics.merge_from(state.take_metrics());
 
@@ -761,6 +759,26 @@ fn baseline_decoding_thread(
     sender.send(MultiplexReadResult::Result(buf))?;
 
     sender.send(MultiplexReadResult::Complete(metrics))?;
+
+    Ok(())
+}
+
+fn write_garbage_data(
+    lh: &LeptonHeader,
+    mut limited_output: LimitedOutputWriter<'_, impl Write>,
+) -> Result<()> {
+    if !lh.bad_truncation_version() {
+        // here we write out any garbage data verbatim without truncating it
+        // (since we already shrunk the max file size accordingly)
+        limited_output
+            .inner
+            .write_all(&lh.rinfo.garbage_data)
+            .context()?;
+    } else {
+        // the bad encoder wrote the garbage data in such a way that it could
+        // be truncated (see DecoderState::CompressedHeader case above)
+        limited_output.write_all(&lh.rinfo.garbage_data).context()?;
+    }
 
     Ok(())
 }
