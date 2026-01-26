@@ -82,7 +82,7 @@ fn verify_decode(
         "grayscale",
         "hq",
         "half_scan",
-        "half_scan_rust53",
+        "half_scan_rust55",
         "iphone",
         "iphonecity",
         "iphonecity_with_16KGarbage",
