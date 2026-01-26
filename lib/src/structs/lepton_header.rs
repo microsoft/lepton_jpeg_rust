@@ -52,7 +52,7 @@ impl LeptonHeader {
     ///
     /// The incorrect behavior was to write out the JPEG data, append the garbage data, and then truncate.
     pub fn bad_truncation_version(&self) -> bool {
-        self.encoder_version >= 53 && self.encoder_version <= 55
+        self.encoder_version == 55
     }
 
     pub fn read_lepton_fixed_header(
