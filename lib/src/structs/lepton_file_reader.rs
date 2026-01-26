@@ -1050,7 +1050,7 @@ mod tests {
         verifydecode("half_scan_rust55");
     }
 
-    /// test we can decode the same file as above, but encoded by a 
+    /// test we can decode the same file as above, but encoded by a
     /// correctly behaving decoder
     #[test]
     fn test_truncated_with_ok_truncation_version() {
