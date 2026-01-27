@@ -44,7 +44,7 @@ jobs:
     - name: Read version from Cargo.toml
       id: cargo_version
       run: |
-        CARGO_VERSION=$(grep '^version\s*=' lib/Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+        CARGO_VERSION=$(grep '^version\s*=' Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
         echo "CARGO_VERSION=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Check tag version matches Cargo.toml
