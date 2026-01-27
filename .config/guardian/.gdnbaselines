@@ -1,0 +1,375 @@
+{
+  "properties": {
+    "helpUri": "https://eng.ms/docs/microsoft-security/security/azure-security/cloudai-security-fundamentals-engineering/security-integration/guardian-wiki/microsoft-guardian/general/baselines"
+  },
+  "version": "1.0.0",
+  "baselines": {
+    "default": {
+      "name": "default",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "lastUpdatedDate": "2026-01-27 06:17:01Z"
+    }
+  },
+  "results": {
+    "7888556c1e034138d9cf4c682b73c492a353bb423ec11dc085e477365358d5b5": {
+      "signature": "7888556c1e034138d9cf4c682b73c492a353bb423ec11dc085e477365358d5b5",
+      "alternativeSignatures": [
+        "f363807b3905e1c28a3a5fb6ffcb9b91c52b725244e6a57f8d2f41e3b70fbc02"
+      ],
+      "target": "target/release/lepton_jpeg.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "82dae63401a13132179fdd7f28cb9935eb07f6808da120db385d4537f6c7e781": {
+      "signature": "82dae63401a13132179fdd7f28cb9935eb07f6808da120db385d4537f6c7e781",
+      "alternativeSignatures": [
+        "03acf8c325bf5b05a5e79b1b417f263e3526c9f06cfbb942d7f9b740840f3516"
+      ],
+      "target": "target/release/lepton_jpeg_avx2.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "34d7aee5ca8519db58d0fa6d7ddf78e892c1fc7f8c905926a5fbc8c0cb080af0": {
+      "signature": "34d7aee5ca8519db58d0fa6d7ddf78e892c1fc7f8c905926a5fbc8c0cb080af0",
+      "alternativeSignatures": [
+        "e2af46751ad6876b19468b60518f5e41adfd3dcd204794acb0ebc401d7733573"
+      ],
+      "target": "target/release/lepton_jpeg_python.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "c359baf101a3b163e44bb6577cb8492ed745c10c9f3bd182f8b935057bfd0bf2": {
+      "signature": "c359baf101a3b163e44bb6577cb8492ed745c10c9f3bd182f8b935057bfd0bf2",
+      "alternativeSignatures": [
+        "4be395a1280a6d3ced21b0ad815572da5d13632d75ea6dcb76f4e9b6ca3753ab"
+      ],
+      "target": "target/release/lepton_jpeg_util.exe",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "ee719806d1996ca8d823f90d73903cc9f5da08a3960af2c0a1eb0dd1a54c99d0": {
+      "signature": "ee719806d1996ca8d823f90d73903cc9f5da08a3960af2c0a1eb0dd1a54c99d0",
+      "alternativeSignatures": [
+        "ba93e14514af2d2f711daad10f312379d730bc77ef208901c9cf06e07bf01d84"
+      ],
+      "target": "target/release/lepton_jpeg_util_avx2.exe",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "cd6b9720c2019ba2c72ef61db8542b1ce290ba22d587eb3955ab755d14d6f4ed": {
+      "signature": "cd6b9720c2019ba2c72ef61db8542b1ce290ba22d587eb3955ab755d14d6f4ed",
+      "alternativeSignatures": [
+        "1ed2e30b47b86b4ed9ca74beff17a7312994572936ef2333bbc6ef9bc17dacd3"
+      ],
+      "target": "target/release/deps/default_boxed_derive-63de623f2e43e138.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "363faeb4073c8417f384af5227032d0daa483689d56ad0fac59f3328e751b183": {
+      "signature": "363faeb4073c8417f384af5227032d0daa483689d56ad0fac59f3328e751b183",
+      "alternativeSignatures": [
+        "0a863a85465581440a18aeb7b257b269e75c704621b9d7dced6ed89204d950f6"
+      ],
+      "target": "target/release/deps/default_boxed_derive-a563f94fdc621d90.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "12a8462656e61be1c0ef31be295c12ac6e85b261c25adee4cf97e2d32819b315": {
+      "signature": "12a8462656e61be1c0ef31be295c12ac6e85b261c25adee4cf97e2d32819b315",
+      "alternativeSignatures": [
+        "29e6fbebe0ea89a075a6e11c87b2f776f2cada75471317093729862c1f4cd60d"
+      ],
+      "target": "target/release/deps/git_version_macro-81a02dafe74069f0.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "f9cb8789538579745e4a5881ebfe2de000c3a924099948e9df510235d8e63326": {
+      "signature": "f9cb8789538579745e4a5881ebfe2de000c3a924099948e9df510235d8e63326",
+      "alternativeSignatures": [
+        "495638cb4ea6541aa8abbfb904b5bc968502f7c3d2eda51fc8009b842627cd5c"
+      ],
+      "target": "target/release/deps/git_version_macro-84dcd42a3b51464a.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "0015b41486ed72ac681952fc1e5117467edc31cc458a8ebe0bc2428040501432": {
+      "signature": "0015b41486ed72ac681952fc1e5117467edc31cc458a8ebe0bc2428040501432",
+      "alternativeSignatures": [
+        "a14a0079e1028b5a3a85807dd85687ff60f1e614e10d6174e8f8d85d5ffad6f9"
+      ],
+      "target": "target/release/deps/indoc-0ef44e389295250a.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "54b6fbb3b25a55dd7124f9172228d97a8e208a2b2f310fb98f52120d2555e9a0": {
+      "signature": "54b6fbb3b25a55dd7124f9172228d97a8e208a2b2f310fb98f52120d2555e9a0",
+      "alternativeSignatures": [
+        "5586663f943c7c47c916fba1ac930ea1eed0c8231090913f36b98ace3158a3e0"
+      ],
+      "target": "target/release/deps/indoc-1d196f6d756468dd.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "a571bdcd0bc935822e84ea12d95ffc432c5f99381b681b9cc292f7ed8ec32b06": {
+      "signature": "a571bdcd0bc935822e84ea12d95ffc432c5f99381b681b9cc292f7ed8ec32b06",
+      "alternativeSignatures": [
+        "bcf8ae23a38f46f4b1fbad99d2a0d4c1b72c372bc8aedb5dd2d20543ad7c18da"
+      ],
+      "target": "target/release/deps/lepton_jpeg.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "4156fba8fbda87c312c40f8644080f0444e119c7ad022a7a1cd5bc153472c8ed": {
+      "signature": "4156fba8fbda87c312c40f8644080f0444e119c7ad022a7a1cd5bc153472c8ed",
+      "alternativeSignatures": [
+        "867001d871648777be53eee5134a29693823d0c842475176bc0a738f448ab9d1"
+      ],
+      "target": "target/release/deps/lepton_jpeg_python.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "149befb9280c911d3f0b709dd16c3b495937aacddf5e0ab770addce09e6f7ab6": {
+      "signature": "149befb9280c911d3f0b709dd16c3b495937aacddf5e0ab770addce09e6f7ab6",
+      "alternativeSignatures": [
+        "91f1eab664b17bcc61e3585f933ef033800549b55f938091f80a75c3e0e6958d"
+      ],
+      "target": "target/release/deps/lepton_jpeg_util.exe",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "903069c0ae93b67c9b06d4d760af5b12c07ce30db727be83f46507875fd1856c": {
+      "signature": "903069c0ae93b67c9b06d4d760af5b12c07ce30db727be83f46507875fd1856c",
+      "alternativeSignatures": [
+        "8357b47447b55a4058ac2d9b7cbc881f412384528a90e66a88509fea88f974ff"
+      ],
+      "target": "target/release/deps/pyo3_macros-0883c55e16fc46dd.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "ef9d7c4fdf143066f64d95af451456f5547eba3e89156ba0cbda5dc92b9eed0c": {
+      "signature": "ef9d7c4fdf143066f64d95af451456f5547eba3e89156ba0cbda5dc92b9eed0c",
+      "alternativeSignatures": [
+        "954a842978f48d0a377246cec186dcf2afd17423cae579f197e6d7e081657935"
+      ],
+      "target": "target/release/deps/pyo3_macros-ead3c9c3859ec605.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "544e0bdd76e7c149e17e870fb0b32aa8d35af936a96e12f73891061d25b64485": {
+      "signature": "544e0bdd76e7c149e17e870fb0b32aa8d35af936a96e12f73891061d25b64485",
+      "alternativeSignatures": [
+        "e6f1ebffea3eb268804be426a462e535249f01dc46a9ef43dd1f2c7aa899bb96"
+      ],
+      "target": "target/release/deps/rustversion-60c5a5f87e0f5de5.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "3bd252ba75ede9998cae2e3283370157bef89d7b2de12562cb8ad3472f1ee620": {
+      "signature": "3bd252ba75ede9998cae2e3283370157bef89d7b2de12562cb8ad3472f1ee620",
+      "alternativeSignatures": [
+        "ba5c335ba47831bfb30973ec0e423518ed2b198f8d8d691fd3f856a886a924c6"
+      ],
+      "target": "target/release/deps/rustversion-ae37400f19b3f17f.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "4cf9241015129625b09af906ce68f0424cafdf3661358bd4081e29d8e945024b": {
+      "signature": "4cf9241015129625b09af906ce68f0424cafdf3661358bd4081e29d8e945024b",
+      "alternativeSignatures": [
+        "901556be5d52b05739e219d3911c9ca20b435456fe22d3e7d1fe994e18faa043"
+      ],
+      "target": "target/release/deps/time_macros-17f74972c8766b75.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "3ad2f2c6ad81bbb12175b4e299f09319a2c7e26e2e91386e8cdf2bb7f66bb6b4": {
+      "signature": "3ad2f2c6ad81bbb12175b4e299f09319a2c7e26e2e91386e8cdf2bb7f66bb6b4",
+      "alternativeSignatures": [
+        "f55823c74a027e8a3e03b58709e244f185e585d3729015841df513f514964799"
+      ],
+      "target": "target/release/deps/time_macros-6674f0d9cd1fe1c0.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "51a37a91abff68ac93176d40a7ebe4254f8bd2d59b3f067eac8e63fbf344dc96": {
+      "signature": "51a37a91abff68ac93176d40a7ebe4254f8bd2d59b3f067eac8e63fbf344dc96",
+      "alternativeSignatures": [
+        "2b069009ab0383fb0ff18c24cda15d0e3a2787753d56e1d062739be4d1f24ad6"
+      ],
+      "target": "target/release/deps/windows_implement-131e219ba8366c19.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "d08a22af13bbb9c4df920b594dc86a5191f4ab28301a3fda5a8c99b19909d39f": {
+      "signature": "d08a22af13bbb9c4df920b594dc86a5191f4ab28301a3fda5a8c99b19909d39f",
+      "alternativeSignatures": [
+        "556ad3740e06bf41c0476ceabdabef20085c886ff93eafa7dac49a3f34bf216b"
+      ],
+      "target": "target/release/deps/windows_implement-9fc3e36e619e31c4.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "7c4b27fd4d70c9af21f0770b95de543c7c5b1c43b091d4e97628aa611981c936": {
+      "signature": "7c4b27fd4d70c9af21f0770b95de543c7c5b1c43b091d4e97628aa611981c936",
+      "alternativeSignatures": [
+        "ec50c72748b2290ad8ad44fba6be6392c1a97b8b7a82cf40cfa02fbf8616a19d"
+      ],
+      "target": "target/release/deps/windows_interface-3fdabd2e927b6dbf.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    },
+    "3f2ca4517e5e7715572fca9ef646b6c5738b01f2d1eddda8da452bcb35ace81b": {
+      "signature": "3f2ca4517e5e7715572fca9ef646b6c5738b01f2d1eddda8da452bcb35ace81b",
+      "alternativeSignatures": [
+        "c7424dad4782f04900eea0009b9db79dc37ea5b18cb982fafba9135e2bb47aef"
+      ],
+      "target": "target/release/deps/windows_interface-d6a6711b2754ade3.dll",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "binskim",
+      "ruleId": "BA2007",
+      "createdDate": "2026-01-27 06:17:01Z",
+      "expirationDate": "2026-07-16 06:19:42Z",
+      "justification": "This error is baselined with an expiration date of 180 days from 2026-01-27 06:19:42Z"
+    }
+  }
+}
