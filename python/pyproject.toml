@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "lepton_jpeg_python"
-version = "0.5.7"
+version = "0.5.8"
 description = "Rust port of the Lepton JPEG compression library"
 authors = [{ name = "Kristof Roomp  ", email = "kristofr@gmail.com" }]
 readme = "README.md"

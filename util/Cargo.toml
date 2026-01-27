@@ -1,6 +1,6 @@
 [package]
 name = "lepton_jpeg_util"
-version = "0.5.7"
+version.workspace = true
 edition = "2024"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 

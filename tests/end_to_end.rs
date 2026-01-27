@@ -81,6 +81,8 @@ fn verify_decode(
         "gray2sf",
         "grayscale",
         "hq",
+        "half_scan",
+        "half_scan_rust55",
         "iphone",
         "iphonecity",
         "iphonecity_with_16KGarbage",
@@ -167,6 +169,7 @@ fn verify_encode(
             "gray2sf",
             "grayscale",
             "hq",
+            //"half_scan",
             "iphone",
             "iphonecity",
             "iphonecity_with_16KGarbage",
@@ -211,6 +214,20 @@ fn verify_encode(
     .unwrap();
 
     assert_eq_array(&input, &output);
+}
+
+/// these files are expected to fail encoding due to unsupported features or roundtrip errors
+#[rstest]
+fn verify_fail_encode(#[values("half_scan", "narrowrst", "nofsync")] file: &str) {
+    let input = read_file(file, ".jpg");
+
+    let result = encode_lepton_verify(
+        &input,
+        &EnabledFeatures::compat_lepton_vector_write(),
+        &DEFAULT_THREAD_POOL,
+    );
+
+    assert!(result.is_err(), "encoding was expected to fail");
 }
 
 #[test]

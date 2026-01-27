@@ -46,6 +46,15 @@ pub struct LeptonHeader {
 }
 
 impl LeptonHeader {
+    /// For certain versions of the rust encoder, we didn't handle truncation and corruption correctly.
+    /// The correct behavior is to truncate the JPEG generated data up to the file size minus the garbage data,
+    /// then write out the garbage data.
+    ///
+    /// The incorrect behavior was to write out the JPEG data, append the garbage data, and then truncate.
+    pub fn bad_truncation_version(&self) -> bool {
+        self.encoder_version == 55
+    }
+
     pub fn read_lepton_fixed_header(
         &mut self,
         header: &[u8; FIXED_HEADER_SIZE],
