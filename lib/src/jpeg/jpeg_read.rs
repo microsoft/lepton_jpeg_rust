@@ -718,12 +718,13 @@ pub(crate) fn decode_block_seq<R: BufRead>(
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
-#[inline(always)]
+#[cold]
+#[inline(never)]
 fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -> Result<u8> {
     let mut node: u16 = 0;
 
     while node < 256 {
-        node = ctree.node[usize::from(node)][usize::from(bit_reader.read(1)?)];
+        node = ctree.node[usize::from(node)][bit_reader.read(1)? as usize];
     }
 
     if node == 0xffff {
@@ -733,6 +734,7 @@ fn next_huff_code<R: BufRead>(bit_reader: &mut BitReader<R>, ctree: &HuffTree) -
     }
 }
 
+#[inline(always)]
 fn read_dc<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<i16> {
     let (z, coef) = read_coef(bit_reader, tree)?.unwrap_or((0, 0));
     if z != 0 {
@@ -750,42 +752,34 @@ fn read_coef<R: BufRead>(
     bit_reader: &mut BitReader<R>,
     tree: &HuffTree,
 ) -> Result<Option<(usize, i16)>> {
-    // if the code we found is smaller or equal to the number of bits left, take the shortcut
-    let hc;
-
-    loop {
-        // peek ahead to see if we can decode the symbol immediately
-        // given what has already been read into the bitreader
-        let (peek_value, peek_len) = bit_reader.peek();
-
-        // use lookup table to figure out the first code in this byte and how long it is
-        let (code, code_len) = tree.peek_code[peek_value as usize];
-
-        if u32::from(code_len) <= peek_len {
-            // found code directly, so advance by the number of bits immediately
-            hc = code;
-            bit_reader.advance(u32::from(code_len));
-            break;
-        } else if peek_len < 8 {
-            // peek code works with up to 8 bits at a time. If we had less
-            // than this, then we need to read more bits into the bitreader
-            bit_reader.fill_register(8)?;
-        } else {
-            // take slow path since we have a code that is bigger than 8 bits (but pretty rare)
-            hc = next_huff_code(bit_reader, tree)?;
-            break;
-        }
-    }
+    let hc = read_code(bit_reader, tree)?;
 
     // analyse code
     if hc != 0 {
         let z = usize::from(lbits(hc, 4));
-        let literal_bits = rbits(hc, 4);
+        let literal_bits = u32::from(rbits(hc, 4));
 
-        let value = bit_reader.read(u32::from(literal_bits))?;
+        let value = bit_reader.read(literal_bits)?;
         Ok(Some((z, devli(literal_bits, value))))
     } else {
         Ok(None)
+    }
+}
+
+#[inline(always)]
+fn read_code<R: BufRead>(bit_reader: &mut BitReader<R>, tree: &HuffTree) -> Result<u8> {
+    bit_reader.optimistic_fill();
+    let (peek_value, peek_len) = bit_reader.peek();
+    let (code, code_len) = tree.peek_code[peek_value as usize];
+
+    if u32::from(code_len) <= peek_len {
+        // found code directly, so advance by the number of bits immediately
+        bit_reader.advance(u32::from(code_len));
+
+        Ok(code)
+    } else {
+        // take slow path since we have a code that is bigger than 8 bits (but pretty rare)
+        next_huff_code(bit_reader, tree)
     }
 }
 
@@ -804,7 +798,7 @@ fn decode_ac_prg_fs<R: BufRead>(
     let mut bpos = from;
     while bpos <= to {
         // decode next
-        let hc = next_huff_code(bit_reader, actree)?;
+        let hc = read_code(bit_reader, actree)?;
 
         let l = lbits(hc, 4);
         let r = rbits(hc, 4);
@@ -813,8 +807,8 @@ fn decode_ac_prg_fs<R: BufRead>(
         if (l == 15) || (r > 0) {
             // decode run/level combination
             let mut z = l;
-            let s = r;
-            let n = bit_reader.read(u32::from(s))?;
+            let s = u32::from(r);
+            let n = bit_reader.read(s)?;
             if (z + bpos) > to {
                 return err_exit_code(ExitCode::UnsupportedJpeg, "run is too long");
             }
@@ -831,7 +825,7 @@ fn decode_ac_prg_fs<R: BufRead>(
             // decode eobrun
             let s = l;
             let n = bit_reader.read(u32::from(s))?;
-            state.eobrun = decode_eobrun_bits(s, n);
+            state.eobrun = decode_eobrun_bits(s, n) as u16;
 
             state.eobrun -= 1; // decrement eobrun ( for this one )
 
@@ -860,7 +854,7 @@ fn decode_ac_prg_sa<R: BufRead>(
     // decode AC succesive approximation bits
     while bpos <= to {
         // decode next
-        let hc = next_huff_code(bit_reader, actree)?;
+        let hc = read_code(bit_reader, actree)?;
 
         let l = lbits(hc, 4);
         let r = rbits(hc, 4);
@@ -909,7 +903,7 @@ fn decode_ac_prg_sa<R: BufRead>(
             eob = bpos;
             let s = l;
             let n = bit_reader.read(u32::from(s))?;
-            state.eobrun = decode_eobrun_bits(s, n);
+            state.eobrun = decode_eobrun_bits(s, n) as u16;
 
             // since we hit EOB, the rest can be done with the zero block decoder
             decode_eobrun_sa(bit_reader, block, state, bpos, to)?;
@@ -946,7 +940,7 @@ fn decode_eobrun_sa<R: BufRead>(
 
 /// decoding for decoding eobrun lengths. The encoding chops off the most significant
 /// bit since it is always 1, so we need to add it back.
-fn decode_eobrun_bits(s: u8, n: u16) -> u16 {
+fn decode_eobrun_bits(s: u8, n: u32) -> u32 {
     n + (1 << s)
 }
 
