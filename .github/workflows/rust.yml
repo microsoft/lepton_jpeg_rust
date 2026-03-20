@@ -57,6 +57,10 @@ jobs:
         run: |
           cargo nextest run --workspace --profile ci
 
+      # Verify the crate can be published without actually publishing
+      - name: Publish dry run
+        run: cargo publish --dry-run --package lepton_jpeg
+
       # Upload test results so GitHub shows pass/fail per test
       - name: Upload test results
         uses: EnricoMi/publish-unit-test-result-action/windows@v2
