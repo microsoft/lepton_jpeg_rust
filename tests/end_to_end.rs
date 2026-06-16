@@ -92,8 +92,8 @@ fn verify_decode(
         "iphonecrop2",
         "iphoneprogressive",
         "iphoneprogressive2",
-        "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
-        "out_of_order_dqt",     // image with quanatization table dqt that comes after image definition SOF
+        "progressive_late_dht",
+        "out_of_order_dqt",
         "narrowrst",
         "nofsync",
         "scan_order_reversed",
@@ -104,9 +104,9 @@ fn verify_decode(
         "trailingrst",
         "trailingrst2",
         "trunc",
-        "truncbad",          // the lepton format is truncated and invalid
-        "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
-        "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
+        "truncbad",
+        "eof_and_trailingrst",
+        "eof_and_trailinghdrdata"
     )]
     file: &str,
 ) {
@@ -183,7 +183,7 @@ fn verify_encode(
             "iphonecrop2",
             "iphoneprogressive",
             "iphoneprogressive2",
-            "progressive_late_dht", // image has huffman tables that come very late which caused a verification failure 
+            "progressive_late_dht",
             "out_of_order_dqt",
             //"narrowrst",
             //"nofsync",

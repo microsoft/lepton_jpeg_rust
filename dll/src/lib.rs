@@ -924,8 +924,8 @@ mod tests {
         "iphonecrop2",
         "iphoneprogressive",
         "iphoneprogressive2",
-        "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
-        "out_of_order_dqt",     // image with quanatization table dqt that comes after image definition SOF
+        "progressive_late_dht",
+        "out_of_order_dqt",
         "narrowrst",
         "nofsync",
         "slrcity",
@@ -935,8 +935,8 @@ mod tests {
         "trailingrst",
         "trailingrst2",
         "trunc",
-        "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
-        "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
+        "eof_and_trailingrst",
+        "eof_and_trailinghdrdata"
     )]
         file: &str,
     ) {
