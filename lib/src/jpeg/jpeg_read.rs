@@ -128,10 +128,10 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     let start_scan_position = reader.stream_position()?;
 
     let mut partitions = Vec::new();
-    read_first_scan(
+    read_scan(
         &jpeg_header,
         reader,
-        &mut partitions,
+        &mut Some(&mut partitions),
         &mut image_data[..],
         rinfo,
     )
@@ -141,14 +141,6 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     if start_scan_position + 2 > end_scan_position {
         return err_exit_code(ExitCode::UnsupportedJpeg, "no scan data found in JPEG file")
             .context();
-    }
-
-    if partitions.len() == 0 {
-        return err_exit_code(
-            ExitCode::UnsupportedJpeg,
-            "no scan information found in JPEG file",
-        )
-        .context();
     }
 
     if jpeg_header.is_single_scan() {
@@ -220,7 +212,15 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             );
             prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
 
-            read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
+            // Partitions only need to be written for the first scan.
+            read_scan(
+                &jpeg_header,
+                reader,
+                &mut None, /* partitions */
+                &mut image_data[..],
+                rinfo,
+            )
+            .context()?;
 
             if rinfo.early_eof_encountered {
                 return err_exit_code(
@@ -245,6 +245,14 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             // append the rest of the file to the buffer
             reader.read_to_end(&mut rinfo.garbage_data).context()?;
         }
+    }
+
+    if partitions.len() == 0 {
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "no scan information found in JPEG file",
+        )
+        .context();
     }
 
     Ok((image_data, partitions, end_scan_position))
@@ -277,15 +285,14 @@ fn prepare_to_decode_next_scan<R: Read>(
     return Ok(true);
 }
 
-/// Reads the scan from the JPEG file, writes the image data to the image_data array and
+/// Reads a scan from the JPEG file, writes the image data to the image_data array and
 /// partitions it into restart segments using the partition callback.
-///
-/// This only works for sequential JPEGs or the first scan in a progressive image.
-/// For subsequent scans, use the `read_progressive_scan`.
-fn read_first_scan<R: BufRead + Seek>(
+/// Writing partitions should only be done for the first scan, which can only be a
+/// sequential one or a DC initial scan.
+fn read_scan<R: BufRead + Seek>(
     jf: &JpegHeader,
     reader: &mut R,
-    partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
+    partitions: &mut Option<&mut Vec<(u64, RestartSegmentCodingInfo)>>,
     image_data: &mut [BlockBasedImage],
     reconstruct_info: &mut ReconstructionInfo,
 ) -> Result<()> {
@@ -314,6 +321,8 @@ fn read_first_scan<R: BufRead + Seek>(
             )
             .context()?;
         } else if jf.cs_to == 0 && jf.cs_sah == 0 {
+            // ---> DC successive approximation first stage <---
+
             // only need DC
             jf.verify_huffman_table(true, false).context()?;
 
@@ -328,15 +337,15 @@ fn read_first_scan<R: BufRead + Seek>(
                 //
                 // TODO: get rid of this and just chop up the scan into sections in Lepton code
                 if do_handoff {
-                    partitions.push((
-                        0,
-                        RestartSegmentCodingInfo::new(0, 0, [0; 4], state.get_mcu(), jf),
-                    ));
+                    if let Some(parts) = partitions {
+                        parts.push((
+                            0,
+                            RestartSegmentCodingInfo::new(0, 0, [0; 4], state.get_mcu(), jf),
+                        ));
+                    }
 
                     do_handoff = false;
                 }
-
-                // ---> succesive approximation first stage <---
 
                 // diff coding & bitshifting for dc
                 let coef = read_dc(&mut bit_reader, jf.get_huff_dc_tree(state.get_cmp()))?;
@@ -353,64 +362,8 @@ fn read_first_scan<R: BufRead + Seek>(
                     do_handoff = true;
                 }
             }
-        } else {
-            return err_exit_code(
-                ExitCode::UnsupportedJpeg,
-                "progress must start with DC stage",
-            )
-            .context();
-        }
-
-        // if we saw a pad bit at the end of the block, then remember whether they were 1s or 0s. This
-        // will be used later on to reconstruct the padding
-        bit_reader
-            .read_and_verify_fill_bits(&mut reconstruct_info.pad_bit)
-            .context()?;
-
-        // verify that we got the right RST code here since the above should do 1 mcu.
-        // If we didn't then we won't re-encode the file binary identical so there's no point in continuing
-        if sta == JpegDecodeStatus::RestartIntervalExpired {
-            bit_reader.verify_reset_code().context()?;
-
-            sta = JpegDecodeStatus::DecodeInProgress;
-        }
-    }
-
-    Ok(())
-}
-
-/// Reads a scan for progressive images where the image is encoded in multiple passes.
-/// Between each scan are a bunch of header than need to be parsed containing information
-/// like updated Huffman tables and quantization tables.
-fn read_progressive_scan<R: BufRead + Seek>(
-    jf: &JpegHeader,
-    reader: &mut R,
-    image_data: &mut [BlockBasedImage],
-    reconstruct_info: &mut ReconstructionInfo,
-) -> Result<()> {
-    // track to see how far we got in progressive encoding in case of truncated images, however this
-    // was never actually implemented in the original C++ code
-    reconstruct_info.max_sah = max(reconstruct_info.max_sah, max(jf.cs_sal, jf.cs_sah));
-
-    let mut bit_reader = BitReader::new(reader);
-
-    // init variables for decoding
-    let mut state = JpegPositionState::new(jf, 0);
-
-    // JPEG imagedata decoding routines
-    let mut sta = JpegDecodeStatus::DecodeInProgress;
-    while sta != JpegDecodeStatus::ScanCompleted {
-        // decoding for interleaved data
-        state.reset_rstw(&jf); // restart wait counter
-
-        if jf.cs_to == 0 {
-            if jf.cs_sah == 0 {
-                return err_exit_code(
-                    ExitCode::UnsupportedJpeg,
-                    "progress can't have two DC first stages",
-                )
-                .context();
-            }
+        } else if jf.cs_to == 0 {
+            // ---> DC successive approximation later stage <---
 
             // only need DC
             jf.verify_huffman_table(true, false).context()?;
@@ -432,125 +385,108 @@ fn read_progressive_scan<R: BufRead + Seek>(
 
                 sta = state.next_mcu_pos(jf);
             }
-        } else {
-            // ---> progressive AC encoding <---
-
-            if jf.cs_from == 0 || jf.cs_to >= 64 || jf.cs_from >= jf.cs_to {
-                return err_exit_code(
-                    ExitCode::UnsupportedJpeg,
-                    format!(
-                        "progressive encoding range was invalid {0} to {1}",
-                        jf.cs_from, jf.cs_to
-                    ),
-                );
-            }
+        } else if jf.cs_sah == 0 {
+            // ---> AC successive approximation first stage <---
 
             // only need AC
             jf.verify_huffman_table(false, true).context()?;
 
-            if jf.cs_sah == 0 {
-                if jf.cs_cmpc != 1 {
-                    return err_exit_code(
-                        ExitCode::UnsupportedJpeg,
-                        "Progressive AC encoding cannot be interleaved",
+            let mut block = [0; 64];
+
+            while sta == JpegDecodeStatus::DecodeInProgress {
+                let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
+
+                if state.eobrun == 0 {
+                    // only need to do something if we are not in a zero-block run
+                    let eob = decode_ac_prg_fs(
+                        &mut bit_reader,
+                        jf.get_huff_ac_tree(state.get_cmp()),
+                        &mut block,
+                        &mut state,
+                        jf.cs_from,
+                        jf.cs_to,
+                    )
+                    .context()?;
+
+                    state
+                        .check_optimal_eobrun(
+                            eob == jf.cs_from,
+                            jf.get_huff_ac_codes(state.get_cmp()),
+                        )
+                        .context()?;
+
+                    for bpos in jf.cs_from..eob {
+                        current_block.set_transposed_from_zigzag(
+                            usize::from(bpos),
+                            block[usize::from(bpos)] << jf.cs_sal,
+                        );
+                    }
+                }
+
+                sta = state.skip_eobrun(&jf).context()?;
+
+                // proceed only if no error encountered
+                if sta == JpegDecodeStatus::DecodeInProgress {
+                    sta = state.next_mcu_pos(jf);
+                }
+            }
+        } else {
+            // ---> AC successive approximation later stage <---
+
+            // only need AC
+            jf.verify_huffman_table(false, true).context()?;
+
+            let mut block = [0; 64];
+
+            while sta == JpegDecodeStatus::DecodeInProgress {
+                let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
+
+                for bpos in jf.cs_from..jf.cs_to + 1 {
+                    block[usize::from(bpos)] =
+                        current_block.get_transposed_from_zigzag(usize::from(bpos));
+                }
+
+                if state.eobrun == 0 {
+                    // decode block (long routine)
+                    let eob = decode_ac_prg_sa(
+                        &mut bit_reader,
+                        jf.get_huff_ac_tree(state.get_cmp()),
+                        &mut block,
+                        &mut state,
+                        jf.cs_from,
+                        jf.cs_to,
+                    )
+                    .context()?;
+
+                    state
+                        .check_optimal_eobrun(
+                            eob == jf.cs_from,
+                            jf.get_huff_ac_codes(state.get_cmp()),
+                        )
+                        .context()?;
+                } else {
+                    // decode zero run block (short routine)
+                    decode_eobrun_sa(
+                        &mut bit_reader,
+                        &mut block,
+                        &mut state,
+                        jf.cs_from,
+                        jf.cs_to,
+                    )
+                    .context()?;
+                }
+
+                // copy back to colldata
+                for bpos in jf.cs_from..jf.cs_to + 1 {
+                    current_block.set_transposed_from_zigzag(
+                        usize::from(bpos),
+                        current_block
+                            .get_transposed_from_zigzag(usize::from(bpos))
+                            .wrapping_add(block[usize::from(bpos)] << jf.cs_sal),
                     );
                 }
 
-                // ---> succesive approximation first stage <---
-                let mut block = [0; 64];
-
-                while sta == JpegDecodeStatus::DecodeInProgress {
-                    let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
-
-                    if state.eobrun == 0 {
-                        // only need to do something if we are not in a zero-block run
-                        let eob = decode_ac_prg_fs(
-                            &mut bit_reader,
-                            jf.get_huff_ac_tree(state.get_cmp()),
-                            &mut block,
-                            &mut state,
-                            jf.cs_from,
-                            jf.cs_to,
-                        )
-                        .context()?;
-
-                        state
-                            .check_optimal_eobrun(
-                                eob == jf.cs_from,
-                                jf.get_huff_ac_codes(state.get_cmp()),
-                            )
-                            .context()?;
-
-                        for bpos in jf.cs_from..eob {
-                            current_block.set_transposed_from_zigzag(
-                                usize::from(bpos),
-                                block[usize::from(bpos)] << jf.cs_sal,
-                            );
-                        }
-                    }
-
-                    sta = state.skip_eobrun(&jf).context()?;
-
-                    // proceed only if no error encountered
-                    if sta == JpegDecodeStatus::DecodeInProgress {
-                        sta = state.next_mcu_pos(jf);
-                    }
-                }
-            } else {
-                // ---> succesive approximation later stage <---
-
-                let mut block = [0; 64];
-
-                while sta == JpegDecodeStatus::DecodeInProgress {
-                    let current_block = image_data[state.get_cmp()].get_block_mut(state.get_dpos());
-
-                    for bpos in jf.cs_from..jf.cs_to + 1 {
-                        block[usize::from(bpos)] =
-                            current_block.get_transposed_from_zigzag(usize::from(bpos));
-                    }
-
-                    if state.eobrun == 0 {
-                        // decode block (long routine)
-                        let eob = decode_ac_prg_sa(
-                            &mut bit_reader,
-                            jf.get_huff_ac_tree(state.get_cmp()),
-                            &mut block,
-                            &mut state,
-                            jf.cs_from,
-                            jf.cs_to,
-                        )
-                        .context()?;
-
-                        state
-                            .check_optimal_eobrun(
-                                eob == jf.cs_from,
-                                jf.get_huff_ac_codes(state.get_cmp()),
-                            )
-                            .context()?;
-                    } else {
-                        // decode zero run block (short routine)
-                        decode_eobrun_sa(
-                            &mut bit_reader,
-                            &mut block,
-                            &mut state,
-                            jf.cs_from,
-                            jf.cs_to,
-                        )
-                        .context()?;
-                    }
-
-                    // copy back to colldata
-                    for bpos in jf.cs_from..jf.cs_to + 1 {
-                        current_block.set_transposed_from_zigzag(
-                            usize::from(bpos),
-                            current_block
-                                .get_transposed_from_zigzag(usize::from(bpos))
-                                .wrapping_add(block[usize::from(bpos)] << jf.cs_sal),
-                        );
-                    }
-
-                    sta = state.next_mcu_pos(jf);
-                }
+                sta = state.next_mcu_pos(jf);
             }
         }
 
@@ -580,7 +516,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
     do_handoff: &mut bool,
     jpeg_header: &JpegHeader,
     reconstruct_info: &mut ReconstructionInfo,
-    partitions: &mut Vec<(u64, RestartSegmentCodingInfo)>,
+    partitions: &mut Option<&mut Vec<(u64, RestartSegmentCodingInfo)>>,
 ) -> Result<JpegDecodeStatus> {
     // should have both AC and DC components
     jpeg_header.verify_huffman_table(true, true).context()?;
@@ -592,16 +528,18 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         if *do_handoff {
             let (bits_already_read, byte_being_read) = bit_reader.overhang();
 
-            partitions.push((
-                bit_reader.stream_position(),
-                RestartSegmentCodingInfo::new(
-                    byte_being_read,
-                    bits_already_read,
-                    lastdc,
-                    state.get_mcu(),
-                    &jpeg_header,
-                ),
-            ));
+            if let Some(parts) = partitions {
+                parts.push((
+                    bit_reader.stream_position(),
+                    RestartSegmentCodingInfo::new(
+                        byte_being_read,
+                        bits_already_read,
+                        lastdc,
+                        state.get_mcu(),
+                        &jpeg_header,
+                    ),
+                ));
+            }
 
             *do_handoff = false;
         }
