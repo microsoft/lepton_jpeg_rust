@@ -294,7 +294,7 @@ fn read_scan<R: BufRead + Seek>(
         state.reset_rstw(jf); // restart wait counter
 
         if jf.jpeg_type == JpegType::Sequential {
-            sta = decode_baseline_rst(
+            sta = decode_sequential_rst(
                 &mut state,
                 &mut bit_reader,
                 image_data,
@@ -522,7 +522,7 @@ fn read_scan<R: BufRead + Seek>(
 }
 
 /// reads an entire interval until the RST code
-fn decode_baseline_rst<R: BufRead + Seek>(
+fn decode_sequential_rst<R: BufRead + Seek>(
     state: &mut JpegPositionState,
     bit_reader: &mut BitReader<R>,
     image_data: &mut [BlockBasedImage],
@@ -591,6 +591,13 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();
         sta = state.next_mcu_pos(&jpeg_header);
+
+        // Correct the MCU position if there is only a single component in a sequential scan.
+        // Note that JPEG writing only performs this if there is a single component altogether,
+        // in accordance with the original Lepton implementation.
+        if jpeg_header.cs_cmpc == 1 {
+            state.trim_mcu(jpeg_header);
+        }
 
         if state.get_mcu() % jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
             *do_handoff = true;

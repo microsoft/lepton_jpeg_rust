@@ -205,6 +205,13 @@ fn recode_one_mcu_row(
                 );
 
                 sta = state.next_mcu_pos(&jf);
+
+                // Correct the MCU position if there is only a single component in the frame.
+                // Note that JPEG reading performs this for every scan that has only a single component,
+                // in accordance with the original Lepton implementation.
+                if jf.cmpc == 1 {
+                    state.trim_mcu(jf);
+                }
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
                 if jf.cs_sah == 0 {
