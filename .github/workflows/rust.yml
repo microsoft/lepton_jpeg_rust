@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -26,7 +26,7 @@ jobs:
           components: rustfmt,clippy
 
       # Install nextest
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
         with:
           tool: nextest
 
@@ -59,7 +59,7 @@ jobs:
 
       # Upload test results so GitHub shows pass/fail per test
       - name: Upload test results
-        uses: EnricoMi/publish-unit-test-result-action/windows@v2
+        uses: EnricoMi/publish-unit-test-result-action/windows@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
         if: always() # Upload even if tests fail
         with:
           files: |
