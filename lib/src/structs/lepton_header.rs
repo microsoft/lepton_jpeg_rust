@@ -69,8 +69,8 @@ impl LeptonHeader {
                 format!("incompatible file with version {0}", header[3]),
             );
         }
-        if header[3] != LEPTON_HEADER_BASELINE_JPEG_TYPE[0]
-            && header[3] != LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE[0]
+        if header[3] != LEPTON_HEADER_SEQUENTIAL_SINGLE_SCAN_JPEG_TYPE[0]
+            && header[3] != LEPTON_HEADER_MULTI_SCAN_JPEG_TYPE[0]
         {
             return err_exit_code(
                 ExitCode::BadLeptonFile,
@@ -365,10 +365,16 @@ impl LeptonHeader {
         writer.write_all(&LEPTON_FILE_HEADER)?;
         writer.write_u8(LEPTON_VERSION)?;
 
-        if self.jpeg_header.jpeg_type == JpegType::Progressive {
-            writer.write_all(&LEPTON_HEADER_PROGRESSIVE_JPEG_TYPE)?;
+        // The original Lepton codebase uses "baseline" to denote a sequential JPEG with a single, interleaved scan
+        // that contains all components. In the JPEG specification, "baseline" refers to a sequential (so
+        // non-progressive) JPEG with interleaved and/or non-interleaved scans. To avoid confusion, use "sequential
+        // single scan" and "multi scan" here, since a progressive JPEG may also only have a single scan.
+        if self.jpeg_header.jpeg_type == JpegType::Sequential
+            && self.jpeg_header.cs_cmpc == self.jpeg_header.cmpc
+        {
+            writer.write_all(&LEPTON_HEADER_SEQUENTIAL_SINGLE_SCAN_JPEG_TYPE)?;
         } else {
-            writer.write_all(&LEPTON_HEADER_BASELINE_JPEG_TYPE)?;
+            writer.write_all(&LEPTON_HEADER_MULTI_SCAN_JPEG_TYPE)?;
         }
 
         writer.write_u8(self.thread_handoff.len() as u8)?;

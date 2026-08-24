@@ -534,7 +534,7 @@ impl<'a> LeptonFileReader<'a> {
         // the jpeg decoding. This permits multiple scans that are each encoded in two cases:
         //  - progressive images
         //  - baseline multiscan images (rare but permitted)
-        Ok(if !lh.jpeg_header.is_single_scan() {
+        Ok(if !lh.jpeg_header.is_sequential_single_scan() {
             let mux = Self::run_lepton_decoder_threads(
                 lh,
                 enabled_features,

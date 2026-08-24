@@ -33,11 +33,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use std::fmt::Debug;
-use std::io::{Cursor, Read, Write};
+use std::io::{BufRead, Cursor, Read, Write};
 use std::num::NonZeroU32;
 
 use crate::LeptonError;
-use crate::consts::JpegType;
+use crate::consts::{EOI, JpegType};
 use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
@@ -88,17 +88,20 @@ impl RestartSegmentCodingInfo {
 pub struct ReconstructionInfo {
     /// the maximum component in a truncated progressive image.
     ///
-    /// This is meant to be used for progressive images but is not yet implemented.
+    /// This is meant to be used for images that are sequential with multiple scans or are
+    /// progressive, but was never implemented in the original codebase, nor is it implemented here.
     pub max_cmp: u32,
 
     /// the maximum band in a truncated progressive image
     ///
-    /// This is meant to be used for progressive images but is not yet implemented.
+    /// This is meant to be used for images that are sequential with multiple scans or are
+    /// progressive, but was never implemented in the original codebase, nor is it implemented here.
     pub max_bpos: u32,
 
     /// The maximum bit in a truncated progressive image.
     ///
-    /// This is meant to be used for progressive images but is not yet implemented.
+    /// This is meant to be used for images that are sequential with multiple scans or are
+    /// progressive, but was never implemented in the original codebase, nor is it implemented here.
     pub max_sah: u8,
 
     /// the maximum dpos in a truncated image
@@ -137,7 +140,7 @@ pub struct ReconstructionInfo {
     pub garbage_data: Vec<u8>,
 }
 
-pub fn parse_jpeg_header<R: Read>(
+pub fn parse_jpeg_header<R: Read + BufRead>(
     reader: &mut R,
     enabled_features: &EnabledFeatures,
     jpeg_header: &mut JpegHeader,
@@ -152,19 +155,9 @@ pub fn parse_jpeg_header<R: Read>(
 
     let mut mirror = Mirror::new(reader, &mut output_cursor);
 
-    if jpeg_header.parse(&mut mirror, enabled_features).context()? {
-        // append the header if it was not the end of file marker
-        rinfo.raw_jpeg_header.append(&mut output);
-        return Ok(true);
-    } else {
-        // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
-        // but we don't want the EOI since that goes into the garbage data.
-        if output.len() > 2 {
-            rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
-        }
-
-        return Ok(false);
-    }
+    let hit_sos = jpeg_header.parse(&mut mirror, enabled_features).context()?;
+    rinfo.raw_jpeg_header.append(&mut output);
+    return Ok(hit_sos);
 }
 
 // internal utility we use to collect the header that we read for later
@@ -190,6 +183,16 @@ impl<R: Read, W: Write> Read for Mirror<'_, R, W> {
         self.output.write_all(&buf[..n])?;
         self.amount_written += n;
         Ok(n)
+    }
+}
+
+impl<R: BufRead, W: Write> BufRead for Mirror<'_, R, W> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.read.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.read.consume(amt);
     }
 }
 
@@ -546,10 +549,13 @@ impl Default for JpegHeader {
 }
 
 impl JpegHeader {
-    /// true if this image is a single scan, which can be partitioned and decode
+    /// True if this image is sequential with a single scan, which can be partitioned and decoded
     /// completely independently by separate threads. If this is not the case, then
     /// we need to decode the entire image in memory and then encode the JPEG sequentially.
-    pub fn is_single_scan(&self) -> bool {
+    /// In theory progressive images with a single scan (only first DC scan) can get the same
+    /// treatment, though such images practically do not exist. The original codebase does not
+    /// give such images this treatment, and doing so would likely cause incompatibility.
+    pub fn is_sequential_single_scan(&self) -> bool {
         assert!(self.jpeg_type != JpegType::Unknown);
 
         self.jpeg_type == JpegType::Sequential && self.cmpc == self.cs_cmpc
@@ -579,7 +585,7 @@ impl JpegHeader {
     /// until we hit either an SOS (image data) or EOI (end of image).
     ///
     /// Returns false if we hit EOI, true if we have an image to process.
-    pub fn parse<R: Read>(
+    pub fn parse<R: Read + BufRead>(
         &mut self,
         reader: &mut R,
         enabled_features: &EnabledFeatures,
@@ -695,12 +701,23 @@ impl JpegHeader {
     }
 
     // returns true we should continue parsing headers or false if we hit SOS and should stop
-    fn parse_next_segment<R: Read>(
+    fn parse_next_segment<R: Read + BufRead>(
         &mut self,
         reader: &mut R,
         enabled_features: &EnabledFeatures,
     ) -> Result<ParseSegmentResult> {
         let mut header = [0u8; 4];
+
+        if reader.fill_buf()?.starts_with(&EOI) {
+            // don't consume eoi
+            return Ok(ParseSegmentResult::EOI);
+        }
+
+        if reader.fill_buf()?.len() < 2 {
+            // if it's less than two remaining and not EOI,
+            // it's garbage and don't consume it
+            return Ok(ParseSegmentResult::EOI);
+        }
 
         if reader.read(&mut header[0..1]).context()? == 0 {
             // didn't get an EOI
