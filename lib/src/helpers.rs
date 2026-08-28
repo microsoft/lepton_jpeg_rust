@@ -61,20 +61,20 @@ pub fn has_ff(v: u64) -> bool {
 }
 
 #[inline(always)]
-pub const fn devli(s: u8, value: u16) -> i16 {
-    let shifted = 1 << s;
+pub const fn devli(s: u32, value: u32) -> i16 {
+    let shifted = (1 << s) - 1;
 
-    if value & (shifted >> 1) != 0 {
+    if (value << 1) > shifted {
         value as i16
     } else {
-        value.wrapping_add(2).wrapping_add(!shifted) as i16
+        value.wrapping_sub(shifted) as i16
     }
 }
 
 /// check to make sure the behavior hasn't changed even with the optimization
 #[test]
 fn devli_test() {
-    for s in 0u8..15 {
+    for s in 0u32..15 {
         for value in 0..(1 << s) {
             assert_eq!(
                 devli(s, value),
