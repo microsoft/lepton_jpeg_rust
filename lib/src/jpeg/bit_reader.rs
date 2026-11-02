@@ -245,12 +245,33 @@ impl<R: BufRead> BitReader<R> {
         // can recode it again just by remembering the pad bit.
         self.undo_read_ahead();
 
+        if self.inner.fill_buf()?.is_empty() {
+            self.eof = true;
+            return Ok(());
+        }
+
         let mut h = [0u8; 2];
-        self.inner.read_exact(&mut h)?;
-        if h[0] != 0xff || h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
+        self.inner.read_exact(&mut h[0..1])?;
+        if h[0] != 0xff {
             return err_exit_code(
                 ExitCode::InvalidResetCode,
-                format!("invalid reset code {0:x} {1:x} found in stream", h[0], h[1]),
+                format!(
+                    "reset code does not start with 0xff but with 0x{:x} found in stream",
+                    h[0]
+                ),
+            );
+        }
+
+        if self.inner.fill_buf()?.is_empty() {
+            self.eof = true;
+            return Ok(());
+        }
+
+        self.inner.read_exact(&mut h[1..2])?;
+        if h[1] != (jpeg_code::RST0 + (self.cpos as u8 & 7)) {
+            return err_exit_code(
+                ExitCode::InvalidResetCode,
+                format!("invalid reset code 0xff {:x} found in stream", h[1]),
             );
         }
 

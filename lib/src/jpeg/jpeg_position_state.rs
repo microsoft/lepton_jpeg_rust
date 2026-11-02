@@ -4,7 +4,7 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
-use crate::consts::{JpegDecodeStatus, JpegType};
+use crate::consts::JpegDecodeStatus;
 use crate::lepton_error::{AddContext, ExitCode, err_exit_code};
 use crate::{LeptonError, Result};
 
@@ -86,6 +86,11 @@ impl JpegPositionState {
         self.prev_eobrun = 0;
     }
 
+    pub fn trim_mcu(&mut self, jf: &JpegHeader) {
+        // After updating dpos, update the current MCU to be a fraction of that.
+        self.mcu = self.dpos / (jf.cmp_info[self.cmp].sfv * jf.cmp_info[self.cmp].sfh);
+    }
+
     /// calculates next position (non interleaved)
     fn next_mcu_pos_noninterleaved(&mut self, jf: &JpegHeader) -> JpegDecodeStatus {
         // increment position
@@ -101,11 +106,6 @@ impl JpegPositionState {
         // fix for non interleaved mcu - vertical
         if cmp_info.bcv != cmp_info.ncv && self.dpos / cmp_info.bch == cmp_info.ncv {
             self.dpos = cmp_info.bc;
-        }
-
-        // now we've updated dpos, update the current MCU to be a fraction of that
-        if jf.jpeg_type == JpegType::Sequential {
-            self.mcu = self.dpos / (cmp_info.sfv * cmp_info.sfh);
         }
 
         // check position

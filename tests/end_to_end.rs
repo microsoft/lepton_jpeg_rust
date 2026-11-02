@@ -5,6 +5,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 use core::result::Result;
+use rand::Rng;
+use rand::SeedableRng;
 use std::fs::read_dir;
 use std::io::Cursor;
 use std::path::Path;
@@ -78,6 +80,7 @@ fn verify_decode(
         "colorswap",
         "cathedral_db_non_int",
         "cathedral_db_non_int_rustold",
+        "dc_init_non_interleaved",
         "gray2sf",
         "grayscale",
         "hq",
@@ -91,10 +94,12 @@ fn verify_decode(
         "iphonecrop2",
         "iphoneprogressive",
         "iphoneprogressive2",
-        "progressive_late_dht", // image has huffman tables that come very late which causes a verification failure 
-        "out_of_order_dqt",     // image with quanatization table dqt that comes after image definition SOF
+        "progressive_late_dht",
+        "out_of_order_dqt",
         "narrowrst",
         "nofsync",
+        "non-interleaved-multiple-restart",
+        "scan_order_reversed",
         "slrcity",
         "slrhills",
         "slrindoor",
@@ -102,9 +107,9 @@ fn verify_decode(
         "trailingrst",
         "trailingrst2",
         "trunc",
-        "truncbad",          // the lepton format is truncated and invalid
-        "eof_and_trailingrst",    // the lepton format has a wrongly set unexpected eof and trailing rst
-        "eof_and_trailinghdrdata" // the lepton format has a wrongly set unexpected eof and trailing header data
+        "truncbad",
+        "eof_and_trailingrst",
+        "eof_and_trailinghdrdata"
     )]
     file: &str,
 ) {
@@ -166,10 +171,13 @@ fn verify_encode(
             "androidprogressive_garbage",
             "androidtrail",
             "colorswap",
+            "cathedral_db_non_int",
+            "cathedral_db_non_int_rustold",
+            "dc_init_non_interleaved",
             "gray2sf",
             "grayscale",
             "hq",
-            //"half_scan",
+            "half_scan",
             "iphone",
             "iphonecity",
             "iphonecity_with_16KGarbage",
@@ -178,10 +186,12 @@ fn verify_encode(
             "iphonecrop2",
             "iphoneprogressive",
             "iphoneprogressive2",
-            "progressive_late_dht", // image has huffman tables that come very late which caused a verification failure 
+            "progressive_late_dht",
             "out_of_order_dqt",
             //"narrowrst",
             //"nofsync",
+            "non-interleaved-multiple-restart",
+            "scan_order_reversed",
             "slrcity",
             "slrhills",
             "slrindoor",
@@ -216,9 +226,68 @@ fn verify_encode(
     assert_eq_array(&input, &output);
 }
 
+fn scan_header_size(num_components: usize) -> usize {
+    2 + 2 + 1 + num_components * 2 + 3
+}
+
+#[rstest]
+fn verify_encode_truncated_scan(
+    #[values( // scan begin and end offsets found using jpegdump
+            ("android", 0x224f + scan_header_size(3), 0x1f996),
+            ("androidprogressive", 0x01824 + scan_header_size(3), 0x05428),
+            ("androidprogressive", 0x05460 + scan_header_size(1), 0x0a321),
+            ("androidprogressive", 0x0a355 + scan_header_size(1), 0x0b2f1),
+            ("androidprogressive", 0x0b31f + scan_header_size(1), 0x0ca1b),
+            ("androidprogressive", 0x0ca60 + scan_header_size(1), 0x0fa70),
+            ("androidprogressive", 0x0fa98 + scan_header_size(1), 0x165e5),
+            ("androidprogressive", 0x165eb + scan_header_size(3), 0x170a7),
+            ("androidprogressive", 0x170c9 + scan_header_size(1), 0x185c4),
+            ("androidprogressive", 0x185e9 + scan_header_size(1), 0x19f45),
+            ("androidprogressive", 0x19f73 + scan_header_size(1), 0x23980)
+        )]
+    test: (&str, usize, usize),
+) {
+    let (filename, scan_begin, scan_end) = test;
+    let file = read_file(filename, ".jpg");
+
+    let mut rng = rand_chacha::ChaCha12Rng::from_seed([1; 32]);
+
+    let scan_size = scan_end - scan_begin;
+    let mut offset: usize = 0;
+    loop {
+        // Include at least one new byte. Increase the range to test fewer samples.
+        offset += rng.gen_range(1..scan_size / 3);
+        if offset > scan_size {
+            break;
+        }
+
+        let input = &file[0..scan_begin + offset];
+        let mut lepton = Vec::new();
+        let mut output = Vec::new();
+
+        encode_lepton(
+            &mut Cursor::new(&input),
+            &mut Cursor::new(&mut lepton),
+            &EnabledFeatures::compat_lepton_vector_write(),
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        decode_lepton(
+            &mut Cursor::new(lepton),
+            &mut output,
+            &EnabledFeatures::compat_lepton_vector_read(),
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap();
+
+        assert_eq_array(&input, &output);
+    }
+}
+
 /// these files are expected to fail encoding due to unsupported features or roundtrip errors
 #[rstest]
-fn verify_fail_encode(#[values("half_scan", "narrowrst", "nofsync")] file: &str) {
+fn verify_fail_encode(#[values("narrowrst", "nofsync")] file: &str) {
     let input = read_file(file, ".jpg");
 
     let result = encode_lepton_verify(
