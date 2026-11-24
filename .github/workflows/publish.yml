@@ -14,7 +14,7 @@ jobs:
 
     steps:
     - name: Checkout code with full history
-      uses: actions/checkout@v3
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0  # Needed to compare commits and access tag history
 
@@ -44,7 +44,7 @@ jobs:
     - name: Read version from Cargo.toml
       id: cargo_version
       run: |
-        CARGO_VERSION=$(grep '^version\s*=' lib/Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+        CARGO_VERSION=$(grep '^version\s*=' Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
         echo "CARGO_VERSION=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Check tag version matches Cargo.toml
@@ -60,9 +60,9 @@ jobs:
         echo "✅ Tag version matches Cargo.toml."
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
-        toolchain: stable
+        toolchain: "1.99.1" # match ms-prod-1.99 in azure-pipelines.yml
 
     - name: Publish to crates.io
       env:

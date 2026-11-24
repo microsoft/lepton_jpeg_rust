@@ -69,12 +69,13 @@ pub fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>)
         r
     }
 
-    if let Some(seed) = seed {
-        if input_data.len() > 0 {
-            let op = simple_lcg(seed);
-            let r = simple_lcg(seed) as usize % input_data.len();
+    if let Some(seed) = seed
+        && !input_data.is_empty()
+    {
+        let op = simple_lcg(seed);
+        let r = simple_lcg(seed) as usize % input_data.len();
 
-            match op % 5 {
+        match op % 5 {
                 0 => {
                     // flip bit
                     let bitnumber = simple_lcg(seed) as usize % 8;
@@ -95,17 +96,15 @@ pub fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>)
                         input_data.remove(r);
                     }
                 }
-                4 => {
+                4
                     // truncate by 1
-                    if input_data.len() > 1 {
+                    if input_data.len() > 1 => {
                         input_data.truncate(input_data.len() - 1);
                     }
-                }
                 _ => {
                     // do nothing
                 }
             }
-        }
     }
 }
 

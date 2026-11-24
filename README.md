@@ -13,10 +13,10 @@ The libary is published on crates.io as [lepton_jpeg](https://crates.io/crates/l
 
 ### Python 
 
-The library is published on PyPI as *lepton_jpeg_python*.
+The library is published on PyPI as *lepton_jpeg_python* (requires Python 3.14 or later).
 
 ```
-pip install lepton_jpeg_python
+uv add lepton_jpeg_python    # or: pip install lepton_jpeg_python
 ```
 
 ``` Python

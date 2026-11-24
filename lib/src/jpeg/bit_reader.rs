@@ -35,18 +35,18 @@ impl<R: BufRead + StreamPosition> BitReader<R> {
 
         if self.bits_left > 0 && !self.eof {
             if self.bits as u8 == 0xff && !self.truncated_ff {
-                return pos - 2;
+                pos - 2
             } else {
-                return pos - 1;
+                pos - 1
             }
         } else {
-            return pos;
+            pos
         }
     }
 
     pub fn new(inner: R) -> Self {
         BitReader {
-            inner: inner,
+            inner,
             bits: 0,
             bits_left: 0,
             cpos: 0,
@@ -71,7 +71,7 @@ impl<R: BufRead> BitReader<R> {
         let retval =
             (self.bits >> (self.bits_left - bits_to_read) & ((1 << bits_to_read) - 1)) as u16;
         self.bits_left -= bits_to_read;
-        return Ok(retval);
+        Ok(retval)
     }
 
     #[inline(always)]
@@ -118,7 +118,7 @@ impl<R: BufRead> BitReader<R> {
         self.inner
             .consume((bytes_to_read - self.read_ahead_bytes) as usize);
 
-        return Ok(());
+        Ok(())
     }
 
     #[cold]
@@ -185,7 +185,7 @@ impl<R: BufRead> BitReader<R> {
     }
 
     pub fn is_eof(&mut self) -> bool {
-        return self.eof;
+        self.eof
     }
 
     /// used to verify whether this image is using 1s or 0s as fill bits.
@@ -236,7 +236,7 @@ impl<R: BufRead> BitReader<R> {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn verify_reset_code(&mut self) -> Result<(), LeptonError> {
@@ -274,7 +274,7 @@ impl<R: BufRead> BitReader<R> {
 
         let mask = (((1 << bits_already_read) - 1) << (8 - bits_already_read)) as u8;
 
-        return (bits_already_read, (self.bits as u8) & mask);
+        (bits_already_read, (self.bits as u8) & mask)
     }
 
     /// "puts back" read_ahead bits that were read ahead from the buffer but not consumed.
@@ -337,7 +337,7 @@ mod tests {
 
         // read an empty byte passed the end of the stream.. should be zero and trigger EOF
         assert_eq!(0, b.read(8).unwrap());
-        assert_eq!(true, b.is_eof());
+        assert!(b.is_eof());
         assert_eq!(8, b.stream_position()); // still at the same position
     }
 
@@ -358,14 +358,14 @@ mod tests {
         assert_eq!(1, b.stream_position());
 
         // 4 bits left, not EOF yet
-        assert_eq!(false, b.is_eof());
+        assert!(!b.is_eof());
 
         assert_eq!(0xf, b.read(4).unwrap());
-        assert_eq!(false, b.is_eof()); // now we are at the end really
+        assert!(!b.is_eof()); // now we are at the end really
         assert_eq!(2, b.stream_position());
 
         assert_eq!(0, b.read(4).unwrap());
-        assert_eq!(true, b.is_eof());
+        assert!(b.is_eof());
         assert_eq!(2, b.stream_position());
     }
 }

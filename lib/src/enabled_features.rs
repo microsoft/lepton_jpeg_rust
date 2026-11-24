@@ -1,3 +1,10 @@
+/// Default for `max_jpeg_pixels`, matching the 16386x16386 dimension limit used for encoding.
+pub const DEFAULT_MAX_JPEG_PIXELS: u64 = 16386 * 16386;
+
+/// Default for `max_progressive_scans`, above the number of non-redundant scans
+/// a progressive JPEG can contain (typical encoders use 10-64).
+pub const DEFAULT_MAX_PROGRESSIVE_SCANS: u32 = 4096;
+
 /// Features that are enabled in the encoder. Turn off for potential backward compat issues.
 #[derive(Debug, Clone)]
 pub struct EnabledFeatures {
@@ -12,6 +19,14 @@ pub struct EnabledFeatures {
 
     /// maximum jpeg height
     pub max_jpeg_height: u32,
+
+    /// maximum number of pixels (width * height), which bounds the size of the
+    /// coefficient buffers allocated when encoding or decoding
+    pub max_jpeg_pixels: u64,
+
+    /// maximum number of scans in a progressive JPEG. Each scan costs work proportional
+    /// to the image size even if it contains almost no data, so this bounds the CPU time.
+    pub max_progressive_scans: u32,
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
     pub use_16bit_dc_estimate: bool,
@@ -48,6 +63,8 @@ impl EnabledFeatures {
             reject_dqts_with_zeros: true,
             max_jpeg_height: 16386,
             max_jpeg_width: 16386,
+            max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
+            max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: false,
@@ -67,6 +84,8 @@ impl EnabledFeatures {
             reject_dqts_with_zeros: false,
             max_jpeg_height: u32::MAX,
             max_jpeg_width: u32::MAX,
+            max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
+            max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
             use_16bit_dc_estimate: false,
             use_16bit_adv_predict: false,
             accept_invalid_dht: true,
@@ -86,6 +105,8 @@ impl EnabledFeatures {
             reject_dqts_with_zeros: false,
             max_jpeg_height: u32::MAX,
             max_jpeg_width: u32::MAX,
+            max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
+            max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: true,

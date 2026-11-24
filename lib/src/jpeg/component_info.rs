@@ -51,7 +51,7 @@ pub struct ComponentInfo {
 
 impl Default for ComponentInfo {
     fn default() -> ComponentInfo {
-        return ComponentInfo {
+        ComponentInfo {
             q_table_index: 0xff,
             sfv: u32::MAX,
             sfh: u32::MAX,
@@ -66,6 +66,6 @@ impl Default for ComponentInfo {
             jid: 0xff,
             huff_dc: 0xff,
             huff_ac: 0xff,
-        };
+        }
     }
 }

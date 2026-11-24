@@ -48,8 +48,8 @@ impl QuantizationTables {
             let coord = if i < 7 { i + 1 } else { (i - 6) * 8 };
             if retval.quantization_table[coord] < 9 {
                 let mut freq_max = FREQ_MAX[i] + retval.quantization_table[coord] - 1;
-                if retval.quantization_table[coord] != 0 {
-                    freq_max /= retval.quantization_table[coord];
+                if let Some(v) = freq_max.checked_div(retval.quantization_table[coord]) {
+                    freq_max = v;
                 }
 
                 let max_len = u16_bit_length(freq_max);

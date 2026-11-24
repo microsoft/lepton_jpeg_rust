@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, Cursor, Read, Write};
 use std::mem;
+use std::num::Saturating;
 use std::sync::mpsc::Sender;
 
 use default_boxed::DefaultBoxed;
@@ -19,8 +20,9 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_code;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo, RestartSegmentCodingInfo};
 use crate::jpeg::jpeg_write::{JpegIncrementalWriter, jpeg_write_entire_scan};
-use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::lepton_error::{AddContext, ExitCode, LeptonError, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
+use crate::size_value::{SizeValue, check_size};
 use crate::structs::lepton_decoder::lepton_decode_row_range;
 use crate::structs::lepton_header::{FIXED_HEADER_SIZE, LeptonHeader};
 use crate::structs::multiplexer::{
@@ -40,7 +42,7 @@ use crate::{LeptonThreadPool, consts::*};
 /// - `writer`: A writer to which the decoded JPEG image is written.
 /// - `enabled_features`: A set of toggles for enabling/disabling decoding features/restrictions.
 /// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
-/// can point to `DEFAULT_THREAD_POOL`.
+///   can point to `DEFAULT_THREAD_POOL`.
 pub fn decode_lepton<R: BufRead, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -54,10 +56,10 @@ pub fn decode_lepton<R: BufRead, W: Write>(
         let buffer = reader.fill_buf().context()?;
 
         decoder
-            .process_buffer(buffer, buffer.len() == 0, writer)
+            .process_buffer(buffer, buffer.is_empty(), writer)
             .context()?;
 
-        if buffer.len() == 0 {
+        if buffer.is_empty() {
             break;
         }
 
@@ -65,7 +67,7 @@ pub fn decode_lepton<R: BufRead, W: Write>(
         reader.consume(amt);
     }
 
-    return Ok(decoder.take_metrics());
+    Ok(decoder.take_metrics())
 }
 
 /// this is a debug function only called by the utility EXE code
@@ -178,8 +180,19 @@ impl<W: Write> Write for LimitedOutputWriter<'_, W> {
     }
 }
 
+/// Largest Lepton file we accept. Lepton output is normally ~22% smaller than the JPEG,
+/// so twice the JPEG limit plus room for the header leaves ample margin for valid files.
+fn max_lepton_file_size(enabled_features: &EnabledFeatures) -> Result<usize> {
+    (Saturating(2) * Saturating(enabled_features.max_jpeg_file_size.to_usize()?)
+        + Saturating(1024 * 1024))
+    .to_usize()
+}
+
 /// Writes to a fixed size output buffer and queues up any extra data
 /// that doesn't fit and writes it out first on the next call.
+///
+/// The queue is bounded because all output passes through `LimitedOutputWriter`
+/// (bounded by the checked `jpeg_file_size`) apart from the bounded garbage data.
 struct FixedBufferOuputWriter<'a> {
     amount_written: usize,
     output_buffer: &'a mut [u8],
@@ -256,7 +269,7 @@ impl<'a> LeptonFileReader<'a> {
         input_complete: bool,
         output: &mut impl Write,
     ) -> Result<()> {
-        if self.input_complete && in_buffer.len() > 0 {
+        if self.input_complete && !in_buffer.is_empty() {
             return err_exit_code(
                 ExitCode::SyntaxError,
                 "ERROR: input was marked as complete but more data was provided",
@@ -264,6 +277,14 @@ impl<'a> LeptonFileReader<'a> {
         }
 
         self.total_read_size += in_buffer.len() as u64;
+
+        // bounds everything buffered from the input (partial buffers and per-partition
+        // queues, which hold the whole file in single-threaded mode)
+        check_size(
+            self.total_read_size,
+            max_lepton_file_size(&self.enabled_features)?,
+            "Lepton file",
+        )?;
 
         let mut in_buffer = PartialBuffer::new(in_buffer, &mut self.extra_buffer);
         while in_buffer.continue_processing() {
@@ -296,7 +317,16 @@ impl<'a> LeptonFileReader<'a> {
                         // we need to truncate our file to the size minus the garbage data so
                         // that when we hit the garbage data, we have room to write it all out
                         if !self.lh.bad_truncation_version() {
-                            self.jpeg_file_size_left -= self.lh.rinfo.garbage_data.len() as u64;
+                            let garbage_len = self.lh.rinfo.garbage_data.len() as u64;
+                            self.jpeg_file_size_left = self
+                                .jpeg_file_size_left
+                                .checked_sub(garbage_len)
+                                .ok_or_else(|| {
+                                    LeptonError::new(
+                                        ExitCode::BadLeptonFile,
+                                        "garbage data larger than jpeg file size",
+                                    )
+                                })?;
                         }
 
                         self.state = DecoderState::CMP();
@@ -382,15 +412,15 @@ impl<'a> LeptonFileReader<'a> {
                         //
                         // This logic is no longer needed for Rust generated Lepton files, since we just use the garbage
                         // data to store any extra RST codes or whatever else might be at the end of the file.
-                        if self.lh.rinfo.rst_err.len() > 0 {
-                            let cumulative_reset_markers = if self.lh.jpeg_header.rsti != 0 {
-                                (self.lh.jpeg_header.mcuc - 1) / self.lh.jpeg_header.rsti
-                            } else {
-                                0
-                            } as u8;
+                        if !self.lh.rinfo.rst_err.is_empty() {
+                            let cumulative_reset_markers = (self.lh.jpeg_header.mcuc - 1)
+                                .checked_div(self.lh.jpeg_header.rsti)
+                                .unwrap_or(0)
+                                as u8;
 
                             for i in 0..self.lh.rinfo.rst_err[0] {
-                                let rst = jpeg_code::RST0 + ((cumulative_reset_markers + i) & 7);
+                                let rst = jpeg_code::RST0
+                                    + (cumulative_reset_markers.wrapping_add(i) & 7);
 
                                 limited_output.write_all(&[0xff, rst])?;
                             }
@@ -446,7 +476,7 @@ impl<'a> LeptonFileReader<'a> {
     ) -> std::io::Result<(bool, usize)> {
         // first write any extra data we have pending from last time
         let mut amount_written = 0;
-        while amount_written < output_buffer.len() && output_extra.len() > 0 {
+        while amount_written < output_buffer.len() && !output_extra.is_empty() {
             amount_written += output_extra
                 .read(&mut output_buffer[amount_written..])
                 .unwrap();
@@ -461,7 +491,7 @@ impl<'a> LeptonFileReader<'a> {
 
         self.process_buffer(input, input_complete, &mut w)?;
 
-        Ok((input_complete && w.extra_queue.len() == 0, w.amount_written))
+        Ok((input_complete && w.extra_queue.is_empty(), w.amount_written))
     }
 
     /// destructively reads the metrics
@@ -514,6 +544,15 @@ impl<'a> LeptonFileReader<'a> {
 
             // advance to next scan
             scnc += 1;
+            if scnc >= enabled_features.max_progressive_scans as usize {
+                return err_exit_code(
+                    ExitCode::BadLeptonFile,
+                    format!(
+                        "more than {0} progressive scans",
+                        enabled_features.max_progressive_scans
+                    ),
+                );
+            }
         }
 
         Ok(())
@@ -552,8 +591,8 @@ impl<'a> LeptonFileReader<'a> {
                 .context()?;
 
             let mux = Self::run_lepton_decoder_threads(
-                &lh,
-                &enabled_features,
+                lh,
+                enabled_features,
                 4, /*retain 4 bytes for the end for the file size that is appended */
                 thread_pool,
                 baseline_decoding_thread,
@@ -861,6 +900,72 @@ mod tests {
         );
     }
 
+    /// the streaming reader must not buffer more input than a valid file can contain
+    #[test]
+    fn reject_oversized_input() {
+        let features = EnabledFeatures {
+            max_jpeg_file_size: 1024,
+            ..EnabledFeatures::compat_lepton_vector_read()
+        };
+        let mut reader =
+            LeptonFileReader::new(features, ThreadPoolHolder::Dyn(&DEFAULT_THREAD_POOL));
+        let chunk = [0u8; 64 * 1024];
+        let mut result = Ok(());
+        for _ in 0..20 {
+            result = reader.process_buffer(&chunk, false, &mut std::io::sink());
+            if result.is_err() {
+                break;
+            }
+        }
+        assert_eq!(result.unwrap_err().exit_code(), ExitCode::BadLeptonFile);
+    }
+
+    /// progressive images with too many scans are rejected on both encode and decode
+    #[test]
+    fn reject_too_many_scans() {
+        let jpeg = read_file("androidprogressive", ".jpg");
+        let features = EnabledFeatures {
+            max_progressive_scans: 2,
+            ..EnabledFeatures::compat_lepton_vector_write()
+        };
+        let err = crate::encode_lepton(
+            &mut Cursor::new(&jpeg),
+            &mut Cursor::new(Vec::new()),
+            &features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), ExitCode::UnsupportedJpeg);
+
+        // the decoder applies the same limit to the scans stored in the lepton header
+        let lepton = read_file("androidprogressive", ".lep");
+        let err = decode_lepton(
+            &mut Cursor::new(&lepton),
+            &mut Vec::new(),
+            &features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), ExitCode::BadLeptonFile);
+    }
+
+    /// images over the pixel limit are rejected before any coefficient buffers are allocated
+    #[test]
+    fn reject_too_many_pixels() {
+        let features = EnabledFeatures {
+            max_jpeg_pixels: 0,
+            ..EnabledFeatures::compat_lepton_vector_write()
+        };
+        let err = crate::encode_lepton(
+            &mut Cursor::new(read_file("tiny", ".jpg")),
+            &mut Cursor::new(Vec::new()),
+            &features,
+            &DEFAULT_THREAD_POOL,
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), ExitCode::UnsupportedJpeg);
+    }
+
     #[test]
     fn test_simple_parse_progressive() {
         test_file("androidprogressive")
@@ -966,7 +1071,7 @@ mod tests {
 
     impl<W: Write> Write for RecordStreamPosition<W> {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            if buf.len() == 0 {
+            if buf.is_empty() {
                 return Ok(0);
             }
 
@@ -1011,8 +1116,7 @@ mod tests {
     fn test_too_small_output() {
         let original = read_file("slrcity", ".lep");
 
-        let mut output = Vec::new();
-        output.resize(original.len() / 2, 0u8);
+        let mut output = vec![0; original.len() / 2];
 
         let r = decode_lepton(
             &mut Cursor::new(&original),

@@ -145,6 +145,8 @@ Options:
     --noverify              do not verify the output
     --max-width <n>         maximum width of the JPEG file
     --max-height <n>        maximum height of the JPEG file
+    --max-pixels <n>        maximum number of pixels (width * height) of the JPEG file
+    --max-scans <n>         maximum number of scans in a progressive JPEG
     --max-jpeg-file-size <n> maximum size of the JPEG file
     --threads <n>           maximum number of threads to use
     --rejectprogressive     reject progressive JPEG files
@@ -188,6 +190,20 @@ Options:
         "--max-height",
         parse_u32,
         &mut enabled_features.max_jpeg_height,
+    )?;
+
+    override_if(
+        &mut pargs,
+        "--max-pixels",
+        parse_u64,
+        &mut enabled_features.max_jpeg_pixels,
+    )?;
+
+    override_if(
+        &mut pargs,
+        "--max-scans",
+        parse_u32,
+        &mut enabled_features.max_progressive_scans,
     )?;
 
     override_if(
@@ -370,7 +386,7 @@ Options:
         let thread_cpu = CpuTimeMeasure::new();
         let walltime = Instant::now();
 
-        corrupt_data_if_enabled(&mut corrupt, &mut writable_input_data.to_mut());
+        corrupt_data_if_enabled(&mut corrupt, writable_input_data.to_mut());
 
         // do the encoding/decoding, if we got an error and were corrupting the file, then restore the
         // original data and continue so we can try corrupting the file in different ways
@@ -462,8 +478,7 @@ fn id_file_type(input_data: &[u8]) -> Result<FileType, LeptonError> {
         return Err(LeptonError::new(
             ExitCode::BadLeptonFile,
             "ERROR input file is not a valid JPEG or Lepton file",
-        )
-        .into());
+        ));
     })
 }
 
@@ -478,7 +493,7 @@ fn execute_cpp_verify(
     if exit_code != 0 {
         log::error!("cpp exit code: {}", exit_code);
 
-        return Err(LeptonError::new(
+        Err(LeptonError::new(
             ExitCode::ExternalVerificationFailed,
             format!(
                 "cpp verify failed with exit code {0} stderr: {1}",
@@ -500,8 +515,7 @@ fn execute_cpp_verify(
         return Err(LeptonError::new(
             ExitCode::ExternalVerificationFailed,
             "verify failed with different data",
-        )
-        .into());
+        ));
     }
     log::info!("verify succeeded with cpp version");
     Ok(())
@@ -543,7 +557,7 @@ fn do_work(
 
             output = Vec::with_capacity(input_data.len());
 
-            metrics = decode_lepton(&mut reader, &mut output, &enabled_features, thread_pool)?;
+            metrics = decode_lepton(&mut reader, &mut output, enabled_features, thread_pool)?;
         }
     }
 
@@ -594,11 +608,11 @@ impl<W: Write + Seek> Write for VerifyWriter<W> {
 
         self.offset += buf.len();
         self.output.write_all(buf)?;
-        return Ok(buf.len());
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        return self.output.flush();
+        self.output.flush()
     }
 }
 
@@ -648,7 +662,7 @@ pub fn call_executable_with_input(
     // Wait for the child process to exit and collect output
     let output = child.wait_with_output()?;
 
-    let mut file_in = File::open(&temp_filename).unwrap();
+    let mut file_in = File::open(temp_filename).unwrap();
     let mut contents = Vec::new();
     file_in.read_to_end(&mut contents).unwrap();
 

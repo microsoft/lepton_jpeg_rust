@@ -33,7 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use bytemuck::{cast, cast_ref};
-use wide::{CmpEq, i16x16};
+use wide::i16x16;
 
 use crate::consts::{JpegDecodeStatus, JpegType};
 use crate::helpers::u16_bit_length;
@@ -100,7 +100,7 @@ impl<'a> JpegIncrementalWriter<'a> {
         if cur_row.last_row_to_complete_mcu {
             self.huffw.ensure_space(self.capacity);
 
-            return Ok(recode_one_mcu_row(
+            return recode_one_mcu_row(
                 &mut self.huffw,
                 cur_row.mcu_row_index * self.jpeg_header.mcuh.get(),
                 &mut self.last_dc,
@@ -109,7 +109,7 @@ impl<'a> JpegIncrementalWriter<'a> {
                 self.reconstruction_info,
                 self.current_scan_index,
             )
-            .context()?);
+            .context();
         }
         Ok(false)
     }
@@ -204,7 +204,7 @@ fn recode_one_mcu_row(
                     &block,
                 );
 
-                sta = state.next_mcu_pos(&jf);
+                sta = state.next_mcu_pos(jf);
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
                 if jf.cs_sah == 0 {
@@ -318,10 +318,19 @@ fn recode_one_mcu_row(
 
             // status 1 means restart
             if jf.rsti > 0 {
-                if rinfo.rst_cnt.len() == 0
-                    || (!rinfo.rst_cnt_set)
-                    || cumulative_reset_markers < rinfo.rst_cnt[current_scan_index]
-                {
+                let emit_rst = if rinfo.rst_cnt.is_empty() || !rinfo.rst_cnt_set {
+                    true
+                } else {
+                    let Some(&rst_cnt) = rinfo.rst_cnt.get(current_scan_index) else {
+                        return err_exit_code(
+                            ExitCode::BadLeptonFile,
+                            "missing restart count for scan",
+                        );
+                    };
+                    cumulative_reset_markers < rst_cnt
+                };
+
+                if emit_rst {
                     let rst = jpeg_code::RST0 + (cumulative_reset_markers & 7) as u8;
 
                     huffw.write_byte_unescaped(0xFF);
@@ -784,7 +793,7 @@ mod tests {
             reader,
             &mut jpeg_header,
             &mut rinfo,
-            &enabled_features,
+            enabled_features,
             |header, raw_header| {
                 headers.push((header.clone(), raw_header.to_vec()));
             },
@@ -819,18 +828,13 @@ mod tests {
             reconstructed.extend_from_slice(&EOI);
         } else {
             // progressive JPEG consists of header + scan, header + scan, etc
-            let mut scnc = 0;
-
-            for (jh, raw_header) in headers {
+            for (scnc, (jh, raw_header)) in headers.into_iter().enumerate() {
                 // progressive JPEG consists of headers + scan
                 reconstructed.extend_from_slice(&raw_header);
 
                 let scan = jpeg_write_entire_scan(&image_data, &jh, &rinfo, scnc).unwrap();
 
                 reconstructed.extend_from_slice(&scan);
-
-                // advance to next scan
-                scnc += 1;
             }
 
             reconstructed.extend_from_slice(&EOI);
@@ -1017,7 +1021,7 @@ pub mod benchmarks {
 
                 let r = jpeg_write_baseline_row_range(
                     (offset - prev_offset) as usize,
-                    &coding_info,
+                    coding_info,
                     &image_data,
                     &jpeg_header,
                     &rinfo,

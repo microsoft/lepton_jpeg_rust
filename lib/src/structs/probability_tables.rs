@@ -38,11 +38,11 @@ pub struct PredictDCResult {
 
 impl ProbabilityTables {
     pub const fn new(in_left_present: bool, in_above_present: bool) -> ProbabilityTables {
-        return ProbabilityTables {
+        ProbabilityTables {
             left_present: in_left_present,
             above_present: in_above_present,
             all_present: in_left_present && in_above_present,
-        };
+        }
     }
 
     pub fn is_all_present(&self) -> bool {
@@ -75,16 +75,16 @@ impl ProbabilityTables {
             retval -= adjustment_factor;
         }
 
-        return retval;
+        retval
     }
 
     pub fn get_color_index(component: usize) -> usize {
-        return if component == 0 { 0 } else { 1 };
+        if component == 0 { 0 } else { 1 }
     }
 
     #[inline(always)]
     pub fn num_non_zeros_to_bin_7x7(num_non_zeros: usize) -> usize {
-        return usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros]);
+        usize::from(NON_ZERO_TO_BIN_7X7[num_non_zeros])
     }
 
     pub fn calc_num_non_zeros_7x7_context_bin<const ALL_PRESENT: bool>(
@@ -101,18 +101,17 @@ impl ProbabilityTables {
             num_non_zeros_left = neighbor_data.neighbor_context_left.get_num_non_zeros();
         }
 
-        let num_non_zeros_context;
-        if (!ALL_PRESENT) && self.above_present && !self.left_present {
-            num_non_zeros_context = (num_non_zeros_above + 1) / 2;
+        let num_non_zeros_context = if (!ALL_PRESENT) && self.above_present && !self.left_present {
+            num_non_zeros_above.div_ceil(2)
         } else if (!ALL_PRESENT) && self.left_present && !self.above_present {
-            num_non_zeros_context = (num_non_zeros_left + 1) / 2;
+            num_non_zeros_left.div_ceil(2)
         } else if ALL_PRESENT || (self.left_present && self.above_present) {
-            num_non_zeros_context = (num_non_zeros_above + num_non_zeros_left + 2) / 4;
+            (num_non_zeros_above + num_non_zeros_left + 2) / 4
         } else {
-            num_non_zeros_context = 0;
-        }
+            0
+        };
 
-        return NON_ZERO_TO_BIN[usize::from(num_non_zeros_context)];
+        NON_ZERO_TO_BIN[usize::from(num_non_zeros_context)]
     }
 
     // calculates the average of the prior values from their corresponding value in the left, above and above/left block
@@ -229,12 +228,12 @@ impl ProbabilityTables {
 
         let div = (qt.get_quantization_table_transposed()[coefficient_tr] as i32) << 13;
         if let Some(x) = best_prior.checked_div(div) {
-            return Ok(x);
+            Ok(x)
         } else {
-            return err_exit_code(
+            err_exit_code(
                 ExitCode::UnsupportedJpegWithZeroIdct0,
                 "integer overflow in coefficient context calculation",
-            );
+            )
         }
     }
 
@@ -271,16 +270,16 @@ impl ProbabilityTables {
         let a2 = pixels_sans_dc.as_i16x8(1);
         let v_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
-        let a1 = pixels_sans_dc.from_stride(0, 8);
-        let a2 = pixels_sans_dc.from_stride(1, 8);
+        let a1 = pixels_sans_dc.get_stride(0, 8);
+        let a2 = pixels_sans_dc.get_stride(1, 8);
         let h_pred = calc_pred(a1, a2, enabled_features.use_16bit_adv_predict);
 
         let a1 = pixels_sans_dc.as_i16x8(7);
         let a2 = pixels_sans_dc.as_i16x8(6);
         let next_edge_pixels_v = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
-        let a1 = pixels_sans_dc.from_stride(7, 8);
-        let a2 = pixels_sans_dc.from_stride(6, 8);
+        let a1 = pixels_sans_dc.get_stride(7, 8);
+        let a2 = pixels_sans_dc.get_stride(6, 8);
 
         let next_edge_pixels_h = calc_pred(a1, a2, enabled_features.use_16bit_dc_estimate);
 
@@ -335,12 +334,12 @@ impl ProbabilityTables {
 
         let uncertainty2_val = (far_afield_value >> 3) as i16;
 
-        return PredictDCResult {
+        PredictDCResult {
             predicted_dc: (avgmed / q0 + 4) >> 3,
             uncertainty: uncertainty_val,
             uncertainty2: uncertainty2_val,
             next_edge_pixels_h,
             next_edge_pixels_v,
-        };
+        }
     }
 }

@@ -57,19 +57,19 @@ impl NeighborSummary {
     }
 
     pub fn get_vertical_pix(&self) -> i16x8 {
-        return self.edge_pixels_v;
+        self.edge_pixels_v
     }
 
     pub fn get_horizontal_pix(&self) -> i16x8 {
-        return self.edge_pixels_h;
+        self.edge_pixels_h
     }
 
     pub fn get_vertical_coef(&self) -> i32x8 {
-        return self.edge_coefs_v;
+        self.edge_coefs_v
     }
 
     pub fn get_horizontal_coef(&self) -> i32x8 {
-        return self.edge_coefs_h;
+        self.edge_coefs_h
     }
 
     // used for debugging
@@ -79,6 +79,6 @@ impl NeighborSummary {
             Wrapping(i32x8::from_i16x8(self.edge_pixels_h).reduce_add() as u32);
         sum += Wrapping(i32x8::from_i16x8(self.edge_pixels_v).reduce_add() as u32);
         sum += Wrapping(self.num_non_zeros as u32);
-        return sum.0;
+        sum.0
     }
 }

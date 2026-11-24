@@ -58,7 +58,7 @@ impl Write for MultiplexWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if self.buffer.len() > 0 {
+        if !self.buffer.is_empty() {
             let mut new_buffer = Vec::with_capacity(WRITE_BUFFER_SIZE);
             swap(&mut new_buffer, &mut self.buffer);
 
@@ -216,11 +216,11 @@ where
             }
             Ok(Message::Eof(_)) | Err(_) => {
                 packet_receivers.remove(current_thread_writer);
-                if packet_receivers.len() == 0 {
+                if packet_receivers.is_empty() {
                     break;
                 }
 
-                current_thread_writer = current_thread_writer % packet_receivers.len();
+                current_thread_writer %= packet_receivers.len();
             }
         }
     }
@@ -286,13 +286,13 @@ impl MultiplexReader {
                     }
                 },
                 Err(e) => {
-                    return std::io::Result::Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+                    return std::io::Result::Err(std::io::Error::other(e));
                 }
             }
         }
 
         // nothing if we reached the end of file
-        return Ok(0);
+        Ok(0)
     }
 }
 
@@ -683,7 +683,7 @@ mod tests {
             },
         );
 
-        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err();
         assert_eq!(e.exit_code(), ExitCode::FileNotFound);
         assert!(e.message().starts_with("test error"));
     }
@@ -700,7 +700,7 @@ mod tests {
             },
         );
 
-        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err().into();
+        let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err();
         assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
     }
 
@@ -723,8 +723,7 @@ mod tests {
                 }
             },
         )
-        .unwrap_err()
-        .into();
+        .unwrap_err();
 
         assert_eq!(e.exit_code(), ExitCode::FileNotFound);
         assert!(e.message().starts_with("test error"));
@@ -747,8 +746,7 @@ mod tests {
                 Ok(0)
             },
         )
-        .unwrap_err()
-        .into();
+        .unwrap_err();
 
         assert_eq!(e.exit_code(), ExitCode::AssertionFailure);
     }

@@ -60,7 +60,7 @@ impl<R: Read> VPXBoolReader<R> {
             return err_exit_code(ExitCode::StreamInconsistent, "StreamInconsistent");
         }
 
-        return Ok(r);
+        Ok(r)
     }
 
     pub fn drain_stats(&mut self) -> Metrics {
@@ -321,7 +321,7 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value;
         self.range = tmp_range;
 
-        return Ok(coef);
+        Ok(coef)
     }
 
     #[inline(always)]
@@ -340,7 +340,7 @@ impl<R: Read> VPXBoolReader<R> {
         self.value = tmp_value;
         self.range = tmp_range;
 
-        return Ok(bit);
+        Ok(bit)
     }
 
     // Fill `tmp_value` maximally still preserving space for the guard bit,
@@ -369,7 +369,7 @@ impl<R: Read> VPXBoolReader<R> {
             }
         }
 
-        return Ok(tmp_value);
+        Ok(tmp_value)
     }
 }
 

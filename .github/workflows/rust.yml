@@ -7,7 +7,7 @@ permissions:
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "release/*"]
   pull_request:
 
 env:
@@ -18,20 +18,27 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: stable
+          toolchain: "1.99.1" # match ms-prod-1.99 in azure-pipelines.yml
           targets: wasm32-wasip1,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
           components: rustfmt,clippy
 
       # Install nextest
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: nextest
 
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.7"
+          python-version: "3.14.10"
+
       - name: Check formatting
         run: cargo fmt --check --all
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build default target
         run: cargo build --locked --workspace
       - name: Build wasm32-wasip1
@@ -43,14 +50,11 @@ jobs:
       - name: Build x86_64-pc-windows-msvc release
         run: cargo build --locked --target x86_64-pc-windows-msvc --lib --workspace --release
       - name: Test python interface build
-        run: | 
-          cd python
-          cargo build --locked
-          python -m venv .env
-          .env\Scripts\activate
-          pip install maturin pytest
-          maturin develop --locked
-          pytest --junitxml=results.xml
+        working-directory: python
+        # uv installs the Python version from requires-python and builds the extension with maturin
+        run: |
+          uv sync --locked
+          uv run --no-sync pytest --junitxml=results.xml
 
       # Run tests with nextest and output JUnit results
       - name: Run tests
@@ -59,7 +63,7 @@ jobs:
 
       # Upload test results so GitHub shows pass/fail per test
       - name: Upload test results
-        uses: EnricoMi/publish-unit-test-result-action/windows@v2
+        uses: EnricoMi/publish-unit-test-result-action/windows@da5b7be67623cd59bbbd1a0ce4f022050a55605f # v2.26.0
         if: always() # Upload even if tests fail
         with:
           files: |

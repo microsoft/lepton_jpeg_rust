@@ -16,20 +16,20 @@ use std::{
 };
 
 use lepton_jpeg::{
-    DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonFileReader, LeptonThreadPool,
-    SingleThreadPool, ThreadPoolHolder, catch_unwind_result, decode_lepton, encode_lepton,
-    get_git_version,
+    DEFAULT_THREAD_POOL, EnabledFeatures, ExitCode, LeptonError, LeptonFileReader,
+    LeptonThreadPool, SingleThreadPool, ThreadPoolHolder, catch_unwind_result, decode_lepton,
+    encode_lepton, get_git_version,
 };
 
 /// copies a string into a limited length zero terminated utf8 buffer
 fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
-    if target_error_string.len() == 0 {
+    if target_error_string.is_empty() {
         return;
     }
 
-    // copy error string into the buffer as utf8
-    let b = std::ffi::CString::new(str).unwrap();
-    let b = b.as_bytes();
+    // stop at any embedded zero, since the result is a C string
+    let b = str.as_bytes();
+    let b = &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())];
 
     let copy_len = std::cmp::min(b.len(), target_error_string.len() - 1);
 
@@ -38,6 +38,53 @@ fn copy_cstring_utf8_to_buffer(str: &str, target_error_string: &mut [u8]) {
 
     // always null terminated
     target_error_string[copy_len] = 0;
+}
+
+/// Validates a caller-supplied buffer length: no null pointer with a non-zero
+/// length, and nothing larger than a Rust slice can describe.
+fn checked_buffer_len(is_null: bool, len: u64) -> Result<usize, LeptonError> {
+    let len = usize::try_from(len)
+        .ok()
+        .filter(|&l| isize::try_from(l).is_ok())
+        .ok_or_else(|| LeptonError::new(ExitCode::SyntaxError, "buffer length too large"))?;
+    if is_null && len > 0 {
+        return Err(LeptonError::new(
+            ExitCode::SyntaxError,
+            "null buffer with non-zero length",
+        ));
+    }
+    Ok(len)
+}
+
+unsafe fn input_slice<'a>(ptr: *const u8, len: u64) -> Result<&'a [u8], LeptonError> {
+    let len = checked_buffer_len(ptr.is_null(), len)?;
+    if len == 0 {
+        return Ok(&[]);
+    }
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
+
+unsafe fn output_slice<'a>(ptr: *mut u8, len: u64) -> Result<&'a mut [u8], LeptonError> {
+    let len = checked_buffer_len(ptr.is_null(), len)?;
+    if len == 0 {
+        return Ok(&mut []);
+    }
+    Ok(unsafe { std::slice::from_raw_parts_mut(ptr, len) })
+}
+
+/// writes an optional output value, ignoring null pointers
+unsafe fn write_optional(ptr: *mut u64, value: u64) {
+    if !ptr.is_null() {
+        unsafe { *ptr = value };
+    }
+}
+
+/// copies the error into the (optional) error buffer and returns the error code
+unsafe fn report_error(e: &LeptonError, error_string: *mut u8, error_string_len: u64) -> i32 {
+    if let Ok(buffer) = unsafe { output_slice(error_string, error_string_len) } {
+        copy_cstring_utf8_to_buffer(e.message(), buffer);
+    }
+    e.exit_code().as_integer_error_code()
 }
 
 struct RayonThreadPool {
@@ -67,11 +114,22 @@ static RAYON_THREAD_POOL: RayonThreadPool = RayonThreadPool {
 /// C ABI interface for setting the number of threads to use for compression and decompression
 /// This can only be called before any compression or decompression is done, as we cannot
 /// change the number of threads in the threadpool once it is created.
+///
+/// # Safety
+///
+/// Takes no pointers; it is always safe to call.
 pub unsafe extern "C" fn set_num_threads(num_threads: u32) {
     NUM_THREADS.store(num_threads, Ordering::SeqCst);
 }
 
 /// C ABI interface for compressing image, exposed from DLL
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperCompressImage(
@@ -98,6 +156,13 @@ pub unsafe extern "C" fn WrapperCompressImage(
 }
 
 /// C ABI interface for compressing image, exposed from DLL
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperCompressImage2(
@@ -125,6 +190,13 @@ pub unsafe extern "C" fn WrapperCompressImage2(
 }
 
 /// C ABI interface for compressing image, exposed from DLL
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperCompressImage3(
@@ -139,10 +211,13 @@ pub unsafe extern "C" fn WrapperCompressImage3(
     error_string: *mut std::os::raw::c_uchar,
     error_string_buffer_len: u64,
 ) -> i32 {
-    match catch_unwind_result(|| {
-        let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
+    write_optional(result_size, 0);
+    write_optional(cpu_usage, 0);
 
-        let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
+    match catch_unwind_result(|| {
+        let input = input_slice(input_buffer, input_buffer_size)?;
+
+        let output = output_slice(output_buffer, output_buffer_size)?;
 
         let mut reader = Cursor::new(input);
         let mut writer = Cursor::new(output);
@@ -162,28 +237,27 @@ pub unsafe extern "C" fn WrapperCompressImage3(
 
         let metrics = encode_lepton(&mut reader, &mut writer, &features, thread_pool)?;
 
-        *result_size = writer.position().into();
-        *cpu_usage = metrics.get_cpu_time_worker_time().as_millis() as u64;
+        write_optional(result_size, writer.position());
+        write_optional(
+            cpu_usage,
+            metrics.get_cpu_time_worker_time().as_millis() as u64,
+        );
 
         Ok(())
     }) {
-        Ok(()) => {
-            return 0;
-        }
-        Err(e) => {
-            if error_string_buffer_len > 0 {
-                copy_cstring_utf8_to_buffer(
-                    e.message(),
-                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
-                );
-            }
-
-            return e.exit_code().as_integer_error_code();
-        }
+        Ok(()) => 0,
+        Err(e) => report_error(&e, error_string, error_string_buffer_len),
     }
 }
 
 /// C ABI interface for decompressing image, exposed from DLL
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImage(
@@ -195,7 +269,7 @@ pub unsafe extern "C" fn WrapperDecompressImage(
     result_size: *mut u64,
 ) -> i32 {
     let mut cpu_usage: u64 = 0;
-    return WrapperDecompressImage4(
+    WrapperDecompressImage4(
         input_buffer,
         input_buffer_size,
         output_buffer,
@@ -206,12 +280,19 @@ pub unsafe extern "C" fn WrapperDecompressImage(
         0,
         std::ptr::null_mut(),
         0,
-    );
+    )
 }
 
 /// C ABI interface for decompressing image, exposed from DLL.
 /// use_16bit_dc_estimate argument should be set to true only for images
 /// that were compressed by C++ version of Leptron (see comments below).
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImageEx(
@@ -243,6 +324,13 @@ pub unsafe extern "C" fn WrapperDecompressImageEx(
 }
 
 /// C ABI interface for decompressing image, exposed from DLL.
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImage3(
@@ -270,6 +358,13 @@ pub unsafe extern "C" fn WrapperDecompressImage3(
 }
 
 /// C ABI interface for decompressing image, exposed from DLL.
+///
+/// # Safety
+///
+/// Each buffer pointer must be valid for reads (input) or writes (output) of its stated
+/// size, or may be null when the size is 0. Output value pointers (`result_size`,
+/// `cpu_usage`) must be null or valid for writes. `error_string`, where present, must be null
+/// or valid for writes of `error_string_buffer_len` bytes.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case, unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn WrapperDecompressImage4(
@@ -284,6 +379,9 @@ pub unsafe extern "C" fn WrapperDecompressImage4(
     error_string: *mut std::os::raw::c_uchar,
     error_string_buffer_len: u64,
 ) -> i32 {
+    write_optional(result_size, 0);
+    write_optional(cpu_usage, 0);
+
     match catch_unwind_result(|| {
         // For back-compat with C++ version we allow decompression of images with zeros in DQT tables
 
@@ -312,17 +410,20 @@ pub unsafe extern "C" fn WrapperDecompressImage4(
             &DEFAULT_THREAD_POOL
         };
 
+        let input = input_slice(input_buffer, input_buffer_size)?;
+        let output = output_slice(output_buffer, output_buffer_size)?;
+
         loop {
-            let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
-            let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
-
             let mut reader = Cursor::new(input);
-            let mut writer = Cursor::new(output);
+            let mut writer = Cursor::new(&mut output[..]);
 
-            match decode_lepton(&mut reader, &mut writer, &mut enabled_features, thread_pool) {
+            match decode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool) {
                 Ok(metrics) => {
-                    *result_size = writer.position().into();
-                    *cpu_usage = metrics.get_cpu_time_worker_time().as_millis() as u64;
+                    write_optional(result_size, writer.position());
+                    write_optional(
+                        cpu_usage,
+                        metrics.get_cpu_time_worker_time().as_millis() as u64,
+                    );
                     return Ok(());
                 }
                 Err(e) => {
@@ -338,39 +439,45 @@ pub unsafe extern "C" fn WrapperDecompressImage4(
                         continue;
                     }
 
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         }
     }) {
-        Ok(()) => {
-            return 0;
-        }
-        Err(e) => {
-            if error_string_buffer_len > 0 {
-                copy_cstring_utf8_to_buffer(
-                    e.message(),
-                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
-                );
-            }
-            return e.exit_code().as_integer_error_code();
-        }
+        Ok(()) => 0,
+        Err(e) => report_error(&e, error_string, error_string_buffer_len),
     }
 }
 
 static PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// NUL-terminated copies handed out to C callers
+static PACKAGE_VERSION_C: &std::ffi::CStr = match std::ffi::CStr::from_bytes_with_nul(
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes(),
+) {
+    Ok(s) => s,
+    Err(_) => panic!("package version contains a NUL"),
+};
+static GIT_VERSION_C: LazyLock<std::ffi::CString> =
+    LazyLock::new(|| std::ffi::CString::new(get_git_version()).unwrap_or_default());
+
 pub fn get_version_string() -> String {
     format!("{}-{}", PACKAGE_VERSION, get_git_version())
 }
 
+/// Returns NUL-terminated static strings with the package version and the git revision.
+///
+/// # Safety
+///
+/// `package` and `git` must be valid, writable pointers. The returned strings are static
+/// and must not be freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn get_version(
     package: &mut *const std::os::raw::c_char,
     git: &mut *const std::os::raw::c_char,
 ) {
-    *git = get_git_version().as_ptr() as *const std::os::raw::c_char;
-    *package = PACKAGE_VERSION.as_ptr() as *const std::os::raw::c_char;
+    *git = GIT_VERSION_C.as_ptr();
+    *package = PACKAGE_VERSION_C.as_ptr();
 }
 
 // wraps unmanaged context for decompression and tries to ensure that if is valid
@@ -402,7 +509,7 @@ impl<'a> DecompressionContext<'a> {
     }
 
     /// allocates a new context and returns a pointer to it
-    unsafe fn new(internal: LeptonFileReader<'a>) -> *mut std::ffi::c_void {
+    unsafe fn into_raw(internal: LeptonFileReader<'a>) -> *mut std::ffi::c_void {
         let context = Box::new(Self {
             magic: MAGIC_DECOMRESSION_CONTEXT,
             internal,
@@ -416,8 +523,7 @@ impl<'a> DecompressionContext<'a> {
         unsafe {
             let mut context = Box::from_raw(ptr as *mut DecompressionContext);
             assert_eq!(
-                (*context).magic,
-                MAGIC_DECOMRESSION_CONTEXT,
+                context.magic, MAGIC_DECOMRESSION_CONTEXT,
                 "invalid context passed in"
             );
             // invalidate magic to catch double free
@@ -432,6 +538,11 @@ const DECOMPRESS_USE_16BIT_DC_ESTIMATE: u32 = 1;
 const USE_RAYON_THREAD_POOL: u32 = 2;
 const USE_SINGLE_THREAD_POOL: u32 = 4;
 
+/// Creates a streaming decompression context, which must be freed with `free_decompression_context`.
+///
+/// # Safety
+///
+/// Takes no pointers; it is always safe to call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std::ffi::c_void {
     let enabled_features = EnabledFeatures {
@@ -447,12 +558,21 @@ pub unsafe extern "C" fn create_decompression_context(features: u32) -> *mut std
         ThreadPoolHolder::Dyn(&DEFAULT_THREAD_POOL)
     };
 
-    unsafe { DecompressionContext::new(LeptonFileReader::new(enabled_features, thread_pool)) }
+    unsafe { DecompressionContext::into_raw(LeptonFileReader::new(enabled_features, thread_pool)) }
 }
 
+/// Returns the CPU time in milliseconds used so far by a decompression context.
+///
+/// # Safety
+///
+/// `context` must be null or a pointer returned by `create_decompression_context` that has
+/// not yet been freed.
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -> u64 {
+    if context.is_null() {
+        return 0;
+    }
     let context = DecompressionContext::from_pointer(context);
 
     context
@@ -462,9 +582,18 @@ pub unsafe extern "C" fn get_decompression_cpu(context: *mut std::ffi::c_void) -
         .as_millis() as u64
 }
 
+/// Frees a decompression context. Null is ignored.
+///
+/// # Safety
+///
+/// `context` must be null or a pointer returned by `create_decompression_context` that has
+/// not yet been freed.
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_void) {
+    if context.is_null() {
+        return;
+    }
     DecompressionContext::free(context);
 }
 
@@ -472,6 +601,11 @@ pub unsafe extern "C" fn free_decompression_context(context: *mut std::ffi::c_vo
 ///
 /// Returns -1 if more data is needed or if there is more data available, or 0 if done successfully.
 /// Returns > 0 if there is an error
+///
+/// # Safety
+///
+/// `context` must be null or a live pointer from `create_decompression_context`. The buffer
+/// and output pointers follow the same rules as `WrapperDecompressImage4`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe extern "C" fn decompress_image(
@@ -485,11 +619,16 @@ pub unsafe extern "C" fn decompress_image(
     error_string: *mut std::os::raw::c_uchar,
     error_string_buffer_len: u64,
 ) -> i32 {
+    write_optional(result_size, 0);
+
     match catch_unwind_result(|| {
+        if context.is_null() {
+            return Err(LeptonError::new(ExitCode::SyntaxError, "null context"));
+        }
         let context = DecompressionContext::from_pointer(context);
 
-        let input = std::slice::from_raw_parts(input_buffer, input_buffer_size as usize);
-        let output = std::slice::from_raw_parts_mut(output_buffer, output_buffer_size as usize);
+        let input = input_slice(input_buffer, input_buffer_size)?;
+        let output = output_slice(output_buffer, output_buffer_size)?;
 
         let (done, size) = context.internal.process_limited_buffer(
             input,
@@ -498,7 +637,7 @@ pub unsafe extern "C" fn decompress_image(
             &mut context.extra_data,
         )?;
 
-        *result_size = size as u64;
+        write_optional(result_size, size as u64);
         Ok(done)
     }) {
         Ok(done) => {
@@ -508,15 +647,7 @@ pub unsafe extern "C" fn decompress_image(
                 -1
             }
         }
-        Err(e) => {
-            if error_string_buffer_len > 0 {
-                copy_cstring_utf8_to_buffer(
-                    e.message(),
-                    std::slice::from_raw_parts_mut(error_string, error_string_buffer_len as usize),
-                );
-            }
-            e.exit_code().as_integer_error_code()
-        }
+        Err(e) => report_error(&e, error_string, error_string_buffer_len),
     }
 }
 
@@ -525,6 +656,59 @@ mod tests {
     use super::*;
 
     use rstest::rstest;
+
+    #[test]
+    fn get_version_returns_c_strings() {
+        let mut package = std::ptr::null();
+        let mut git = std::ptr::null();
+        unsafe { get_version(&mut package, &mut git) };
+
+        let package = unsafe { std::ffi::CStr::from_ptr(package) };
+        let git = unsafe { std::ffi::CStr::from_ptr(git) };
+        assert_eq!(package.to_str().unwrap(), PACKAGE_VERSION);
+        assert_eq!(git.to_str().unwrap(), get_git_version());
+    }
+
+    #[test]
+    fn reject_invalid_ffi_buffers() {
+        let mut output = [0u8; 16];
+        let mut result_size = u64::MAX;
+        let null_input = unsafe {
+            WrapperDecompressImage4(
+                std::ptr::null(),
+                10,
+                output.as_mut_ptr(),
+                output.len() as u64,
+                0,
+                &mut result_size,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        assert_eq!(null_input, ExitCode::SyntaxError.as_integer_error_code());
+        assert_eq!(result_size, 0);
+
+        let input = [0u8; 4];
+        let mut error = [0u8; 64];
+        let too_long = unsafe {
+            WrapperDecompressImage4(
+                input.as_ptr(),
+                u64::MAX,
+                output.as_mut_ptr(),
+                output.len() as u64,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                error.as_mut_ptr(),
+                error.len() as u64,
+            )
+        };
+        assert_eq!(too_long, ExitCode::SyntaxError.as_integer_error_code());
+        assert_ne!(error[0], 0);
+    }
 
     fn read_file(filename: &str, ext: &str) -> Vec<u8> {
         let filename = std::path::Path::new(env!("WORKSPACE_ROOT"))
@@ -560,9 +744,7 @@ mod tests {
     fn extern_interface() {
         let input = read_file("slrcity", ".jpg");
 
-        let mut compressed = Vec::new();
-
-        compressed.resize(input.len() + 10000, 0);
+        let mut compressed = vec![0; input.len() + 10000];
 
         let mut result_size: u64 = 0;
 
@@ -579,8 +761,7 @@ mod tests {
             assert_eq!(retval, 0);
         }
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         unsafe {
@@ -605,9 +786,7 @@ mod tests {
     fn extern_interface_2() {
         let input = read_file("slrcity", ".jpg");
 
-        let mut compressed = Vec::new();
-
-        compressed.resize(input.len() + 10000, 0);
+        let mut compressed = vec![0; input.len() + 10000];
 
         let mut result_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
@@ -627,8 +806,7 @@ mod tests {
             assert_eq!(retval, 0);
         }
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         unsafe {
@@ -654,9 +832,7 @@ mod tests {
     fn extern_interface_2_single_thread() {
         let input = read_file("slrcity", ".jpg");
 
-        let mut compressed = Vec::new();
-
-        compressed.resize(input.len() + 10000, 0);
+        let mut compressed = vec![0; input.len() + 10000];
 
         let mut result_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
@@ -676,8 +852,7 @@ mod tests {
             assert_eq!(retval, 0);
         }
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         unsafe {
@@ -703,9 +878,7 @@ mod tests {
     fn extern_interface_3_single_thread() {
         let input = read_file("slrcity", ".jpg");
 
-        let mut compressed = Vec::new();
-
-        compressed.resize(input.len() + 10000, 0);
+        let mut compressed = vec![0; input.len() + 10000];
 
         let mut result_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
@@ -751,8 +924,7 @@ mod tests {
             assert_eq!(retval, 0);
         }
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         unsafe {
@@ -843,8 +1015,7 @@ mod tests {
     ) {
         let input = read_file(file.0, ".jpg");
 
-        let mut compressed = Vec::new();
-        compressed.resize(input.len() + 10000, 0);
+        let mut compressed = vec![0; input.len() + 10000];
         let mut result_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
 
@@ -873,8 +1044,7 @@ mod tests {
         let compressed = read_file(file, ".lep");
         let original = read_file(file, ".jpg");
 
-        let mut decompressed = Vec::new();
-        decompressed.resize(original.len() + 10000, 0);
+        let mut decompressed = vec![0; original.len() + 10000];
 
         let mut decompressed_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
@@ -949,8 +1119,7 @@ mod tests {
         };
         let input = read_file(jpg_file_name, ".jpg");
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         let mut cpu_usage: u64 = 0;
@@ -980,8 +1149,7 @@ mod tests {
 
         let input = read_file("mathoverflow", ".jpg");
 
-        let mut original = Vec::new();
-        original.resize(input.len() + 10000, 0);
+        let mut original = vec![0; input.len() + 10000];
 
         let mut original_size: u64 = 0;
         let mut cpu_usage: u64 = 0;

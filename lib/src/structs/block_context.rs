@@ -58,8 +58,7 @@ impl BlockContext {
     }
 
     pub fn here<'a>(&self, image_data: &'a BlockBasedImage) -> &'a AlignedBlock {
-        let retval = image_data.get_block(self.cur_block_index);
-        return retval;
+        image_data.get_block(self.cur_block_index)
     }
 
     pub fn get_neighbor_data<'a, const ALL_PRESENT: bool>(

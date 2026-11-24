@@ -28,6 +28,19 @@ The following config options are supported:
 - reject_dqts_with_zeros: true if we should reject JPEGs with 0 in their quantitization table
 - max_partitions: maximum number of partitions to split JPEG into in order to allow for parallel compression/decompression
 - max_jpeg_file_size: reject JPEGs larger than this
+- max_jpeg_pixels: reject JPEGs with more pixels (width * height) than this
+- max_progressive_scans: reject progressive JPEGs with more scans than this
+
+Requires Python 3.14 or later.
+
+## Development
+
+The Python package is managed with [uv](https://docs.astral.sh/uv/). From the `python` directory:
+
+``` shell
+uv sync          # installs Python 3.14 and the dev tools, then builds the extension
+uv run pytest    # runs the tests
+```
 
 ## Contributing
 

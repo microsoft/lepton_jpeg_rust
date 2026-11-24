@@ -82,9 +82,13 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     Vec<(u64, RestartSegmentCodingInfo)>,
     u64,
 )> {
+    let stream_start_position = reader.stream_position()?;
+
     let mut startheader = [0u8; 2];
-    reader.read(&mut startheader)?;
-    if startheader[0] != 0xFF || startheader[1] != jpeg_code::SOI {
+    if reader.read_exact(&mut startheader).is_err()
+        || startheader[0] != 0xFF
+        || startheader[1] != jpeg_code::SOI
+    {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
             "jpeg must start with with 0xff 0xd8",
@@ -118,7 +122,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     for i in 0..jpeg_header.cmpc {
         // constructor takes height in proportion to the component[0]
         image_data.push(BlockBasedImage::new(
-            &jpeg_header,
+            jpeg_header,
             i,
             0,
             jpeg_header.cmp_info[0].bcv,
@@ -129,7 +133,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
     let mut partitions = Vec::new();
     read_first_scan(
-        &jpeg_header,
+        jpeg_header,
         reader,
         &mut partitions,
         &mut image_data[..],
@@ -143,7 +147,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             .context();
     }
 
-    if partitions.len() == 0 {
+    if partitions.is_empty() {
         return err_exit_code(
             ExitCode::UnsupportedJpeg,
             "no scan information found in JPEG file",
@@ -159,12 +163,12 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
             rinfo
                 .truncate_components
-                .set_truncation_bounds(&jpeg_header, rinfo.max_dpos);
+                .set_truncation_bounds(jpeg_header, rinfo.max_dpos)?;
 
             // If we got an early EOF, then seek backwards and capture the last two bytes and store them as garbage.
             // This is necessary since the decoder will assume that zero garbage always means a properly terminated JPEG
             // even if early EOF was set to true.
-            end_scan_position = reader.seek(SeekFrom::Current(-2))?.try_into().unwrap();
+            end_scan_position = reader.seek(SeekFrom::Current(-2))?;
 
             // make sure we don't return any partitions that are beyond the
             // adjusted end position
@@ -197,7 +201,12 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
             rinfo.garbage_data = end_of_file.to_vec();
         } else {
             // read the rest of the file to garbage data
-            reader.read_to_end(&mut rinfo.garbage_data).context()?;
+            read_trailing_data(
+                reader,
+                stream_start_position,
+                enabled_features,
+                &mut rinfo.garbage_data,
+            )?;
         }
     } else {
         assert!(jpeg_header.jpeg_type != JpegType::Unknown);
@@ -212,15 +221,27 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
         // for progressive images, loop around reading headers and decoding until we a complete image_data
         let mut prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
+        let mut scan_count = 1;
 
         while prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
+            scan_count += 1;
+            if scan_count > enabled_features.max_progressive_scans {
+                return err_exit_code(
+                    ExitCode::UnsupportedJpeg,
+                    format!(
+                        "more than {0} progressive scans",
+                        enabled_features.max_progressive_scans
+                    ),
+                );
+            }
+
             on_header_callback(
                 jpeg_header,
-                &&rinfo.raw_jpeg_header[prev_raw_jpeg_header_len..],
+                &rinfo.raw_jpeg_header[prev_raw_jpeg_header_len..],
             );
             prev_raw_jpeg_header_len = rinfo.raw_jpeg_header.len();
 
-            read_progressive_scan(&jpeg_header, reader, &mut image_data[..], rinfo).context()?;
+            read_progressive_scan(jpeg_header, reader, &mut image_data[..], rinfo).context()?;
 
             if rinfo.early_eof_encountered {
                 return err_exit_code(
@@ -243,11 +264,37 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
 
         if !enabled_features.stop_reading_at_eoi {
             // append the rest of the file to the buffer
-            reader.read_to_end(&mut rinfo.garbage_data).context()?;
+            read_trailing_data(
+                reader,
+                stream_start_position,
+                enabled_features,
+                &mut rinfo.garbage_data,
+            )?;
         }
     }
 
     Ok((image_data, partitions, end_scan_position))
+}
+
+/// Appends the rest of the stream to `garbage`, failing once the whole file would
+/// exceed `max_jpeg_file_size` instead of buffering an unbounded trailer.
+fn read_trailing_data<R: Read + Seek>(
+    reader: &mut R,
+    stream_start_position: u64,
+    enabled_features: &EnabledFeatures,
+    garbage: &mut Vec<u8>,
+) -> Result<()> {
+    let consumed = reader.stream_position()? - stream_start_position;
+    let allowed = u64::from(enabled_features.max_jpeg_file_size).saturating_sub(consumed);
+
+    let read = reader.take(allowed + 1).read_to_end(garbage).context()?;
+    if read as u64 > allowed {
+        return err_exit_code(
+            ExitCode::UnsupportedJpeg,
+            "file is too large to encode, increase max_jpeg_file_size",
+        );
+    }
+    Ok(())
 }
 
 // false means we hit the end of file marker
@@ -274,7 +321,7 @@ fn prepare_to_decode_next_scan<R: Read>(
         rinfo.max_cmp = cmp::max(rinfo.max_cmp, jpeg_header.cs_cmp[i] as u32);
     }
 
-    return Ok(true);
+    Ok(true)
 }
 
 /// Reads the scan from the JPEG file, writes the image data to the image_data array and
@@ -401,7 +448,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
     let mut sta = JpegDecodeStatus::DecodeInProgress;
     while sta != JpegDecodeStatus::ScanCompleted {
         // decoding for interleaved data
-        state.reset_rstw(&jf); // restart wait counter
+        state.reset_rstw(jf); // restart wait counter
 
         if jf.cs_to == 0 {
             if jf.cs_sah == 0 {
@@ -489,7 +536,7 @@ fn read_progressive_scan<R: BufRead + Seek>(
                         }
                     }
 
-                    sta = state.skip_eobrun(&jf).context()?;
+                    sta = state.skip_eobrun(jf).context()?;
 
                     // proceed only if no error encountered
                     if sta == JpegDecodeStatus::DecodeInProgress {
@@ -599,7 +646,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
                     bits_already_read,
                     lastdc,
                     state.get_mcu(),
-                    &jpeg_header,
+                    jpeg_header,
                 ),
             ));
 
@@ -616,8 +663,8 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         let mut block = [0i16; 64];
         let eob = decode_block_seq(
             bit_reader,
-            &jpeg_header.get_huff_dc_tree(state.get_cmp()),
-            &jpeg_header.get_huff_ac_tree(state.get_cmp()),
+            jpeg_header.get_huff_dc_tree(state.get_cmp()),
+            jpeg_header.get_huff_ac_tree(state.get_cmp()),
             &mut block,
         )?;
 
@@ -639,7 +686,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
 
         // see if here is a good position to do a handoff (has to be aligned between MCU rows since we can't split any finer)
         let old_mcu = state.get_mcu();
-        sta = state.next_mcu_pos(&jpeg_header);
+        sta = state.next_mcu_pos(jpeg_header);
 
         if state.get_mcu() % jpeg_header.mcuh == 0 && old_mcu != state.get_mcu() {
             *do_handoff = true;
@@ -651,7 +698,7 @@ fn decode_baseline_rst<R: BufRead + Seek>(
         }
     }
 
-    return Ok(sta);
+    Ok(sta)
 }
 
 /// <summary>
@@ -714,7 +761,7 @@ pub(crate) fn decode_block_seq<R: BufRead>(
     }
 
     // return position of eob
-    return Ok(eob);
+    Ok(eob)
 }
 
 /// Reads and decodes next Huffman code from BitReader using the provided tree
@@ -840,7 +887,7 @@ fn decode_ac_prg_fs<R: BufRead>(
     }
 
     // return position of eob
-    return Ok(bpos);
+    Ok(bpos)
 }
 
 /// progressive AC SA decoding routine
@@ -870,16 +917,15 @@ fn decode_ac_prg_sa<R: BufRead>(
             // decode run/level combination
             let mut z = l;
             let s = r;
-            let v;
 
-            if s == 0 {
-                v = 0;
+            let v = if s == 0 {
+                0
             } else if s == 1 {
                 let n = bit_reader.read(1)?;
-                v = if n == 0 { -1 } else { 1 }; // fast decode vli
+                if n == 0 { -1 } else { 1 } // fast decode vli
             } else {
                 return err_exit_code(ExitCode::UnsupportedJpeg, "decoding error").context();
-            }
+            };
 
             // write zeroes / write correction bits
             loop {
@@ -918,7 +964,7 @@ fn decode_ac_prg_sa<R: BufRead>(
         }
     }
 
-    return Ok(eob);
+    Ok(eob)
 }
 
 /// fast eobrun decoding routine for succesive approximation when the entire block is zero
@@ -1023,7 +1069,7 @@ mod tests {
             reader,
             &mut jpeg_header,
             &mut rinfo,
-            &enabled_features,
+            enabled_features,
             |header, raw_header| {
                 headers.push((header.clone(), raw_header.to_vec()));
             },
@@ -1139,13 +1185,7 @@ pub mod benchmarks {
             let mut bitreader = BitReader::new(Cursor::new(&buffer));
 
             let mut outblock = AlignedBlock::default();
-            decode_block_seq(
-                &mut bitreader,
-                &dctree,
-                &actree,
-                &mut outblock.get_block_mut(),
-            )
-            .unwrap();
+            decode_block_seq(&mut bitreader, &dctree, &actree, outblock.get_block_mut()).unwrap();
 
             black_box(outblock);
         })

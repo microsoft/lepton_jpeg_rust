@@ -401,14 +401,8 @@ fn test_previous_fuzz_failures() {
     fn test_fuzz_failure(data: &[u8]) {
         let mut output = Vec::new();
 
-        let use_16bit = match data.len() % 2 {
-            0 => false,
-            _ => true,
-        };
-        let accept_invalid_dht = match (data.len() / 2) % 2 {
-            0 => false,
-            _ => true,
-        };
+        let use_16bit = !data.len().is_multiple_of(2);
+        let accept_invalid_dht = !(data.len() / 2).is_multiple_of(2);
 
         // keep the jpeg dimensions small otherwise the fuzzer gets really slow
         let features = EnabledFeatures {
@@ -418,7 +412,7 @@ fn test_previous_fuzz_failures() {
             max_jpeg_width: 1024,
             use_16bit_dc_estimate: use_16bit,
             use_16bit_adv_predict: use_16bit,
-            accept_invalid_dht: accept_invalid_dht,
+            accept_invalid_dht,
             ..EnabledFeatures::compat_lepton_vector_write()
         };
 
@@ -436,16 +430,13 @@ fn test_previous_fuzz_failures() {
 
         let mut original = Vec::new();
 
-        match r {
-            Ok(_) => {
-                let _ = decode_lepton(
-                    &mut Cursor::new(&output),
-                    &mut original,
-                    &features,
-                    &DEFAULT_THREAD_POOL,
-                );
-            }
-            Err(_) => {}
+        if r.is_ok() {
+            let _ = decode_lepton(
+                &mut Cursor::new(&output),
+                &mut original,
+                &features,
+                &DEFAULT_THREAD_POOL,
+            );
         }
     }
 }

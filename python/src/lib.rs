@@ -46,6 +46,14 @@ fn parse_config(
                     let val: u32 = value.extract()?;
                     features.max_jpeg_height = val;
                 }
+                "max_jpeg_pixels" => {
+                    let val: u64 = value.extract()?;
+                    features.max_jpeg_pixels = val;
+                }
+                "max_progressive_scans" => {
+                    let val: u32 = value.extract()?;
+                    features.max_progressive_scans = val;
+                }
                 "progressive" => {
                     let val: bool = value.extract()?;
                     features.progressive = val;

@@ -155,7 +155,7 @@ pub fn parse_jpeg_header<R: Read>(
     if jpeg_header.parse(&mut mirror, enabled_features).context()? {
         // append the header if it was not the end of file marker
         rinfo.raw_jpeg_header.append(&mut output);
-        return Ok(true);
+        Ok(true)
     } else {
         // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
         // but we don't want the EOI since that goes into the garbage data.
@@ -163,7 +163,7 @@ pub fn parse_jpeg_header<R: Read>(
             rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
         }
 
-        return Ok(false);
+        Ok(false)
     }
 }
 
@@ -258,7 +258,7 @@ impl HuffCodes {
                 j += 1;
             }
 
-            code = code << 1;
+            code <<= 1;
         }
 
         hc.post_initialize();
@@ -514,7 +514,7 @@ enum ParseSegmentResult {
 
 impl Default for JpegHeader {
     fn default() -> Self {
-        return JpegHeader {
+        JpegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
@@ -541,7 +541,7 @@ impl Default for JpegHeader {
             cs_sah: 0,
             cs_sal: 0,
             cs_cmp: [0; 4],
-        };
+        }
     }
 }
 
@@ -670,7 +670,7 @@ impl JpegHeader {
             }
         }
 
-        return Ok(true);
+        Ok(true)
     }
 
     /// verifies that the huffman tables for the given types are present for the current scan, and if not, return an error
@@ -898,7 +898,7 @@ impl JpegHeader {
 
                 ensure_space(segment,hpos, 3).context()?;
 
-                self.cs_from = segment[hpos + 0];
+                self.cs_from = segment[hpos];
                 self.cs_to = segment[hpos + 1];
                 self.cs_sah = lbits(segment[hpos + 2], 4);
                 self.cs_sal = rbits(segment[hpos + 2], 4);
@@ -957,6 +957,11 @@ impl JpegHeader {
                 if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, format!("image dimensions larger than {0}x{1}", enabled_features.max_jpeg_width, enabled_features.max_jpeg_height));
+                }
+
+                if u64::from(self.img_height) * u64::from(self.img_width) > enabled_features.max_jpeg_pixels
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image has more than {0} pixels", enabled_features.max_jpeg_pixels));
                 }
 
                 self.cmpc = usize::from(segment[hpos + 5]);
@@ -1105,7 +1110,7 @@ impl JpegHeader {
                     return err_exit_code(ExitCode::UnsupportedJpeg, format!("unknown marker found: FF {0:X}", btype));
                 }
         }
-        return Ok(ParseSegmentResult::Continue);
+        Ok(ParseSegmentResult::Continue)
     }
 }
 
@@ -1131,7 +1136,7 @@ pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> Huff
 
     impl PartialOrd for Node {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.freq.cmp(&other.freq).reverse())
+            Some(self.cmp(other))
         }
     }
 
@@ -1144,8 +1149,9 @@ pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> Huff
     impl Eq for Node {}
 
     impl Ord for Node {
+        // reversed so that BinaryHeap (a max-heap) pops the lowest frequency first
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.freq.cmp(&other.freq).reverse()
+            other.freq.cmp(&self.freq)
         }
     }
 
