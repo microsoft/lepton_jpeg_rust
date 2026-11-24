@@ -205,6 +205,13 @@ fn recode_one_mcu_row(
                 );
 
                 sta = state.next_mcu_pos(&jf);
+
+                // Correct the MCU position if there is only a single component in the frame.
+                // Note that JPEG reading performs this for every scan that has only a single component,
+                // in accordance with the original Lepton implementation.
+                if jf.cmpc == 1 {
+                    state.trim_mcu(jf);
+                }
             } else if jf.cs_to == 0 {
                 // ---> progressive DC encoding <---
                 if jf.cs_sah == 0 {
@@ -794,7 +801,7 @@ mod tests {
         let mut reconstructed = Vec::new();
         reconstructed.extend_from_slice(&SOI);
 
-        if jpeg_header.is_single_scan() {
+        if jpeg_header.is_sequential_single_scan() {
             // sequential JPEG consists of a single header + scan
             reconstructed.extend_from_slice(rinfo.raw_jpeg_header.as_slice());
 
@@ -818,7 +825,7 @@ mod tests {
 
             reconstructed.extend_from_slice(&EOI);
         } else {
-            // progressive JPEG consists of header + scan, header + scan, etc
+            // multi-scan JPEG consists of header + scan, header + scan, etc
             let mut scnc = 0;
 
             for (jh, raw_header) in headers {
@@ -833,10 +840,10 @@ mod tests {
                 scnc += 1;
             }
 
-            reconstructed.extend_from_slice(&EOI);
-
             // progressive includes EOI in the scan
             assert_eq!(reconstructed.len(), end_scan_position as usize);
+
+            reconstructed.extend_from_slice(&EOI);
         }
 
         reconstructed
