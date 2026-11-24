@@ -79,6 +79,7 @@ extends:
                     mergeTestResults: true
 
                 - script: |
+                    set CL=/Qspectre /sdl /Zi /W3
                     set RUSTFLAGS=-Ccontrol-flow-guard -Ctarget-feature=+crt-static,+avx2,+lzcnt -Clink-args=/DYNAMICBASE -Clink-args=/CETCOMPAT
                     cargo build --workspace --locked --release 2>&1
                     copy target\release\lepton_jpeg.dll target\release\lepton_jpeg_avx2.dll
@@ -90,19 +91,19 @@ extends:
                     rd /s /q target\release\build
 
                   displayName: 'Build Release'
-                  
+
                 - task: UseDotNet@2
                   inputs:
                     packageType: 'sdk'
                     version: '6.x'
-              
+
                 - task: EsrpCodeSigning@5
                   inputs:
                     ConnectedServiceName: 'ESRP CodeSigningV2-OneDrive Service'
-                    AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309' 
-                    AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2' 
-                    AuthAKVName: 'ODSP-ESRP' 
-                    AuthCertName: 'ODSP-ESRP-Auth-V2' 
+                    AppRegistrationClientId: 'bd3fbc52-4cf5-4cca-a25d-94160e5ed309'
+                    AppRegistrationTenantId: 'cdc5aeea-15c5-4db6-b079-fcadd2505dc2'
+                    AuthAKVName: 'ODSP-ESRP'
+                    AuthCertName: 'ODSP-ESRP-Auth-V2'
                     AuthSignCertName: 'CodeSigningCertificate'
                     FolderPath: '$(Build.SourcesDirectory)'
                     Pattern: '
@@ -146,7 +147,7 @@ extends:
                     Contents: |
                       target\debug\?(*.dll|*.exe|*.pdb)
                       target\release\?(*.dll|*.exe|*.pdb)
-                    
+
                     TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
                 - task: PublishSymbols@2
