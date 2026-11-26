@@ -181,7 +181,7 @@ where
     drop(arc_processor);
 
     if thread_pool.max_parallelism() > 1 {
-        spawn_processor_threads(thread_pool, max_processor_threads, work);
+        spawn_processor_threads(thread_pool, max_processor_threads, work)?;
     } else {
         // single threaded, just run all the work inline, which will
         // fill build up the receiver queue to write the image
@@ -340,7 +340,7 @@ pub fn multiplex_read<FN, RESULT>(
     thread_pool: &dyn LeptonThreadPool,
     retention_bytes: usize,
     processor: FN,
-) -> MultiplexReaderState<RESULT>
+) -> Result<MultiplexReaderState<RESULT>>
 where
     FN: Fn(usize, &mut MultiplexReader, &Sender<MultiplexReadResult<RESULT>>) -> Result<()>
         + Send
@@ -385,20 +385,20 @@ where
     }
 
     let single_thread_work = if thread_pool.max_parallelism() > 1 {
-        spawn_processor_threads(thread_pool, max_processor_threads, work);
+        spawn_processor_threads(thread_pool, max_processor_threads, work)?;
         None
     } else {
         Some(work)
     };
 
-    MultiplexReaderState {
+    Ok(MultiplexReaderState {
         sender_channels: channel_to_sender,
         receiver_channels: result_receiver,
         current_state: State::StartBlock,
         retention_bytes,
         single_thread_work,
         merged_metrics: Metrics::default(),
-    }
+    })
 }
 
 /// spawns the processor threads to handle the work items in the queue. There may be fewer workers
@@ -407,7 +407,7 @@ fn spawn_processor_threads(
     thread_pool: &dyn LeptonThreadPool,
     max_processor_threads: usize,
     work: VecDeque<Box<dyn FnOnce() + Send>>,
-) {
+) -> Result<()> {
     let work_threads = work.len().min(max_processor_threads);
     let shared_queue = Arc::new(Mutex::new(work));
 
@@ -416,7 +416,7 @@ fn spawn_processor_threads(
     for _i in 0..work_threads {
         let q = shared_queue.clone();
 
-        thread_pool.run(Box::new(move || {
+        thread_pool.try_run(Box::new(move || {
             loop {
                 // do this to make sure the lock gets
                 let w = q.lock().unwrap().pop_front();
@@ -427,8 +427,10 @@ fn spawn_processor_threads(
                     break;
                 }
             }
-        }));
+        }))?;
     }
+
+    Ok(())
 }
 
 impl<RESULT> MultiplexReaderState<RESULT> {
@@ -647,7 +649,8 @@ mod tests {
                 result_tx.send(MultiplexReadResult::Complete(metrics))?;
                 Ok(())
             },
-        );
+        )
+        .unwrap();
 
         // do worst case, we are just given byte at a time
         let mut r = Vec::new();
@@ -681,7 +684,8 @@ mod tests {
             |_, _, _: &Sender<MultiplexReadResult<()>>| -> Result<()> {
                 Err(LeptonError::new(ExitCode::FileNotFound, "test error"))?
             },
-        );
+        )
+        .unwrap();
 
         let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err();
         assert_eq!(e.exit_code(), ExitCode::FileNotFound);
@@ -698,7 +702,8 @@ mod tests {
             |_, _, _: &Sender<MultiplexReadResult<()>>| -> Result<()> {
                 panic!();
             },
-        );
+        )
+        .unwrap();
 
         let e: LeptonError = multiplex_state.retrieve_result(true).unwrap_err();
         assert_eq!(e.exit_code(), ExitCode::AssertionFailure);

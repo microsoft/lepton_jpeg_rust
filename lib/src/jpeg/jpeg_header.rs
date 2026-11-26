@@ -42,6 +42,7 @@ use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 
+use super::block_based_image::ALIGNED_BLOCK_SIZE;
 use super::component_info::ComponentInfo;
 use super::jpeg_code;
 use super::truncate_components::TruncateComponents;
@@ -546,6 +547,72 @@ impl Default for JpegHeader {
 }
 
 impl JpegHeader {
+    fn total_component_blocks(&self) -> u64 {
+        self.cmp_info[..self.cmpc]
+            .iter()
+            .map(|component| u64::from(component.bc))
+            .sum()
+    }
+
+    fn check_coefficient_memory(&self, enabled_features: &EnabledFeatures) -> Result<()> {
+        let peak_coefficient_copies = if self.jpeg_type == JpegType::Progressive {
+            2
+        } else {
+            1
+        };
+
+        let coefficient_bytes = self
+            .total_component_blocks()
+            .checked_mul(ALIGNED_BLOCK_SIZE)
+            .and_then(|bytes| bytes.checked_mul(peak_coefficient_copies))
+            .ok_or_else(|| {
+                LeptonError::new(
+                    ExitCode::UnsupportedJpeg,
+                    "JPEG coefficient memory estimate overflowed",
+                )
+            })?;
+
+        if coefficient_bytes > enabled_features.max_jpeg_coefficient_bytes {
+            return err_exit_code(
+                ExitCode::UnsupportedJpeg,
+                format!(
+                    "JPEG coefficient buffers require an estimated {coefficient_bytes} bytes, limit is {}",
+                    enabled_features.max_jpeg_coefficient_bytes
+                ),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn check_scan_work(
+        &self,
+        scan_count: u32,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<()> {
+        let work_units = self
+            .total_component_blocks()
+            .checked_mul(u64::from(scan_count))
+            .ok_or_else(|| {
+                LeptonError::new(
+                    ExitCode::UnsupportedJpeg,
+                    "JPEG scan work estimate overflowed",
+                )
+            })?;
+
+        if work_units > enabled_features.max_jpeg_work_units {
+            return err_exit_code(
+                ExitCode::UnsupportedJpeg,
+                format!(
+                    "JPEG requires {work_units} block-scan work units, limit is {}",
+                    enabled_features.max_jpeg_work_units
+                ),
+            );
+        }
+
+        Ok(())
+    }
+
     /// true if this image is a single scan, which can be partitioned and decode
     /// completely independently by separate threads. If this is not the case, then
     /// we need to decode the entire image in memory and then encode the JPEG sequentially.
@@ -658,6 +725,8 @@ impl JpegHeader {
                 .ceil() as u32;
             self.cmp_info[cmp].nc = self.cmp_info[cmp].ncv * self.cmp_info[cmp].nch;
         }
+
+        self.check_coefficient_memory(enabled_features)?;
 
         // decide components' statistical ids
         if self.cmpc <= 3 {

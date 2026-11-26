@@ -9,7 +9,7 @@ use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, IsTerminal, Read, Seek, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use lepton_jpeg::{
@@ -121,6 +121,59 @@ impl<W: Write> StreamPosition for RecordStreamPosition<W> {
     }
 }
 
+fn read_bounded_to_end(
+    reader: &mut impl Read,
+    max_size: u64,
+    description: &str,
+) -> Result<Vec<u8>, LeptonError> {
+    let mut data = Vec::new();
+    reader.take(max_size + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > max_size {
+        return Err(LeptonError::new(
+            ExitCode::BadLeptonFile,
+            format!("{description} exceeds the configured {max_size} byte limit"),
+        ));
+    }
+    Ok(data)
+}
+
+fn max_cli_input_size(max_jpeg_file_size: u32) -> u64 {
+    2 * u64::from(max_jpeg_file_size) + 1024 * 1024
+}
+
+fn wait_with_bounded_stderr(mut child: Child) -> Result<(i32, String), LeptonError> {
+    const MAX_STDERR_BYTES: usize = 64 * 1024;
+
+    let stderr = child.stderr.take().ok_or_else(|| {
+        LeptonError::new(ExitCode::OsError, "external process stderr was not piped")
+    })?;
+
+    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut stderr = stderr;
+        let mut retained = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = stderr.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let retain = read.min(MAX_STDERR_BYTES.saturating_sub(retained.len()));
+            retained.extend_from_slice(&buffer[..retain]);
+        }
+        Ok(retained)
+    });
+
+    let status = child.wait()?;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| LeptonError::new(ExitCode::OsError, "stderr reader thread panicked"))??;
+
+    Ok((
+        status.code().unwrap_or(-10000),
+        String::from_utf8_lossy(&stderr).into_owned(),
+    ))
+}
+
 // wrap main so that errors get printed nicely without a panic
 fn main_with_result() -> Result<(), UtilError> {
     let mut pargs = pico_args::Arguments::from_env();
@@ -147,6 +200,8 @@ Options:
     --max-height <n>        maximum height of the JPEG file
     --max-pixels <n>        maximum number of pixels (width * height) of the JPEG file
     --max-scans <n>         maximum number of scans in a progressive JPEG
+    --max-coefficient-bytes <n> maximum peak bytes for JPEG coefficient buffers
+    --max-work-units <n>     maximum component-block scan operations
     --max-jpeg-file-size <n> maximum size of the JPEG file
     --threads <n>           maximum number of threads to use
     --rejectprogressive     reject progressive JPEG files
@@ -204,6 +259,20 @@ Options:
         "--max-scans",
         parse_u32,
         &mut enabled_features.max_progressive_scans,
+    )?;
+
+    override_if(
+        &mut pargs,
+        "--max-coefficient-bytes",
+        parse_u64,
+        &mut enabled_features.max_jpeg_coefficient_bytes,
+    )?;
+
+    override_if(
+        &mut pargs,
+        "--max-work-units",
+        parse_u64,
+        &mut enabled_features.max_jpeg_work_units,
     )?;
 
     override_if(
@@ -304,6 +373,7 @@ Options:
             verify_dir.as_path(),
             cppverify.as_ref().unwrap(),
             &mut corrupt,
+            enabled_features.max_jpeg_file_size,
         )?;
         return Ok(());
     }
@@ -311,13 +381,15 @@ Options:
     if dump {
         let mut file_in = File::open(filenames[0].as_os_str()).unwrap();
 
-        let mut contents = Vec::new();
-        file_in.read_to_end(&mut contents).unwrap();
-        dump_jpeg(&contents, dumpall, &enabled_features).unwrap();
+        let contents = read_bounded_to_end(
+            &mut file_in,
+            max_cli_input_size(enabled_features.max_jpeg_file_size),
+            "input file",
+        )?;
+        dump_jpeg(&contents, dumpall, &enabled_features)?;
         return Ok(());
     }
 
-    let mut input_data = Vec::new();
     if filenames.len() != 2 {
         if stdout().is_terminal() || stdin().is_terminal() {
             return Err(LeptonError::new(
@@ -328,8 +400,11 @@ Options:
         }
 
         // special case for piped input, stream output data as we process it instead of buffering it all
-        let mut data = Vec::new();
-        std::io::stdin().read_to_end(&mut data)?;
+        let data = read_bounded_to_end(
+            &mut std::io::stdin(),
+            max_cli_input_size(enabled_features.max_jpeg_file_size),
+            "standard input",
+        )?;
 
         let mut cursor = Cursor::new(&data);
 
@@ -358,12 +433,16 @@ Options:
         }
 
         return Ok(());
-    } else {
-        let mut file_in = File::open(filenames[0].as_os_str())
-            .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string()))?;
-
-        file_in.read_to_end(&mut input_data)?;
     }
+
+    let mut file_in = File::open(filenames[0].as_os_str())
+        .map_err(|e| LeptonError::new(ExitCode::FileNotFound, e.to_string()))?;
+
+    let input_data = read_bounded_to_end(
+        &mut file_in,
+        max_cli_input_size(enabled_features.max_jpeg_file_size),
+        "input file",
+    )?;
 
     if input_data.len() < 2 {
         return Err(LeptonError::new(ExitCode::BadLeptonFile, "ERROR input file too small").into());
@@ -487,8 +566,11 @@ fn execute_cpp_verify(
     compressed_file: &OsStr,
     original_contents: &[u8],
 ) -> Result<(), LeptonError> {
-    let (output, exit_code, stderr) =
-        call_executable_with_input(cpp_executable, compressed_file).unwrap();
+    let (output, exit_code, stderr) = call_executable_with_input(
+        cpp_executable,
+        compressed_file,
+        original_contents.len() as u64,
+    )?;
 
     if exit_code != 0 {
         log::error!("cpp exit code: {}", exit_code);
@@ -574,14 +656,14 @@ struct VerifyWriter<W> {
 impl<W> VerifyWriter<W> {
     // used for debugging
     #[allow(dead_code)]
-    pub fn new<R: Read>(output: W, mut reader: R) -> Self {
+    pub fn new<R: Read>(output: W, mut reader: R, max_size: u64) -> Result<Self, LeptonError> {
         let mut r = VerifyWriter {
             output,
             offset: 0,
             good_data: Vec::new(),
         };
-        reader.read_to_end(&mut r.good_data).unwrap();
-        r
+        r.good_data = read_bounded_to_end(&mut reader, max_size, "verification input")?;
+        Ok(r)
     }
 }
 impl<W: Write + Seek> Seek for VerifyWriter<W> {
@@ -635,6 +717,7 @@ fn main() {
 pub fn call_executable_with_input(
     cpp_executable: &Path,
     input_filename: &OsStr,
+    max_output_size: u64,
 ) -> Result<(Vec<u8>, i32, String), LeptonError> {
     // temporary file to store the output of the cpp version so we can
     // compare it with the rust version
@@ -655,23 +738,38 @@ pub fn call_executable_with_input(
     let child = Command::new(cpp_executable)
         .arg(input_filename)
         .arg(temp_filename)
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Wait for the child process to exit and collect output
-    let output = child.wait_with_output()?;
+    let (exit_code, stderr) = wait_with_bounded_stderr(child)?;
 
-    let mut file_in = File::open(temp_filename).unwrap();
-    let mut contents = Vec::new();
-    file_in.read_to_end(&mut contents).unwrap();
+    let mut file_in = File::open(temp_filename)?;
+    let contents = read_bounded_to_end(&mut file_in, max_output_size, "external decoder output")?;
 
     // remove the temporary file
     let _ = std::fs::remove_file(temp_filename);
 
-    // Extract the stdout, stderr, and exit status
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-10000); // Handle the case where exit code is None
-
     Ok((contents, exit_code, stderr))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_read_rejects_oversized_input() {
+        let mut input = Cursor::new([0u8; 5]);
+        let error = read_bounded_to_end(&mut input, 4, "test input").unwrap_err();
+        assert_eq!(error.exit_code(), ExitCode::BadLeptonFile);
+    }
+
+    #[test]
+    fn bounded_read_accepts_input_at_limit() {
+        let mut input = Cursor::new([0u8; 4]);
+        assert_eq!(
+            read_bounded_to_end(&mut input, 4, "test input").unwrap(),
+            vec![0; 4]
+        );
+    }
 }

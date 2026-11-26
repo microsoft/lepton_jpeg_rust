@@ -98,6 +98,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
     if !prepare_to_decode_next_scan(jpeg_header, rinfo, reader, enabled_features).context()? {
         return err_exit_code(ExitCode::UnsupportedJpeg, "Jpeg does not contain scans");
     }
+    jpeg_header.check_scan_work(1, enabled_features)?;
 
     on_header_callback(jpeg_header, &rinfo.raw_jpeg_header);
 
@@ -234,6 +235,7 @@ pub fn read_jpeg_file<R: BufRead + Seek, FN: FnMut(&JpegHeader, &[u8])>(
                     ),
                 );
             }
+            jpeg_header.check_scan_work(scan_count, enabled_features)?;
 
             on_header_callback(
                 jpeg_header,

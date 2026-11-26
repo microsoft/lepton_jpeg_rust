@@ -332,6 +332,42 @@ fn verify_encode_progressive_false(
     );
 }
 
+#[test]
+fn verify_coefficient_memory_limit() {
+    let input = read_file("slrcity", ".jpg");
+    let mut lepton = Vec::new();
+    assert_exception(
+        ExitCode::UnsupportedJpeg,
+        encode_lepton(
+            &mut Cursor::new(&input),
+            &mut Cursor::new(&mut lepton),
+            &EnabledFeatures {
+                max_jpeg_coefficient_bytes: 1,
+                ..EnabledFeatures::compat_lepton_vector_write()
+            },
+            &DEFAULT_THREAD_POOL,
+        ),
+    );
+}
+
+#[test]
+fn verify_compound_scan_work_limit() {
+    let input = read_file("androidprogressive", ".jpg");
+    let mut lepton = Vec::new();
+    assert_exception(
+        ExitCode::UnsupportedJpeg,
+        encode_lepton(
+            &mut Cursor::new(&input),
+            &mut Cursor::new(&mut lepton),
+            &EnabledFeatures {
+                max_jpeg_work_units: 1,
+                ..EnabledFeatures::compat_lepton_vector_write()
+            },
+            &DEFAULT_THREAD_POOL,
+        ),
+    );
+}
+
 /// non-optimally zero length encoding progressive JPEGs cannot be recreated properly since the encoder always tries to create the longest zero runs
 /// legally allowed given the available huffman codes.
 #[test]

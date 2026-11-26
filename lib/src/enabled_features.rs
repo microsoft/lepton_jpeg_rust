@@ -5,6 +5,12 @@ pub const DEFAULT_MAX_JPEG_PIXELS: u64 = 16386 * 16386;
 /// a progressive JPEG can contain (typical encoders use 10-64).
 pub const DEFAULT_MAX_PROGRESSIVE_SCANS: u32 = 4096;
 
+/// Default peak memory budget for JPEG coefficient buffers.
+pub const DEFAULT_MAX_JPEG_COEFFICIENT_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Default CPU work budget, measured as component blocks multiplied by scans.
+pub const DEFAULT_MAX_JPEG_WORK_UNITS: u64 = 64 * 1024 * 1024;
+
 /// Features that are enabled in the encoder. Turn off for potential backward compat issues.
 #[derive(Debug, Clone)]
 pub struct EnabledFeatures {
@@ -27,6 +33,14 @@ pub struct EnabledFeatures {
     /// maximum number of scans in a progressive JPEG. Each scan costs work proportional
     /// to the image size even if it contains almost no data, so this bounds the CPU time.
     pub max_progressive_scans: u32,
+
+    /// maximum peak bytes used by coefficient buffers. The estimate includes the
+    /// second copy needed while merging progressive partitions.
+    pub max_jpeg_coefficient_bytes: u64,
+
+    /// maximum component-block scan operations. This couples image size and scan
+    /// count so an image cannot independently approach both limits.
+    pub max_jpeg_work_units: u64,
 
     /// Sadly C++ version has a bug where it uses 16 bit math in the SIMD path and 32 bit math in the scalar path
     pub use_16bit_dc_estimate: bool,
@@ -65,6 +79,8 @@ impl EnabledFeatures {
             max_jpeg_width: 16386,
             max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
             max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
+            max_jpeg_coefficient_bytes: DEFAULT_MAX_JPEG_COEFFICIENT_BYTES,
+            max_jpeg_work_units: DEFAULT_MAX_JPEG_WORK_UNITS,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: false,
@@ -86,6 +102,8 @@ impl EnabledFeatures {
             max_jpeg_width: u32::MAX,
             max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
             max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
+            max_jpeg_coefficient_bytes: DEFAULT_MAX_JPEG_COEFFICIENT_BYTES,
+            max_jpeg_work_units: DEFAULT_MAX_JPEG_WORK_UNITS,
             use_16bit_dc_estimate: false,
             use_16bit_adv_predict: false,
             accept_invalid_dht: true,
@@ -107,6 +125,8 @@ impl EnabledFeatures {
             max_jpeg_width: u32::MAX,
             max_jpeg_pixels: DEFAULT_MAX_JPEG_PIXELS,
             max_progressive_scans: DEFAULT_MAX_PROGRESSIVE_SCANS,
+            max_jpeg_coefficient_bytes: DEFAULT_MAX_JPEG_COEFFICIENT_BYTES,
+            max_jpeg_work_units: DEFAULT_MAX_JPEG_WORK_UNITS,
             use_16bit_dc_estimate: true,
             use_16bit_adv_predict: true,
             accept_invalid_dht: true,

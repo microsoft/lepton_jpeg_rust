@@ -222,6 +222,8 @@ pub struct AlignedBlock {
     raw_data: [i16; 64],
 }
 
+pub(crate) const ALIGNED_BLOCK_SIZE: u64 = std::mem::size_of::<AlignedBlock>() as u64;
+
 pub static EMPTY_BLOCK: AlignedBlock = AlignedBlock { raw_data: [0; 64] };
 
 impl Default for AlignedBlock {

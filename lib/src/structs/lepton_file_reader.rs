@@ -525,6 +525,8 @@ impl<'a> LeptonFileReader<'a> {
 
         loop {
             // progressive JPEG consists of scans followed by headers
+            lh.jpeg_header
+                .check_scan_work((scnc + 1).to_u32()?, enabled_features)?;
             let scan =
                 jpeg_write_entire_scan(&merged[..], &lh.jpeg_header, &lh.rinfo, scnc).context()?;
 
@@ -648,7 +650,7 @@ impl<'a> LeptonFileReader<'a> {
         let jpeg_header = lh.jpeg_header.clone();
         let rinfo = lh.rinfo.clone();
 
-        let multiplex_reader_state = multiplex_read(
+        multiplex_read(
             thread_handoff.len(),
             features.max_processor_threads as usize,
             thread_pool,
@@ -665,9 +667,7 @@ impl<'a> LeptonFileReader<'a> {
                     result_tx,
                 )
             },
-        );
-
-        Ok(multiplex_reader_state)
+        )
     }
 }
 

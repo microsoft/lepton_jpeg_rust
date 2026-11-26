@@ -152,10 +152,7 @@ impl LeptonHeader {
         let mut compressed_reader = reader.take(compressed_header_size as u64);
 
         self.rinfo.raw_jpeg_header = self
-            .read_lepton_compressed_header(
-                &mut compressed_reader,
-                enabled_features.max_jpeg_file_size,
-            )
+            .read_lepton_compressed_header(&mut compressed_reader, enabled_features)
             .context()?;
 
         self.raw_jpeg_header_read_index = 0;
@@ -259,8 +256,11 @@ impl LeptonHeader {
     fn read_lepton_compressed_header<R: Read>(
         &mut self,
         src: &mut R,
-        max_jpeg_file_size: u32,
+        enabled_features: &EnabledFeatures,
     ) -> Result<Vec<u8>> {
+        let max_jpeg_file_size = enabled_features.max_jpeg_file_size;
+        let max_scan_entries = enabled_features.max_progressive_scans.max(1);
+
         // The header holds the raw JPEG headers and garbage data (both parts of the original
         // file) plus small per-scan/partition tables, so twice the file limit plus slack
         // accepts anything the encoder could write while bounding the zlib output.
@@ -312,6 +312,28 @@ impl LeptonHeader {
                 // CRS marker
                 self.rinfo.rst_cnt_set = true;
                 let rst_count = header_reader.read_u32::<LittleEndian>()?;
+                let new_rst_count = self
+                    .rinfo
+                    .rst_cnt
+                    .len()
+                    .checked_add(rst_count.to_usize()?)
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "restart count table is too large",
+                        )
+                    })?;
+                check_size(
+                    new_rst_count,
+                    max_scan_entries.to_usize()?,
+                    "Restart count entries",
+                )?;
+                if let Err(e) = self.rinfo.rst_cnt.try_reserve(rst_count.to_usize()?) {
+                    return err_exit_code(
+                        ExitCode::OutOfMemory,
+                        format!("failed to allocate restart count table: {e}"),
+                    );
+                }
 
                 for _i in 0..rst_count {
                     self.rinfo
@@ -323,6 +345,22 @@ impl LeptonHeader {
                 LEPTON_HEADER_LUMA_SPLIT_MARKER,
             ) {
                 // HH markup
+                let new_handoff_count = self
+                    .thread_handoff
+                    .len()
+                    .checked_add(usize::from(current_lepton_marker[2]))
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "partition table is too large",
+                        )
+                    })?;
+                check_size(
+                    new_handoff_count,
+                    MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT,
+                    "Partitions",
+                )?;
+
                 let mut thread_handoffs =
                     ThreadHandoff::deserialize(current_lepton_marker[2], &mut header_reader)?;
 
@@ -334,11 +372,19 @@ impl LeptonHeader {
                 // Marker FRS
                 // read number of false set RST markers per scan from file
                 let rst_err_count = header_reader.read_u32::<LittleEndian>()?;
+                let remaining_rst_errors = max_scan_entries
+                    .checked_sub(self.rinfo.rst_err.len().to_u32()?)
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "restart error table is too large",
+                        )
+                    })?;
 
                 let mut rst_err_data = read_bounded_vec(
                     &mut header_reader,
                     rst_err_count,
-                    max_jpeg_file_size,
+                    remaining_rst_errors,
                     "Restart errors",
                 )?;
 
@@ -732,6 +778,38 @@ fn reject_oversized_declared_lengths() {
             ExitCode::BadLeptonFile
         );
     }
+}
+
+/// recovery tables must be bounded before their attacker-declared contents are allocated or read
+#[test]
+fn reject_oversized_recovery_tables_before_reading_entries() {
+    let features = EnabledFeatures {
+        max_jpeg_file_size: 1024,
+        max_progressive_scans: 1,
+        ..EnabledFeatures::compat_lepton_vector_read()
+    };
+
+    for marker in [b"CRS", b"FRS"] {
+        let mut plain = b"HDR".to_vec();
+        plain.extend(0u32.to_le_bytes());
+        plain.extend(marker);
+        plain.extend(2u32.to_le_bytes());
+
+        let file = compressed_test_header(&plain, 100);
+        assert_eq!(
+            read_test_header(&file, &features).unwrap_err().exit_code(),
+            ExitCode::BadLeptonFile
+        );
+    }
+
+    let mut plain = b"HDR".to_vec();
+    plain.extend(0u32.to_le_bytes());
+    plain.extend(b"HH\x11");
+    let file = compressed_test_header(&plain, 100);
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
 }
 
 /// malformed partition and garbage tables must return errors instead of panicking

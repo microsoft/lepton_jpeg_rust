@@ -30,6 +30,8 @@ The following config options are supported:
 - max_jpeg_file_size: reject JPEGs larger than this
 - max_jpeg_pixels: reject JPEGs with more pixels (width * height) than this
 - max_progressive_scans: reject progressive JPEGs with more scans than this
+- max_jpeg_coefficient_bytes: reject JPEGs whose coefficient buffers would exceed this peak byte estimate
+- max_jpeg_work_units: reject JPEGs whose component blocks multiplied by scan count exceed this value
 
 Requires Python 3.14 or later.
 
