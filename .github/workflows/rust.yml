@@ -26,7 +26,7 @@ jobs:
           components: rustfmt,clippy
 
       # Install nextest
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: nextest
 
@@ -59,7 +59,7 @@ jobs:
 
       # Upload test results so GitHub shows pass/fail per test
       - name: Upload test results
-        uses: EnricoMi/publish-unit-test-result-action/windows@7622c5bf3d112a72ab4fa3951c2aa5723d8ab92d # v2.25.0
+        uses: EnricoMi/publish-unit-test-result-action/windows@da5b7be67623cd59bbbd1a0ce4f022050a55605f # v2.26.0
         if: always() # Upload even if tests fail
         with:
           files: |
