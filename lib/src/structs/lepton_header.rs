@@ -12,9 +12,30 @@ use crate::consts::*;
 use crate::helpers::buffer_prefix_matches_marker;
 use crate::jpeg::jpeg_header::{JpegHeader, ReconstructionInfo};
 use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::size_value::{SizeValue, check_size};
 use crate::structs::thread_handoff::ThreadHandoff;
 
 pub const FIXED_HEADER_SIZE: usize = 28;
+
+/// Reads a length-prefixed field without trusting the declared length for allocation:
+/// the length is checked against `max_len` and the data is read incrementally.
+fn read_bounded_vec<R: Read>(
+    reader: &mut R,
+    len: u32,
+    max_len: u32,
+    name: &str,
+) -> Result<Vec<u8>> {
+    let len = check_size(len, max_len.to_usize()?, name)?;
+
+    let mut data = Vec::new();
+    reader
+        .take(u64::from(len.to_u32()?))
+        .read_to_end(&mut data)?;
+    if data.len() != len {
+        return err_exit_code(ExitCode::ShortRead, "lepton header field is truncated");
+    }
+    Ok(data)
+}
 
 #[derive(Debug, DefaultBoxed)]
 pub struct LeptonHeader {
@@ -86,7 +107,7 @@ impl LeptonHeader {
         // flags to detect the SIMD flavor that was used to encode, since
         // previously the encoder would generate different incompatible files depending on
         // whether SIMD or scalar was selected by the build options.
-        if header[8] == 'M' as u8 && header[9] == 'S' as u8 {
+        if header[8] == b'M' && header[9] == b'S' {
             self.uncompressed_lepton_header_size =
                 Some(u32::from_le_bytes(header[10..14].try_into().unwrap()));
 
@@ -107,8 +128,15 @@ impl LeptonHeader {
         // total size of original JPEG
         self.jpeg_file_size = u32::from_le_bytes(header[20..24].try_into().unwrap());
 
-        let compressed_header_size =
-            u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize;
+        // check limits here, before the streaming reader buffers the compressed header
+        let max_jpeg_file_size = enabled_features.max_jpeg_file_size.to_usize()?;
+        check_size(self.jpeg_file_size, max_jpeg_file_size, "JPEG file")?;
+
+        let compressed_header_size = check_size(
+            u32::from_le_bytes(header[24..28].try_into().unwrap()),
+            max_jpeg_file_size,
+            "Compressed header",
+        )?;
 
         Ok(compressed_header_size)
     }
@@ -120,24 +148,11 @@ impl LeptonHeader {
         enabled_features: &mut EnabledFeatures,
         compressed_header_size: usize,
     ) -> Result<()> {
-        if compressed_header_size > enabled_features.max_jpeg_file_size as usize {
-            return err_exit_code(ExitCode::BadLeptonFile, "Too big compressed header");
-        }
-        if self.jpeg_file_size > enabled_features.max_jpeg_file_size {
-            return err_exit_code(
-                ExitCode::BadLeptonFile,
-                format!(
-                    "Only support images < {} megs",
-                    enabled_features.max_jpeg_file_size / (1024 * 1024)
-                ),
-            );
-        }
-
         // limit reading to the compressed header
         let mut compressed_reader = reader.take(compressed_header_size as u64);
 
         self.rinfo.raw_jpeg_header = self
-            .read_lepton_compressed_header(&mut compressed_reader)
+            .read_lepton_compressed_header(&mut compressed_reader, enabled_features)
             .context()?;
 
         self.raw_jpeg_header_read_index = 0;
@@ -145,7 +160,7 @@ impl LeptonHeader {
         {
             let mut header_data_cursor = Cursor::new(&self.rinfo.raw_jpeg_header[..]);
             self.jpeg_header
-                .parse(&mut header_data_cursor, &enabled_features)
+                .parse(&mut header_data_cursor, enabled_features)
                 .context()?;
             self.raw_jpeg_header_read_index = header_data_cursor.position() as usize;
         }
@@ -155,10 +170,18 @@ impl LeptonHeader {
         if self.rinfo.early_eof_encountered {
             self.rinfo
                 .truncate_components
-                .set_truncation_bounds(&self.jpeg_header, self.rinfo.max_dpos);
+                .set_truncation_bounds(&self.jpeg_header, self.rinfo.max_dpos)?;
         }
 
         let num_threads = self.thread_handoff.len();
+
+        // partition ids are stored in 4 bits in the multiplexed stream
+        if num_threads == 0 || num_threads > 16 {
+            return err_exit_code(
+                ExitCode::BadLeptonFile,
+                format!("invalid number of partitions {num_threads}"),
+            );
+        }
 
         // luma_y_end of the last thread is not serialized/deserialized, fill it here
         let max_luma = self.rinfo.truncate_components.get_block_height(0);
@@ -170,22 +193,37 @@ impl LeptonHeader {
         }
         self.thread_handoff[num_threads - 1].luma_y_end = max_luma;
 
+        // ranges must not run backwards, otherwise the per-thread image sizes underflow
+        if self
+            .thread_handoff
+            .iter()
+            .any(|t| t.luma_y_start > t.luma_y_end)
+        {
+            return err_exit_code(ExitCode::BadLeptonFile, "invalid partition row ranges");
+        }
+
         // if the last segment was too big to fit with the garbage data taken into account, shorten it
         // (a bit of broken logic in the encoder, but can't change it without breaking the file format)
         if self.rinfo.early_eof_encountered {
-            let mut max_last_segment_size = self.jpeg_file_size
-                - u32::try_from(self.rinfo.garbage_data.len())?
-                - u32::try_from(self.raw_jpeg_header_read_index)?
-                - u32::try_from(SOI.len())?;
+            let mut max_last_segment_size = Some(self.jpeg_file_size)
+                .and_then(|s| s.checked_sub(u32::try_from(self.rinfo.garbage_data.len()).ok()?))
+                .and_then(|s| s.checked_sub(u32::try_from(self.raw_jpeg_header_read_index).ok()?))
+                .and_then(|s| s.checked_sub(u32::try_from(SOI.len()).ok()?));
 
             // subtract the segment sizes of all the previous segments (except for the last)
             for i in 0..num_threads - 1 {
-                max_last_segment_size -= self.thread_handoff[i].segment_size;
+                max_last_segment_size = max_last_segment_size
+                    .and_then(|s| s.checked_sub(self.thread_handoff[i].segment_size));
             }
 
-            let last = &mut self.thread_handoff[num_threads - 1];
+            let Some(max_last_segment_size) = max_last_segment_size else {
+                return err_exit_code(
+                    ExitCode::BadLeptonFile,
+                    "segment sizes exceed the jpeg file size",
+                );
+            };
 
-            let max_last_segment_size = max_last_segment_size;
+            let last = &mut self.thread_handoff[num_threads - 1];
 
             if last.segment_size > max_last_segment_size {
                 // re-adjust the last segment size
@@ -215,8 +253,19 @@ impl LeptonHeader {
     }
 
     /// helper for read_lepton_header. uncompresses and parses the contents of the compressed header. Returns the raw JPEG header.
-    fn read_lepton_compressed_header<R: Read>(&mut self, src: &mut R) -> Result<Vec<u8>> {
-        let mut header_reader = ZlibDecoder::new(src);
+    fn read_lepton_compressed_header<R: Read>(
+        &mut self,
+        src: &mut R,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<Vec<u8>> {
+        let max_jpeg_file_size = enabled_features.max_jpeg_file_size;
+        let max_scan_entries = enabled_features.max_progressive_scans.max(1);
+
+        // The header holds the raw JPEG headers and garbage data (both parts of the original
+        // file) plus small per-scan/partition tables, so twice the file limit plus slack
+        // accepts anything the encoder could write while bounding the zlib output.
+        let max_header_size = 2 * u64::from(max_jpeg_file_size) + 1024 * 1024;
+        let mut header_reader = ZlibDecoder::new(src).take(max_header_size + 1);
 
         let mut hdr_buf: [u8; 3] = [0; 3];
         header_reader.read_exact(&mut hdr_buf)?;
@@ -225,13 +274,11 @@ impl LeptonHeader {
             return err_exit_code(ExitCode::BadLeptonFile, "HDR marker not found");
         }
 
-        let hdrs = header_reader.read_u32::<LittleEndian>()? as usize;
+        let hdrs = header_reader.read_u32::<LittleEndian>()?;
+        let hdr_data =
+            read_bounded_vec(&mut header_reader, hdrs, max_jpeg_file_size, "JPEG header")?;
 
-        let mut hdr_data = Vec::new();
-        hdr_data.resize(hdrs, 0);
-        header_reader.read_exact(&mut hdr_data)?;
-
-        if self.rinfo.garbage_data.len() == 0 {
+        if self.rinfo.garbage_data.is_empty() {
             // if we don't have any garbage, assume 0xFF 0xD9 EOI (end of image marker)
 
             // Kind of broken logic since this assumes a EOI even if the file was
@@ -265,6 +312,28 @@ impl LeptonHeader {
                 // CRS marker
                 self.rinfo.rst_cnt_set = true;
                 let rst_count = header_reader.read_u32::<LittleEndian>()?;
+                let new_rst_count = self
+                    .rinfo
+                    .rst_cnt
+                    .len()
+                    .checked_add(rst_count.to_usize()?)
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "restart count table is too large",
+                        )
+                    })?;
+                check_size(
+                    new_rst_count,
+                    max_scan_entries.to_usize()?,
+                    "Restart count entries",
+                )?;
+                if let Err(e) = self.rinfo.rst_cnt.try_reserve(rst_count.to_usize()?) {
+                    return err_exit_code(
+                        ExitCode::OutOfMemory,
+                        format!("failed to allocate restart count table: {e}"),
+                    );
+                }
 
                 for _i in 0..rst_count {
                     self.rinfo
@@ -276,6 +345,22 @@ impl LeptonHeader {
                 LEPTON_HEADER_LUMA_SPLIT_MARKER,
             ) {
                 // HH markup
+                let new_handoff_count = self
+                    .thread_handoff
+                    .len()
+                    .checked_add(usize::from(current_lepton_marker[2]))
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "partition table is too large",
+                        )
+                    })?;
+                check_size(
+                    new_handoff_count,
+                    MAX_THREADS_SUPPORTED_BY_LEPTON_FORMAT,
+                    "Partitions",
+                )?;
+
                 let mut thread_handoffs =
                     ThreadHandoff::deserialize(current_lepton_marker[2], &mut header_reader)?;
 
@@ -286,12 +371,22 @@ impl LeptonHeader {
             ) {
                 // Marker FRS
                 // read number of false set RST markers per scan from file
-                let rst_err_count = header_reader.read_u32::<LittleEndian>()? as usize;
+                let rst_err_count = header_reader.read_u32::<LittleEndian>()?;
+                let remaining_rst_errors = max_scan_entries
+                    .checked_sub(self.rinfo.rst_err.len().to_u32()?)
+                    .ok_or_else(|| {
+                        crate::LeptonError::new(
+                            ExitCode::BadLeptonFile,
+                            "restart error table is too large",
+                        )
+                    })?;
 
-                let mut rst_err_data = Vec::<u8>::new();
-                rst_err_data.resize(rst_err_count, 0);
-
-                header_reader.read_exact(&mut rst_err_data)?;
+                let mut rst_err_data = read_bounded_vec(
+                    &mut header_reader,
+                    rst_err_count,
+                    remaining_rst_errors,
+                    "Restart errors",
+                )?;
 
                 self.rinfo.rst_err.append(&mut rst_err_data);
             } else if buffer_prefix_matches_marker(
@@ -300,13 +395,14 @@ impl LeptonHeader {
             ) {
                 // GRB marker
                 // read garbage (data after end of JPG) from file
-                let garbage_size = header_reader.read_u32::<LittleEndian>()? as usize;
+                let garbage_size = header_reader.read_u32::<LittleEndian>()?;
 
-                let mut garbage_data_array = Vec::<u8>::new();
-                garbage_data_array.resize(garbage_size, 0);
-
-                header_reader.read_exact(&mut garbage_data_array)?;
-                self.rinfo.garbage_data = garbage_data_array;
+                self.rinfo.garbage_data = read_bounded_vec(
+                    &mut header_reader,
+                    garbage_size,
+                    max_jpeg_file_size,
+                    "Garbage data",
+                )?;
             } else if buffer_prefix_matches_marker(
                 current_lepton_marker,
                 LEPTON_HEADER_EARLY_EOF_MARKER,
@@ -325,11 +421,17 @@ impl LeptonHeader {
         }
 
         // shouldn't be any more data
-        let mut remaining_buf = Vec::new();
-        let remaining = header_reader.read_to_end(&mut remaining_buf)?;
-        assert!(remaining == 0);
+        let mut remaining_buf = [0u8; 1];
+        if header_reader.read(&mut remaining_buf)? != 0 {
+            return err_exit_code(ExitCode::BadLeptonFile, "unexpected data after header");
+        }
 
-        return Ok(hdr_data);
+        // hitting the take() limit looks like EOF, so treat it as an error
+        if header_reader.limit() == 0 {
+            return err_exit_code(ExitCode::BadLeptonFile, "lepton header is too large");
+        }
+
+        Ok(hdr_data)
     }
 
     pub fn write_lepton_header<W: Write>(
@@ -371,17 +473,17 @@ impl LeptonHeader {
             writer.write_all(&LEPTON_HEADER_BASELINE_JPEG_TYPE)?;
         }
 
-        writer.write_u8(self.thread_handoff.len() as u8)?;
+        writer.write_u8(u8::try_from(self.thread_handoff.len())?)?;
         writer.write_all(&[0; 3])?;
 
         // Original lepton format reserves 12 bytes for git revision. We use this space for additional info
         // to store information about the version that wrote this.
-        writer.write_u8('M' as u8)?;
-        writer.write_u8('S' as u8)?;
+        writer.write_u8(b'M')?;
+        writer.write_u8(b'S')?;
 
         // write the uncompressed lepton header size
         // (historical, used by a previous version of the decoder)
-        writer.write_u32::<LittleEndian>(lepton_header.len() as u32)?;
+        writer.write_u32::<LittleEndian>(lepton_header.len().to_u32()?)?;
 
         // write the flags that were used to encode this file
         writer.write_u8(
@@ -403,7 +505,7 @@ impl LeptonHeader {
         writer.write_all(&self.git_revision_prefix)?;
 
         writer.write_u32::<LittleEndian>(self.jpeg_file_size)?;
-        writer.write_u32::<LittleEndian>(compressed_header.len() as u32)?;
+        writer.write_u32::<LittleEndian>(compressed_header.len().to_u32()?)?;
         writer.write_all(&compressed_header[..])?;
 
         writer.write_all(&LEPTON_HEADER_COMPLETION_MARKER)?;
@@ -416,7 +518,7 @@ impl LeptonHeader {
         // marker: "HDR" + [size of header]
         mrw.write_all(&LEPTON_HEADER_MARKER)?;
 
-        mrw.write_u32::<LittleEndian>(self.rinfo.raw_jpeg_header.len() as u32)?;
+        mrw.write_u32::<LittleEndian>(self.rinfo.raw_jpeg_header.len().to_u32()?)?;
 
         // data: data from header
         mrw.write_all(&self.rinfo.raw_jpeg_header[..])?;
@@ -445,11 +547,11 @@ impl LeptonHeader {
     }
 
     fn write_lepton_jpeg_restarts_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
-        if self.rinfo.rst_cnt.len() > 0 {
+        if !self.rinfo.rst_cnt.is_empty() {
             // marker: CRS
             mrw.write_all(&LEPTON_HEADER_JPG_RESTARTS_MARKER)?;
 
-            mrw.write_u32::<LittleEndian>(self.rinfo.rst_cnt.len() as u32)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.rst_cnt.len().to_u32()?)?;
 
             for i in 0..self.rinfo.rst_cnt.len() {
                 mrw.write_u32::<LittleEndian>(self.rinfo.rst_cnt[i])?;
@@ -461,11 +563,11 @@ impl LeptonHeader {
 
     fn write_lepton_jpeg_restart_errors_if_needed<W: Write>(&self, mrw: &mut W) -> Result<()> {
         // write number of false set RST markers per scan (if available) to file
-        if self.rinfo.rst_err.len() > 0 {
+        if !self.rinfo.rst_err.is_empty() {
             // marker: "FRS" + [number of scans]
             mrw.write_all(&LEPTON_HEADER_JPG_RESTART_ERRORS_MARKER)?;
 
-            mrw.write_u32::<LittleEndian>(self.rinfo.rst_err.len() as u32)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.rst_err.len().to_u32()?)?;
 
             mrw.write_all(&self.rinfo.rst_err[..])?;
         }
@@ -499,7 +601,7 @@ impl LeptonHeader {
         prefix_garbage: bool,
     ) -> Result<()> {
         // write garbage (if any) to file
-        if self.rinfo.garbage_data.len() > 0 {
+        if !self.rinfo.garbage_data.is_empty() {
             // marker: "PGR/GRB" + [size of garbage]
             if prefix_garbage {
                 mrw.write_all(&LEPTON_HEADER_PREFIX_GARBAGE_MARKER)?;
@@ -507,7 +609,7 @@ impl LeptonHeader {
                 mrw.write_all(&LEPTON_HEADER_GARBAGE_MARKER)?;
             }
 
-            mrw.write_u32::<LittleEndian>(self.rinfo.garbage_data.len() as u32)?;
+            mrw.write_u32::<LittleEndian>(self.rinfo.garbage_data.len().to_u32()?)?;
             mrw.write_all(&self.rinfo.garbage_data[..])?;
         }
 
@@ -610,6 +712,152 @@ fn parse_and_write_header() {
 }
 
 #[cfg(test)]
+fn compressed_test_header(plain: &[u8], jpeg_file_size: u32) -> Vec<u8> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(plain).unwrap();
+    let compressed = encoder.finish().unwrap();
+
+    let mut file = vec![
+        207, 132, 1, 90, 1, 0, 0, 0, 77, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    file.extend(jpeg_file_size.to_le_bytes());
+    file.extend((compressed.len() as u32).to_le_bytes());
+    file.extend(compressed);
+    file
+}
+
+#[cfg(test)]
+fn read_test_header(file: &[u8], enabled_features: &EnabledFeatures) -> Result<()> {
+    let mut features = enabled_features.clone();
+    let mut lh = LeptonHeader::default_boxed();
+    let size =
+        lh.read_lepton_fixed_header(file[..FIXED_HEADER_SIZE].try_into().unwrap(), &mut features)?;
+    lh.read_compressed_lepton_header(
+        &mut Cursor::new(&file[FIXED_HEADER_SIZE..]),
+        &mut features,
+        size,
+    )
+}
+
+/// sizes declared in the header must be checked before allocating or buffering anything
+#[test]
+fn reject_oversized_declared_lengths() {
+    let features = EnabledFeatures {
+        max_jpeg_file_size: 1024,
+        ..EnabledFeatures::compat_lepton_vector_read()
+    };
+
+    // fixed header declares a compressed header bigger than the limit
+    let mut file = compressed_test_header(b"HDR", 100);
+    file[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
+
+    // jpeg file size bigger than the limit
+    let file = compressed_test_header(b"HDR", u32::MAX);
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
+
+    // HDR, FRS and GRB fields declare 4 GiB without containing the data
+    for prefix in [&b""[..], b"FRS", b"GRB"] {
+        let mut plain = b"HDR".to_vec();
+        if prefix.is_empty() {
+            plain.extend(u32::MAX.to_le_bytes());
+        } else {
+            plain.extend(0u32.to_le_bytes());
+            plain.extend(prefix);
+            plain.extend(u32::MAX.to_le_bytes());
+        }
+        let file = compressed_test_header(&plain, 100);
+        assert_eq!(
+            read_test_header(&file, &features).unwrap_err().exit_code(),
+            ExitCode::BadLeptonFile
+        );
+    }
+}
+
+/// recovery tables must be bounded before their attacker-declared contents are allocated or read
+#[test]
+fn reject_oversized_recovery_tables_before_reading_entries() {
+    let features = EnabledFeatures {
+        max_jpeg_file_size: 1024,
+        max_progressive_scans: 1,
+        ..EnabledFeatures::compat_lepton_vector_read()
+    };
+
+    for marker in [b"CRS", b"FRS"] {
+        let mut plain = b"HDR".to_vec();
+        plain.extend(0u32.to_le_bytes());
+        plain.extend(marker);
+        plain.extend(2u32.to_le_bytes());
+
+        let file = compressed_test_header(&plain, 100);
+        assert_eq!(
+            read_test_header(&file, &features).unwrap_err().exit_code(),
+            ExitCode::BadLeptonFile
+        );
+    }
+
+    let mut plain = b"HDR".to_vec();
+    plain.extend(0u32.to_le_bytes());
+    plain.extend(b"HH\x11");
+    let file = compressed_test_header(&plain, 100);
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
+}
+
+/// malformed partition and garbage tables must return errors instead of panicking
+#[test]
+fn reject_inconsistent_header_tables() {
+    let lh = make_minimal_lepton_header();
+    let features = EnabledFeatures::compat_lepton_vector_read();
+
+    let mut jpeg_header = b"HDR".to_vec();
+    jpeg_header.extend((lh.rinfo.raw_jpeg_header.len() as u32).to_le_bytes());
+    jpeg_header.extend(&lh.rinfo.raw_jpeg_header);
+
+    // no partitions at all
+    let file = compressed_test_header(&jpeg_header, 1000);
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
+
+    // truncated file where segment sizes exceed the declared jpeg size
+    let mut plain = jpeg_header.clone();
+    plain.extend(b"HH\x02");
+    for _ in 0..2 {
+        plain.extend([0u8; 2]);
+        plain.extend(u32::MAX.to_le_bytes());
+        plain.extend([0u8; 10]);
+    }
+    plain.extend(b"EEE");
+    plain.extend([0u8; 28]);
+    let file = compressed_test_header(&plain, 1000);
+    assert_eq!(
+        read_test_header(&file, &features).unwrap_err().exit_code(),
+        ExitCode::BadLeptonFile
+    );
+
+    // partition row ranges that run backwards
+    let mut plain = jpeg_header.clone();
+    plain.extend(b"HH\x02");
+    for luma_y_start in [1u16, 0] {
+        plain.extend(luma_y_start.to_le_bytes());
+        plain.extend([0u8; 14]);
+    }
+    let file = compressed_test_header(&plain, 1000);
+    let err = read_test_header(&file, &features).unwrap_err();
+    assert!(err.message().contains("partition row ranges"), "{err}");
+}
+
+#[cfg(test)]
 fn make_minimal_lepton_header() -> Box<LeptonHeader> {
     // minimal jpeg that will pass the validity read tests
 
@@ -674,7 +922,7 @@ fn verify_roundtrip(
 ) -> (Box<LeptonHeader>, EnabledFeatures) {
     let mut output = Vec::new();
     header
-        .write_lepton_header(&mut output, &enabled_features)
+        .write_lepton_header(&mut output, enabled_features)
         .unwrap();
 
     let mut read_header = LeptonHeader::default_boxed();

@@ -24,7 +24,6 @@
 #![forbid(unused_import_braces)]
 #![forbid(redundant_lifetimes)]
 #![forbid(single_use_lifetimes)]
-#![forbid(unused_extern_crates)]
 #![forbid(unused_lifetimes)]
 #![forbid(unused_macro_rules)]
 #![forbid(macro_use_extern_crate)]
@@ -35,6 +34,7 @@ mod consts;
 mod helpers;
 mod jpeg;
 mod metrics;
+mod size_value;
 mod structs;
 
 mod enabled_features;
@@ -99,7 +99,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
     let mut lh;
     let block_image;
 
-    if input_data[0] == 0xff && input_data[1] == 0xd8 {
+    if input_data.starts_with(&[0xff, 0xd8]) {
         let mut reader = Cursor::new(input_data);
 
         (lh, block_image) = read_jpeg(&mut reader, enabled_features, |jh, _ri| {
@@ -119,10 +119,7 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
             let s = format!("{0:?}", lh.jpeg_header);
             println!("{0}", s.replace("},", "},\r\n").replace("],", "],\r\n"));
 
-            if !lh
-                .advance_next_header_segment(&enabled_features)
-                .context()?
-            {
+            if !lh.advance_next_header_segment(enabled_features).context()? {
                 break;
             }
         }
@@ -148,5 +145,5 @@ pub fn dump_jpeg(input_data: &[u8], all: bool, enabled_features: &EnabledFeature
         }
     }
 
-    return Ok(());
+    Ok(())
 }

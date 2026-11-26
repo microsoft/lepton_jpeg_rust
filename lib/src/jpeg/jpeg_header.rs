@@ -42,6 +42,7 @@ use crate::enabled_features::EnabledFeatures;
 use crate::helpers::*;
 use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
 
+use super::block_based_image::ALIGNED_BLOCK_SIZE;
 use super::component_info::ComponentInfo;
 use super::jpeg_code;
 use super::truncate_components::TruncateComponents;
@@ -155,7 +156,7 @@ pub fn parse_jpeg_header<R: Read>(
     if jpeg_header.parse(&mut mirror, enabled_features).context()? {
         // append the header if it was not the end of file marker
         rinfo.raw_jpeg_header.append(&mut output);
-        return Ok(true);
+        Ok(true)
     } else {
         // if the output was more than 2 bytes then was a trailing header, so keep that around as well,
         // but we don't want the EOI since that goes into the garbage data.
@@ -163,7 +164,7 @@ pub fn parse_jpeg_header<R: Read>(
             rinfo.raw_jpeg_header.extend(&output[0..output.len() - 2]);
         }
 
-        return Ok(false);
+        Ok(false)
     }
 }
 
@@ -258,7 +259,7 @@ impl HuffCodes {
                 j += 1;
             }
 
-            code = code << 1;
+            code <<= 1;
         }
 
         hc.post_initialize();
@@ -514,7 +515,7 @@ enum ParseSegmentResult {
 
 impl Default for JpegHeader {
     fn default() -> Self {
-        return JpegHeader {
+        JpegHeader {
             q_tables: [[0; 64]; 4],
             h_codes: [[HuffCodes::default(); 4]; 2],
             h_trees: [[HuffTree::default(); 4]; 2],
@@ -541,11 +542,77 @@ impl Default for JpegHeader {
             cs_sah: 0,
             cs_sal: 0,
             cs_cmp: [0; 4],
-        };
+        }
     }
 }
 
 impl JpegHeader {
+    fn total_component_blocks(&self) -> u64 {
+        self.cmp_info[..self.cmpc]
+            .iter()
+            .map(|component| u64::from(component.bc))
+            .sum()
+    }
+
+    fn check_coefficient_memory(&self, enabled_features: &EnabledFeatures) -> Result<()> {
+        let peak_coefficient_copies = if self.jpeg_type == JpegType::Progressive {
+            2
+        } else {
+            1
+        };
+
+        let coefficient_bytes = self
+            .total_component_blocks()
+            .checked_mul(ALIGNED_BLOCK_SIZE)
+            .and_then(|bytes| bytes.checked_mul(peak_coefficient_copies))
+            .ok_or_else(|| {
+                LeptonError::new(
+                    ExitCode::UnsupportedJpeg,
+                    "JPEG coefficient memory estimate overflowed",
+                )
+            })?;
+
+        if coefficient_bytes > enabled_features.max_jpeg_coefficient_bytes {
+            return err_exit_code(
+                ExitCode::UnsupportedJpeg,
+                format!(
+                    "JPEG coefficient buffers require an estimated {coefficient_bytes} bytes, limit is {}",
+                    enabled_features.max_jpeg_coefficient_bytes
+                ),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn check_scan_work(
+        &self,
+        scan_count: u32,
+        enabled_features: &EnabledFeatures,
+    ) -> Result<()> {
+        let work_units = self
+            .total_component_blocks()
+            .checked_mul(u64::from(scan_count))
+            .ok_or_else(|| {
+                LeptonError::new(
+                    ExitCode::UnsupportedJpeg,
+                    "JPEG scan work estimate overflowed",
+                )
+            })?;
+
+        if work_units > enabled_features.max_jpeg_work_units {
+            return err_exit_code(
+                ExitCode::UnsupportedJpeg,
+                format!(
+                    "JPEG requires {work_units} block-scan work units, limit is {}",
+                    enabled_features.max_jpeg_work_units
+                ),
+            );
+        }
+
+        Ok(())
+    }
+
     /// true if this image is a single scan, which can be partitioned and decode
     /// completely independently by separate threads. If this is not the case, then
     /// we need to decode the entire image in memory and then encode the JPEG sequentially.
@@ -659,6 +726,8 @@ impl JpegHeader {
             self.cmp_info[cmp].nc = self.cmp_info[cmp].ncv * self.cmp_info[cmp].nch;
         }
 
+        self.check_coefficient_memory(enabled_features)?;
+
         // decide components' statistical ids
         if self.cmpc <= 3 {
             for cmp in 0..self.cmpc {
@@ -670,7 +739,7 @@ impl JpegHeader {
             }
         }
 
-        return Ok(true);
+        Ok(true)
     }
 
     /// verifies that the huffman tables for the given types are present for the current scan, and if not, return an error
@@ -898,7 +967,7 @@ impl JpegHeader {
 
                 ensure_space(segment,hpos, 3).context()?;
 
-                self.cs_from = segment[hpos + 0];
+                self.cs_from = segment[hpos];
                 self.cs_to = segment[hpos + 1];
                 self.cs_sah = lbits(segment[hpos + 2], 4);
                 self.cs_sal = rbits(segment[hpos + 2], 4);
@@ -957,6 +1026,11 @@ impl JpegHeader {
                 if self.img_height > enabled_features.max_jpeg_height || self.img_width > enabled_features.max_jpeg_width
                 {
                     return err_exit_code(ExitCode::UnsupportedJpeg, format!("image dimensions larger than {0}x{1}", enabled_features.max_jpeg_width, enabled_features.max_jpeg_height));
+                }
+
+                if u64::from(self.img_height) * u64::from(self.img_width) > enabled_features.max_jpeg_pixels
+                {
+                    return err_exit_code(ExitCode::UnsupportedJpeg, format!("image has more than {0} pixels", enabled_features.max_jpeg_pixels));
                 }
 
                 self.cmpc = usize::from(segment[hpos + 5]);
@@ -1105,7 +1179,7 @@ impl JpegHeader {
                     return err_exit_code(ExitCode::UnsupportedJpeg, format!("unknown marker found: FF {0:X}", btype));
                 }
         }
-        return Ok(ParseSegmentResult::Continue);
+        Ok(ParseSegmentResult::Continue)
     }
 }
 
@@ -1131,7 +1205,7 @@ pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> Huff
 
     impl PartialOrd for Node {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.freq.cmp(&other.freq).reverse())
+            Some(self.cmp(other))
         }
     }
 
@@ -1144,8 +1218,9 @@ pub(super) fn generate_huff_table_from_distribution(freq: &[usize; 256]) -> Huff
     impl Eq for Node {}
 
     impl Ord for Node {
+        // reversed so that BinaryHeap (a max-heap) pops the lowest frequency first
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.freq.cmp(&other.freq).reverse()
+            other.freq.cmp(&self.freq)
         }
     }
 

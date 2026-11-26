@@ -95,6 +95,6 @@ impl RowSpec {
             i -= 1;
         }
 
-        return retval;
+        retval
     }
 }

@@ -17,11 +17,11 @@ pub struct BitWriter {
 // use to write varying sized bits for coding JPEG. Escapes 0xff -> [0xff,0]
 impl BitWriter {
     pub fn new(data_buffer: Vec<u8>) -> Self {
-        return BitWriter {
+        BitWriter {
             current_bit: 64,
             fill_register: 0,
             data_buffer,
-        };
+        }
     }
 
     /// flushes whole bytes from the register into the data buffer
@@ -77,13 +77,13 @@ impl BitWriter {
         // first see if everything fits in the current register
         if new_bits <= self.current_bit {
             self.fill_register |= (val as u64).wrapping_shl(self.current_bit - new_bits); // support corner case where new_bits is zero, we don't want to panic
-            self.current_bit = self.current_bit - new_bits;
+            self.current_bit -= new_bits;
         } else {
             // if not, fill up the register so to the 64 bit boundary we can flush it hopefully without any 0xff bytes
             let fill = self.fill_register | (val as u64).wrapping_shr(new_bits - self.current_bit);
 
             let leftover_new_bits = new_bits - self.current_bit;
-            let leftover_val = val & (1 << leftover_new_bits) - 1;
+            let leftover_val = val & ((1 << leftover_new_bits) - 1);
 
             // flush bytes slowly if we have any 0xff bytes or if we are about to overflow the buffer
             // (overflow check matches implementation in RawVec so that the optimizer can remove the buffer growing code)
@@ -144,7 +144,7 @@ impl BitWriter {
     }
 
     pub fn has_no_remainder(&self) -> bool {
-        return self.current_bit == 64;
+        self.current_bit == 64
     }
 
     pub fn amount_buffered(&self) -> usize {
@@ -220,7 +220,7 @@ mod tests {
             Pad(u8),
         }
 
-        use rand::Rng;
+        use rand::RngExt;
 
         const ITERATIONS: usize = 10000;
 
@@ -228,18 +228,18 @@ mod tests {
         let mut test_data = Vec::with_capacity(ITERATIONS);
 
         for _ in 0..ITERATIONS {
-            let bits = rng.gen_range(0..=16);
+            let bits = rng.random_range(0..=16);
 
-            let t = rng.gen_range(0..=3);
+            let t = rng.random_range(0..=3);
             let v = match t {
                 0 => 0,
                 1 => 0xffff,
-                _ => rng.gen_range(0..=65535),
+                _ => rng.random_range(0..=65535),
             };
 
             let v = v & ((1 << bits) - 1);
 
-            if rng.gen_range(0..100) == 0 {
+            if rng.random_range(0..100) == 0 {
                 test_data.push(Action::Pad(0xff));
             } else {
                 test_data.push(Action::Write(v as u16, bits as u8));
@@ -275,7 +275,7 @@ mod tests {
                         let (peekcode, peekbits) = r.peek();
                         let num_valid_bits = peekbits.min(8).min(u32::from(numbits));
 
-                        let mask = (0xff00 >> num_valid_bits) as u8;
+                        let mask = (0xff00u32 >> num_valid_bits) as u8;
 
                         assert_eq!(
                             expected_peek_byte & mask,

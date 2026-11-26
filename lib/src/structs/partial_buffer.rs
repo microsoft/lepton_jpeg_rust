@@ -74,7 +74,7 @@ impl<'a> PartialBuffer<'a> {
         }
 
         debug_assert!(retval.len() == size);
-        return Some(retval);
+        Some(retval)
     }
 
     /// Same as take, except returns a fixed size array instead of a vector.
@@ -113,7 +113,7 @@ fn test_taking_simple() {
 
     let taken = pb.take(4, 0).unwrap();
     assert_eq!(taken, vec![1, 2, 3, 4]);
-    assert_eq!(&extra[..], []);
+    assert!(extra.is_empty());
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn test_taking_simple_n() {
 
     let taken = pb.take_n::<4>(0).unwrap();
     assert_eq!(taken, [1, 2, 3, 4]);
-    assert_eq!(&extra[..], []);
+    assert!(extra.is_empty());
 }
 
 #[test]

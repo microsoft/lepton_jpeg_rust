@@ -4,17 +4,36 @@ build-backend = "maturin"
 
 [project]
 name = "lepton_jpeg_python"
-version = "0.5.8"
+version = "0.5.9"
 description = "Rust port of the Lepton JPEG compression library"
 authors = [{ name = "Kristof Roomp  ", email = "kristofr@gmail.com" }]
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.8"
+requires-python = ">=3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Operating System :: OS Independent",
 ]
 
 [project.urls]
 Homepage = "https://github.com/microsoft/lepton_jpeg_rust"
+
+[dependency-groups]
+dev = ["maturin>=1.0,<2.0", "pytest"]
+
+[tool.uv]
+# rebuild the extension when the Rust sources change
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "src/**/*.rs" },
+    { file = "../lib/Cargo.toml" },
+    { file = "../lib/src/**/*.rs" },
+]
+
+[[tool.uv.index]]
+name = "microsoft-python"
+url = "https://packagefeedproxy.microsoft.io/pypi/simple/"
+default = true

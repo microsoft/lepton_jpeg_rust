@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use uuid::Uuid;
 
+use crate::{read_bounded_to_end, wait_with_bounded_stderr};
 use lepton_jpeg::{EnabledFeatures, LeptonError};
 
 pub struct RecursiveFiles {
@@ -69,12 +70,13 @@ pub fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>)
         r
     }
 
-    if let Some(seed) = seed {
-        if input_data.len() > 0 {
-            let op = simple_lcg(seed);
-            let r = simple_lcg(seed) as usize % input_data.len();
+    if let Some(seed) = seed
+        && !input_data.is_empty()
+    {
+        let op = simple_lcg(seed);
+        let r = simple_lcg(seed) as usize % input_data.len();
 
-            match op % 5 {
+        match op % 5 {
                 0 => {
                     // flip bit
                     let bitnumber = simple_lcg(seed) as usize % 8;
@@ -95,17 +97,15 @@ pub fn corrupt_data_if_enabled(seed: &mut Option<u64>, input_data: &mut Vec<u8>)
                         input_data.remove(r);
                     }
                 }
-                4 => {
+                4
                     // truncate by 1
-                    if input_data.len() > 1 {
+                    if input_data.len() > 1 => {
                         input_data.truncate(input_data.len() - 1);
                     }
-                }
                 _ => {
                     // do nothing
                 }
             }
-        }
     }
 }
 
@@ -113,15 +113,21 @@ pub fn verify_dir(
     root_path: &Path,
     cpp_executable: &Path,
     corruption_seed: &mut Option<u64>,
+    max_jpeg_file_size: u32,
 ) -> Result<(), LeptonError> {
-    let iter = RecursiveFiles::new(root_path).unwrap();
+    let iter = RecursiveFiles::new(root_path)?;
 
-    iter.for_each(|file_path| {
+    for file_path in iter {
         if file_path.extension().and_then(|s| s.to_str()) != Some("jpg") {
-            return;
+            continue;
         }
-        call_executable_with_input(cpp_executable, file_path.as_os_str(), corruption_seed);
-    });
+        call_executable_with_input(
+            cpp_executable,
+            file_path.as_os_str(),
+            corruption_seed,
+            max_jpeg_file_size,
+        )?;
+    }
     Ok(())
 }
 
@@ -130,14 +136,20 @@ pub fn call_executable_with_input(
     cpp_executable: &Path,
     input_filename: &OsStr,
     corruption_seed: &mut Option<u64>,
-) {
-    let mut input_data = std::fs::read(input_filename).unwrap();
+    max_jpeg_file_size: u32,
+) -> Result<(), LeptonError> {
+    let mut input_file = std::fs::File::open(input_filename)?;
+    let mut input_data = read_bounded_to_end(
+        &mut input_file,
+        u64::from(max_jpeg_file_size),
+        "verification input",
+    )?;
     corrupt_data_if_enabled(corruption_seed, &mut input_data);
 
     // write to temporary file with potential corruption
     let temp_filename_input =
         std::env::temp_dir().join(format!("lepton_jpeg_util_cpp_{}.jpg", Uuid::new_v4()));
-    std::fs::write(&temp_filename_input, &input_data).unwrap();
+    std::fs::write(&temp_filename_input, &input_data)?;
 
     let temp_filename_output =
         std::env::temp_dir().join(format!("lepton_jpeg_util_cpp_{}.lep", Uuid::new_v4()));
@@ -149,17 +161,11 @@ pub fn call_executable_with_input(
     let child = Command::new(cpp_executable)
         .arg(&temp_filename_input)
         .arg(&temp_filename_output)
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn()?;
 
-    // Wait for the child process to exit and collect output
-    let output = child.wait_with_output().unwrap();
-
-    // Extract the stdout, stderr, and exit status
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-10000); // Handle the case where exit code is None
+    let (exit_code, stderr) = wait_with_bounded_stderr(child)?;
 
     if exit_code != 0 {
         log::info!(
@@ -169,7 +175,13 @@ pub fn call_executable_with_input(
             stderr
         );
     } else {
-        let cpp_lepton_data = fs::read(&temp_filename_output).unwrap();
+        let mut cpp_lepton_file = fs::File::open(&temp_filename_output)?;
+        let max_lepton_size = 2 * u64::from(max_jpeg_file_size) + 1024 * 1024;
+        let cpp_lepton_data = read_bounded_to_end(
+            &mut cpp_lepton_file,
+            max_lepton_size,
+            "external encoder output",
+        )?;
 
         let mut writer = Vec::new();
 
@@ -213,4 +225,5 @@ pub fn call_executable_with_input(
 
     _ = std::fs::remove_file(&temp_filename_input);
     _ = std::fs::remove_file(&temp_filename_output);
+    Ok(())
 }

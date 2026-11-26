@@ -4,8 +4,8 @@ version.workspace = true
 edition = "2024"
 authors = ["Kristof Roomp <kristofr@microsoft.com>"]
 
-# requires scoped threads, IsTerminal, let chains
-rust-version = "1.89"
+# matches ms-prod-1.99 (Rust 1.99.1) used by the official Azure build (azure-pipelines.yml)
+rust-version = "1.99.1"
 description = "Rust port of the Lepton lossless JPEG compression library"
 readme = "../README.md"
 repository = "https://github.com/microsoft/lepton_jpeg_rust"
@@ -28,21 +28,24 @@ bytemuck = "1"
 byteorder = "1.4"
 flate2 = "1.0"
 default-boxed = "0.2"
-wide = "0.8"
+wide = "1"
 log = "0.4"
 git-version = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpu-time = "1.0"
-thread-priority = "1.0"
+thread-priority = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-thread-priority = "1.0"
+thread-priority = "3"
 
 [dev-dependencies]
-rand = "0.8"
-rand_chacha = "0.3"
+rand = "0.10"
+rand_chacha = "0.10"
 siphasher = "1"
 
 [lib]
 crate-type = ["lib"]
+
+[lints]
+workspace = true

@@ -17,8 +17,9 @@ use crate::jpeg::block_based_image::BlockBasedImage;
 use crate::jpeg::jpeg_header::JpegHeader;
 use crate::jpeg::jpeg_read::read_jpeg_file;
 use crate::jpeg::truncate_components::TruncateComponents;
-use crate::lepton_error::{AddContext, ExitCode, Result, err_exit_code};
+use crate::lepton_error::{AddContext, ExitCode, LeptonError, Result, err_exit_code};
 use crate::metrics::{CpuTimeMeasure, Metrics};
+use crate::size_value::{SizeValue, check_size};
 use crate::structs::lepton_encoder::lepton_encode_row_range;
 use crate::structs::lepton_file_reader::decode_lepton;
 use crate::structs::lepton_header::LeptonHeader;
@@ -34,7 +35,7 @@ use crate::{LeptonThreadPool, StreamPosition, consts::*};
 /// - `writer`: A writer to which the Lepton-encoded data is written.
 /// - `enabled_features`: A set of toggles for enabling/disabling encoding features/restrictions.
 /// - `thread_pool`: A reference to a thread pool used for parallel processing. Must be a static reference and
-/// can point to `DEFAULT_THREAD_POOL`.
+///   can point to `DEFAULT_THREAD_POOL`.
 pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     reader: &mut R,
     writer: &mut W,
@@ -61,7 +62,7 @@ pub fn encode_lepton<R: BufRead + Seek, W: Write + StreamPosition>(
     let final_file_size = (writer.position() - start_position) + 4;
 
     writer
-        .write_u32::<LittleEndian>(final_file_size as u32)
+        .write_u32::<LittleEndian>(final_file_size.to_u32()?)
         .context()?;
 
     Ok(metrics)
@@ -82,7 +83,7 @@ pub fn encode_lepton_verify(
     let mut writer = Cursor::new(&mut output_data);
 
     let mut metrics =
-        encode_lepton(&mut reader, &mut writer, &enabled_features, thread_pool).context()?;
+        encode_lepton(&mut reader, &mut writer, enabled_features, thread_pool).context()?;
 
     // decode and compare to original in order to enure we encoded correctly
 
@@ -91,10 +92,10 @@ pub fn encode_lepton_verify(
 
     info!("decompressing to verify contents");
 
-    let mut c = enabled_features.clone();
+    let c = enabled_features.clone();
 
     metrics.merge_from(
-        decode_lepton(&mut verifyreader, &mut verify_buffer, &mut c, thread_pool).context()?,
+        decode_lepton(&mut verifyreader, &mut verify_buffer, &c, thread_pool).context()?,
     );
 
     if input_data.len() != verify_buffer.len() {
@@ -154,15 +155,13 @@ pub fn read_jpeg<R: BufRead + Seek>(
         };
 
         thread_handoff.push(ThreadHandoff {
-            segment_offset_in_file: (*segment_offset - stream_start_position)
-                .try_into()
-                .unwrap(),
+            segment_offset_in_file: (*segment_offset - stream_start_position).to_u32()?,
             luma_y_start: r.luma_y_start,
             luma_y_end: r.luma_y_end,
             overhang_byte: r.overhang_byte,
             num_overhang_bits: r.num_overhang_bits,
             last_dc: r.last_dc,
-            segment_size: segment_size.try_into().unwrap(),
+            segment_size: segment_size.to_u32()?,
         });
 
         #[cfg(feature = "detailed_tracing")]
@@ -181,14 +180,18 @@ pub fn read_jpeg<R: BufRead + Seek>(
         enabled_features.max_partitions as usize,
     );
     lp.thread_handoff = merged_handoffs;
-    lp.jpeg_file_size = (reader.stream_position().context()? - stream_start_position) as u32;
-
-    if lp.jpeg_file_size > enabled_features.max_jpeg_file_size {
-        return err_exit_code(
+    lp.jpeg_file_size = check_size(
+        reader.stream_position().context()? - stream_start_position,
+        enabled_features.max_jpeg_file_size.to_usize()?,
+        "JPEG file",
+    )
+    .map_err(|_| {
+        LeptonError::new(
             ExitCode::UnsupportedJpeg,
             "file is too large to encode, increase max_jpeg_file_size",
-        );
-    }
+        )
+    })?
+    .to_u32()?;
 
     Ok((lp, image_data))
 }
@@ -354,7 +357,7 @@ fn split_row_handoffs_to_threads(
         }
     }
 
-    return selected_splits;
+    selected_splits
 }
 
 fn get_number_of_threads_for_encoding(
@@ -376,7 +379,7 @@ fn get_number_of_threads_for_encoding(
         num_threads = cmp::min(4, num_threads);
     }
 
-    return num_threads;
+    num_threads
 }
 
 #[cfg(test)]
@@ -398,8 +401,7 @@ mod tests {
     fn test_too_small_output() {
         let original = read_file("slrcity", ".jpg");
 
-        let mut output = Vec::new();
-        output.resize(original.len() / 2, 0u8);
+        let mut output = vec![0; original.len() / 2];
 
         let r = encode_lepton(
             &mut Cursor::new(&original),

@@ -51,7 +51,7 @@ pub fn lepton_decode_row_range<R: Read, ROW: FnMut(&RowSpec, &[BlockBasedImage])
     let mut image_data = Vec::new();
     for i in 0..jpeg_header.cmpc {
         image_data.push(BlockBasedImage::new(
-            &jpeg_header,
+            jpeg_header,
             i,
             min_y,
             if is_last_thread {
@@ -108,19 +108,20 @@ pub fn lepton_decode_row_range<R: Read, ROW: FnMut(&RowSpec, &[BlockBasedImage])
             continue;
         }
 
-        let left_model;
-        let middle_model;
-
         let component = cur_row.component;
-        if is_top_row[component] {
+        let (left_model, middle_model) = if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &super::probability_tables::NO_NEIGHBORS;
-            middle_model = &super::probability_tables::LEFT_ONLY;
+            (
+                &super::probability_tables::NO_NEIGHBORS,
+                &super::probability_tables::LEFT_ONLY,
+            )
         } else {
-            left_model = &super::probability_tables::TOP_ONLY;
-            middle_model = &super::probability_tables::ALL;
-        }
+            (
+                &super::probability_tables::TOP_ONLY,
+                &super::probability_tables::ALL,
+            )
+        };
 
         decode_row_wrapper(
             &mut model,
@@ -358,7 +359,7 @@ pub fn read_coefficient_block<const ALL_PRESENT: bool, R: Read>(
 
     // step 3, read the DC coefficient (0,0 of the block)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbor_data, features);
+    let predicted_dc = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, neighbor_data, features);
 
     let coef = model.read_dc(
         bool_reader,

@@ -12,6 +12,12 @@ pub struct CpuTimeMeasure {
     start: std::time::Instant,
 }
 
+impl Default for CpuTimeMeasure {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuTimeMeasure {
     /// Creates a new CpuTimeMeasure instance that starts measuring time.
     pub fn new() -> Self {
@@ -77,10 +83,7 @@ impl Metrics {
         total_bits: i64,
         total_compressed: i64,
     ) {
-        let e = self
-            .map
-            .entry(cmp)
-            .or_insert(ModelComponentStatistics::default());
+        let e = self.map.entry(cmp).or_default();
         e.total_bits += total_bits;
         e.total_compressed += total_compressed;
     }
@@ -132,7 +135,7 @@ impl Metrics {
         self.cpu_time_worker_time = Duration::default();
 
         Metrics {
-            map: self.map.drain().collect(),
+            map: std::mem::take(&mut self.map),
             cpu_time_worker_time,
         }
     }
@@ -145,10 +148,7 @@ impl Metrics {
     /// Merges another Metrics instance into this one, summing the statistics.
     pub fn merge_from(&mut self, mut source_metrics: Metrics) {
         for x in source_metrics.map.drain() {
-            let e = self
-                .map
-                .entry(x.0)
-                .or_insert(ModelComponentStatistics::default());
+            let e = self.map.entry(x.0).or_default();
             e.total_bits += x.1.total_bits;
             e.total_compressed += x.1.total_compressed;
         }

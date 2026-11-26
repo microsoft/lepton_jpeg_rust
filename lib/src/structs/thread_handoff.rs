@@ -51,16 +51,20 @@ impl ThreadHandoff {
         }
 
         // last LumaYEnd is not serialzed, filled in later
-        return Ok(retval);
+        Ok(retval)
     }
 
     pub fn serialize<W: Write>(data: &Vec<ThreadHandoff>, retval: &mut W) -> Result<()> {
-        retval.write_u8(data.len() as u8)?;
+        retval.write_u8(u8::try_from(data.len()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "too many partitions")
+        })?)?;
 
         for th in data {
-            retval.write_u16::<LittleEndian>(th.luma_y_start as u16)?;
+            retval.write_u16::<LittleEndian>(u16::try_from(th.luma_y_start).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "luma_y_start too large")
+            })?)?;
             // SegmentOffsetInFile is not serialized to preserve compatibility with original Lepton format
-            retval.write_i32::<LittleEndian>(th.segment_size as i32)?;
+            retval.write_u32::<LittleEndian>(th.segment_size)?;
             retval.write_u8(th.overhang_byte)?;
             retval.write_u8(th.num_overhang_bits)?;
 
@@ -72,7 +76,7 @@ impl ThreadHandoff {
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     // Combine two ThreadHandoff objects into a range, starting with the "from" segment, and
@@ -81,12 +85,11 @@ impl ThreadHandoff {
         from: &ThreadHandoff,
         to: &ThreadHandoff,
     ) -> usize {
-        return (to.segment_offset_in_file - from.segment_offset_in_file + to.segment_size)
-            as usize;
+        (to.segment_offset_in_file - from.segment_offset_in_file + to.segment_size) as usize
     }
 
     pub fn combine_thread_ranges(from: &ThreadHandoff, to: &ThreadHandoff) -> ThreadHandoff {
-        let ret = ThreadHandoff {
+        ThreadHandoff {
             segment_offset_in_file: from.segment_offset_in_file,
             luma_y_start: from.luma_y_start,
             overhang_byte: from.overhang_byte,
@@ -94,8 +97,6 @@ impl ThreadHandoff {
             luma_y_end: to.luma_y_end,
             segment_size: ThreadHandoff::get_combine_thread_range_segment_size(from, to) as u32,
             last_dc: from.last_dc,
-        };
-
-        return ret;
+        }
     }
 }

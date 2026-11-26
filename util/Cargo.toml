@@ -15,9 +15,12 @@ simple_logger ="5.0"
 rayon = "1" 
 uuid = { version = "1.19", features = ["v4"] }
 winpipe = "0.1"
-msvc_spectre_libs = "0.1.3"
+msvc_spectre_libs = "0.2"
 
 [[bin]]
 name="lepton_jpeg_util"
 
 
+
+[lints]
+workspace = true

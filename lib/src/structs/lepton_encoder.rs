@@ -90,18 +90,19 @@ pub fn lepton_encode_row_range<W: Write>(
         // Advance to next row to cache expended block data for current row. Should be called before getting block context.
         let component = cur_row.component;
 
-        let left_model;
-        let middle_model;
-
-        if is_top_row[component] {
+        let (left_model, middle_model) = if is_top_row[component] {
             is_top_row[component] = false;
 
-            left_model = &super::probability_tables::NO_NEIGHBORS;
-            middle_model = &super::probability_tables::LEFT_ONLY;
+            (
+                &super::probability_tables::NO_NEIGHBORS,
+                &super::probability_tables::LEFT_ONLY,
+            )
         } else {
-            left_model = &super::probability_tables::TOP_ONLY;
-            middle_model = &super::probability_tables::ALL;
-        }
+            (
+                &super::probability_tables::TOP_ONLY,
+                &super::probability_tables::ALL,
+            )
+        };
 
         process_row(
             &mut model,
@@ -346,7 +347,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
     // and transposed raster of dequantized DCT coefficients with 0 in DC
     let (raster, horiz_pred, vert_pred) = encode_edge::<W, ALL_PRESENT>(
         neighbors_data,
-        &here_tr,
+        here_tr,
         model_per_color,
         bool_writer,
         qt,
@@ -359,8 +360,7 @@ pub fn write_coefficient_block<const ALL_PRESENT: bool, W: Write>(
 
     // finally the DC coefficient (at 0,0)
     let q0 = qt.get_quantization_table()[0] as i32;
-    let predicted_val =
-        pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, &neighbors_data, features);
+    let predicted_val = pt.adv_predict_dc_pix::<ALL_PRESENT>(&raster, q0, neighbors_data, features);
 
     let avg_predicted_dc = ProbabilityTables::adv_predict_or_unpredict_dc(
         here_tr.get_dc(),
@@ -483,7 +483,7 @@ fn encode_one_edge<W: Write, const ALL_PRESENT: bool, const HORIZONTAL: bool>(
             + count_non_zero(block.get_coefficient(6))
             + count_non_zero(block.get_coefficient(7));
     } else {
-        num_non_zeros_edge = count_non_zero(block.get_coefficient(1 * 8))
+        num_non_zeros_edge = count_non_zero(block.get_coefficient(8))
             + count_non_zero(block.get_coefficient(2 * 8))
             + count_non_zero(block.get_coefficient(3 * 8))
             + count_non_zero(block.get_coefficient(4 * 8))
@@ -674,7 +674,7 @@ fn roundtrip_large_coef() {
 /// "random" set of blocks to ensure that all ranges of coefficients work properly
 #[test]
 fn roundtrip_random_seed() {
-    use rand::Rng;
+    use rand::RngExt;
 
     // the 127 seed is a choice that doesn't overflow the DC coefficient
     // since the encoder is somewhat picky if the DC estimate overflows
@@ -683,11 +683,11 @@ fn roundtrip_random_seed() {
 
     let arr = [0i16; 64];
 
-    let left = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
-    let above = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
-    let here = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
-    let above_left = AlignedBlock::new(arr.map(|_| rng.gen_range(-2047..=2047)));
-    let qt = arr.map(|_| rng.gen_range(1u16..=65535));
+    let left = AlignedBlock::new(arr.map(|_| rng.random_range(-2047..=2047)));
+    let above = AlignedBlock::new(arr.map(|_| rng.random_range(-2047..=2047)));
+    let here = AlignedBlock::new(arr.map(|_| rng.random_range(-2047..=2047)));
+    let above_left = AlignedBlock::new(arr.map(|_| rng.random_range(-2047..=2047)));
+    let qt = arr.map(|_| rng.random_range(1u16..=65535));
 
     // using 32 bit math (test emulating both scalar and vector C++ code)
     let a = roundtrip_read_write_coefficients(
@@ -773,12 +773,12 @@ fn roundtrip_non_zeros_counts() {
 fn make_random_model() -> Box<Model> {
     let mut model = Model::default_boxed();
 
-    use rand::Rng;
+    use rand::RngExt;
 
     let mut rng = crate::helpers::get_rand_from_seed([2u8; 32]);
 
     model.walk(|x| {
-        x.set_count(rng.gen_range(0x01..=0xff) * 256 + rng.gen_range(0x01..=0xff));
+        x.set_count(rng.random_range(0x01..=0xff) * 256 + rng.random_range(0x01..=0xff));
     });
     model
 }
@@ -933,50 +933,50 @@ fn roundtrip_read_write_coefficients(
         None,
         None,
         color_index,
-        &above_left,
+        above_left,
         &mut write_model,
         &mut bool_writer,
         &qt,
-        &features,
+        features,
     );
 
     // now above, with above_left as neighbor
     let w_above_ns = call_write_coefficient_block(
-        Some((&above_left, &w_above_left_ns)),
+        Some((above_left, &w_above_left_ns)),
         None,
         None,
         color_index,
-        &above,
+        above,
         &mut write_model,
         &mut bool_writer,
         &qt,
-        &features,
+        features,
     );
 
     // now left with above_left as neighbor
     let w_left_ns = call_write_coefficient_block(
         None,
-        Some((&above_left, &w_above_left_ns)),
+        Some((above_left, &w_above_left_ns)),
         None,
         color_index,
-        &left,
+        left,
         &mut write_model,
         &mut bool_writer,
         &qt,
-        &features,
+        features,
     );
 
     // now here with above and left as neighbors
     let w_here_ns = call_write_coefficient_block(
-        Some((&left, &w_left_ns)),
-        Some((&above, &w_above_ns)),
+        Some((left, &w_left_ns)),
+        Some((above, &w_above_ns)),
         Some(above_left),
         color_index,
-        &here,
+        here,
         &mut write_model,
         &mut bool_writer,
         &qt,
-        &features,
+        features,
     );
 
     bool_writer.finish().unwrap();
@@ -993,7 +993,7 @@ fn roundtrip_read_write_coefficients(
         &mut read_model,
         &mut bool_reader,
         &qt,
-        &features,
+        features,
     );
 
     assert_eq!(
@@ -1011,7 +1011,7 @@ fn roundtrip_read_write_coefficients(
         &mut read_model,
         &mut bool_reader,
         &qt,
-        &features,
+        features,
     );
 
     assert_eq!(r_above_block.get_block(), above.get_block(), "above");
@@ -1025,7 +1025,7 @@ fn roundtrip_read_write_coefficients(
         &mut read_model,
         &mut bool_reader,
         &qt,
-        &features,
+        features,
     );
 
     assert_eq!(r_left_block.get_block(), left.get_block(), "left");
@@ -1039,7 +1039,7 @@ fn roundtrip_read_write_coefficients(
         &mut read_model,
         &mut bool_reader,
         &qt,
-        &features,
+        features,
     );
 
     assert_eq!(r_here.get_block(), here.get_block(), "here");
@@ -1095,7 +1095,7 @@ pub fn benchmark_roundtrip_coefficient() -> Box<dyn FnMut()> {
 
     let edge_pixels_h = i16x8::from([4; 8]);
     let edge_pixels_v = i16x8::from([5; 8]);
-    let dc_deq = 6 * 1; // quantization table value is
+    let dc_deq = 6; // quantization table value is
     let num_non_zeros_7x7 = 49;
     let horiz_pred = i32x8::from([7; 8]);
     let vert_pred = i32x8::from([8; 8]);

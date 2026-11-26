@@ -4,6 +4,9 @@
  *  This software incorporates material from third parties. See NOTICE.txt for details.
  *--------------------------------------------------------------------------------------------*/
 
+// row offsets are written as `8 * row` to mirror the reference IDCT layout
+#![allow(clippy::erasing_op, clippy::identity_op)]
+
 use bytemuck::cast;
 use wide::{i16x8, i32x8};
 
@@ -94,7 +97,7 @@ pub fn run_idct(block: &[i32x8; 8]) -> AlignedBlock {
     ] = i32x8::transpose(row);
 
     yv0 = (yv0 << 8) + 8192;
-    yv4 = yv4 << 8;
+    yv4 <<= 8;
 
     // Stage 1.
     let mut yv8 = (W7 * (yv1 + yv7)) + 4;
@@ -160,7 +163,7 @@ fn test_idct(test_data: &AlignedBlock, test_q: &[u16; 64]) {
     use std::num::Wrapping;
 
     fn mul(a: i16, b: u16) -> Wrapping<i32> {
-        return Wrapping(a as i32) * Wrapping(b as i32);
+        Wrapping(a as i32) * Wrapping(b as i32)
     }
 
     pub fn run_idct_old(
@@ -338,7 +341,7 @@ pub fn test_idct_with_simple_block() {
 /// implemenation from the original scalar C++ code
 #[test]
 pub fn test_idct_with_random_blocks() {
-    use rand::Rng;
+    use rand::RngExt;
 
     let mut rng = crate::helpers::get_rand_from_seed([0u8; 32]);
     let mut test_data = AlignedBlock::default();
@@ -346,8 +349,8 @@ pub fn test_idct_with_random_blocks() {
 
     for _ in 0..16 {
         for i in 0..64 {
-            test_data.get_block_mut()[i] = rng.gen_range(i16::MIN..=i16::MAX);
-            test_q[i] = rng.gen_range(0..=u8::MAX as u16);
+            test_data.get_block_mut()[i] = rng.random_range(i16::MIN..=i16::MAX);
+            test_q[i] = rng.random_range(0..=u8::MAX as u16);
         }
 
         test_idct(&test_data, &test_q);
